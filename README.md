@@ -31,49 +31,32 @@ Windows terminal UI for managing Claude Code sessions.
 
 ## Setup
 
-### File placement
+### 1. Clone the repo
 
-Place the entire `.\claudectl\` directory as-is. The package lives at `.\claudectl\claude_sessions\`.
-
-### .bat shortcut
-
-`Open Repo cmd.bat` (already present in this directory) calls:
-
-```bat
-py "%~dp0claude-sessions.py"
+```
+git clone https://github.com/babarmuhammad/claudectl.git
+cd claudectl
 ```
 
-This invokes the launcher stub which imports and runs `claude_sessions.main.run()`.
+### 2. Run it
 
-### Desktop shortcut (.lnk)
+Double-click `Open Repo cmd.bat` (or run it from a terminal). That's it — it launches the session browser.
 
-Create a shortcut to `Open Repo cmd.bat` on the Desktop:
+### 3. Optional: Desktop shortcut
 
-1. Right-click `Open Repo cmd.bat` → Send to → Desktop (create shortcut)
-2. Right-click the shortcut → Properties → set **Run** to *Minimized* or *Normal* as preferred
-3. Optionally assign a hotkey in the shortcut properties
+Right-click `Open Repo cmd.bat` → **Send to** → **Desktop (create shortcut)**.
 
-### Pin to taskbar (Windows 11)
+### 4. Optional: Pin to taskbar (Windows 11)
 
-Windows 11 blocks pinning `.bat` shortcuts directly. Workaround — point the shortcut to `cmd.exe` instead:
+Windows 11 can't pin `.bat` shortcuts directly — the shortcut must point to `cmd.exe`. Run this once in PowerShell from the repo folder:
 
-1. Right-click the Desktop shortcut → **Properties**
-2. Set **Target** to:
-   ```
-   C:\Windows\System32\cmd.exe /c ".\claudectl\Open Repo cmd.bat"
-   ```
-3. Set **Start in** to `.\claudectl`
-4. Click **Change Icon** → browse to `.\claudectl\claude folder.ico`
-5. Click OK → right-click the shortcut → **Pin to taskbar**
-
-Or run this PowerShell snippet to rebuild the shortcut automatically:
 ```powershell
 $shell = New-Object -ComObject WScript.Shell
 $lnk = $shell.CreateShortcut("$env:USERPROFILE\Desktop\Open Repo Claude.lnk")
 $lnk.TargetPath       = "C:\Windows\System32\cmd.exe"
-$lnk.Arguments        = "/c `".\claudectl\Open Repo cmd.bat`""
-$lnk.WorkingDirectory = ".\claudectl"
-$lnk.IconLocation     = ".\claudectl\claude folder.ico, 0"
+$lnk.Arguments        = "/c `"$PWD\Open Repo cmd.bat`""
+$lnk.WorkingDirectory = "$PWD"
+$lnk.IconLocation     = "$PWD\claude folder.ico, 0"
 $lnk.Save()
 ```
 
