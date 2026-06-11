@@ -1,10 +1,9 @@
 import os
 import subprocess
 import time
-import msvcrt
 
 from .config import W
-from .ui import text_input, menu, _cls
+from .ui import text_input, menu, _cls, pause
 
 
 def ai_generate_system_prompt(sp_path, project_name, project_path, proj_folder):
@@ -70,11 +69,11 @@ def ai_generate_system_prompt(sp_path, project_name, project_path, proj_folder):
         else:
             _cls()
             print(f"\n  ✘ No output from Claude.\n")
-            input("  Press Enter...")
+            pause("  Press Enter...")
     except Exception as e:
         _cls()
         print(f"\n  ✘ Error: {e}\n")
-        input("  Press Enter...")
+        pause("  Press Enter...")
 
 
 def edit_system_prompt(proj_folder, project_name, project_path=None):

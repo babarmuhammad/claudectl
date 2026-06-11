@@ -1,11 +1,10 @@
 import os
-import msvcrt
 import shutil
 from datetime import datetime
 
 from .config import W, C_RESET, C_TITLE, C_SEL, C_DIM, C_SRCH, C_BOLD
 from .sessions import load_name, save_name, format_age, get_session_info
-from .ui import text_input, paths_menu, _cls
+from .ui import text_input, paths_menu, _cls, wait_event
 from .claude_md import scaffold_claude_md, ai_scaffold_claude_md
 from .system_prompt import edit_system_prompt
 
@@ -76,61 +75,56 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
             print(f"\n  {C_DIM}r rename  d delete  f fork  p paths  c claude.md  a ai-analyze  s sys-prompt{C_RESET}")
             print(f"  {C_DIM}↑↓ navigate   ENTER select   ESC back   ↑ from top → search{C_RESET}")
 
-        key = ord(msvcrt.getch())
+        ev = wait_event()
 
         # ── search bar focused ────────────────────────────────
         if search_focused:
-            if key == 224:
-                k2 = ord(msvcrt.getch())
-                if k2 == 80:   # arrow DOWN → go to list
-                    search_focused = False
-            elif key == 13:    # ENTER → go to list
+            if ev[0] in ('down', 'enter'):
                 search_focused = False
-            elif key == 27:    # ESC
+            elif ev[0] == 'esc':
                 if filter_str:
                     filter_str = ''
                     nav_pos    = 0
                 else:
                     search_focused = False
-            elif key == 8:     # BACKSPACE
+            elif ev[0] == 'back':
                 if filter_str:
                     filter_str = filter_str[:-1]
                     nav_pos    = 0
                 else:
                     search_focused = False
-            elif 32 <= key <= 126:
-                filter_str += chr(key)
+            elif ev[0] == 'char':
+                filter_str += ev[1]
                 nav_pos     = 0
             continue
 
         # ── list focused ──────────────────────────────────────
-        if key == 224:
-            k2 = ord(msvcrt.getch())
-            if k2 == 72:   # UP
-                if nav_pos == 0:
-                    search_focused = True   # go to search bar
-                else:
-                    nav_pos -= 1
-            elif k2 == 80: # DOWN
-                nav_pos = min(nav_pos + 1, len(nav_indices) - 1)
+        if ev[0] == 'up':
+            if nav_pos == 0:
+                search_focused = True   # go to search bar
+            else:
+                nav_pos -= 1
 
-        elif key == 13:    # ENTER
+        elif ev[0] == 'down':
+            nav_pos = min(nav_pos + 1, len(nav_indices) - 1)
+
+        elif ev[0] == 'enter':
             return rows[cur][1]
 
-        elif key == 27:    # ESC
+        elif ev[0] == 'esc':
             if filter_str:
                 filter_str = ''
                 nav_pos    = 0
             else:
                 return None
 
-        elif key == 8:     # BACKSPACE — shortcut: focus search and delete
+        elif ev[0] == 'back':   # BACKSPACE — shortcut: focus search and delete
             if filter_str:
                 filter_str     = filter_str[:-1]
                 search_focused = True
                 nav_pos        = 0
 
-        elif key in (ord('r'),):
+        elif ev[0] == 'char' and ev[1] == 'r':
             val = rows[cur][1]
             if val and (val.startswith('resume:') or val.startswith('resume-named::')):
                 sid = val.split('::')[1] if '::' in val else val[7:]
@@ -139,7 +133,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                     names[sid] = new_name
                     save_name(proj_folder, sid, new_name)
 
-        elif key in (ord('d'),):
+        elif ev[0] == 'char' and ev[1] == 'd':
             val = rows[cur][1]
             if val and (val.startswith('resume:') or val.startswith('resume-named::')):
                 sid = val.split('::')[1] if '::' in val else val[7:]
@@ -158,20 +152,20 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                     if sid in names: del names[sid]
                     nav_pos = min(nav_pos, max(0, len(nav_indices) - 2))
 
-        elif key in (ord('f'),):
+        elif ev[0] == 'char' and ev[1] == 'f':
             val = rows[cur][1]
             if val and (val.startswith('resume:') or val.startswith('resume-named::')):
                 sid = val.split('::')[1] if '::' in val else val[7:]
                 return f"fork:{sid}"
 
-        elif key in (ord('p'),):
+        elif ev[0] == 'char' and ev[1] == 'p':
             paths_menu(proj_folder, project_name)
 
-        elif key in (ord('c'),):
+        elif ev[0] == 'char' and ev[1] == 'c':
             scaffold_claude_md(project_path, proj_folder)
 
-        elif key in (ord('a'),):
+        elif ev[0] == 'char' and ev[1] == 'a':
             ai_scaffold_claude_md(project_path, proj_folder)
 
-        elif key in (ord('s'),):
+        elif ev[0] == 'char' and ev[1] == 's':
             edit_system_prompt(proj_folder, project_name, project_path)

@@ -5,7 +5,7 @@ import time
 
 from .config import W, global_claude_md
 from .sessions import get_session_info
-from .ui import menu, _cls
+from .ui import menu, _cls, pause
 
 
 # ── MCP status ────────────────────────────────────────────────
@@ -132,7 +132,7 @@ def global_claude_md_menu():
             else:
                 _cls()
                 print(f"\n  ✘ No output from Claude — MCP may need authentication.\n")
-            input("  Press Enter to continue...")
+            pause("  Press Enter to continue...")
             return
 
 

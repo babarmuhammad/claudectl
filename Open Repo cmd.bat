@@ -25,13 +25,13 @@ del "%CHOICE_FILE%"
 
 cd /d "!SCELTA!"
 
-rem ── inject per-project extra PATH entries ──────────────────
+rem -- inject per-project extra PATH entries ------------------
 set "EXTRA_PATHS_FILE=%USERPROFILE%\.claude\projects\!ENCODED!\extra-paths.txt"
 if exist "!EXTRA_PATHS_FILE!" (
     for /f "usebackq" %%P in ("!EXTRA_PATHS_FILE!") do set "PATH=%%P;!PATH!"
 )
 
-rem ── build optional launch flags ────────────────────────────
+rem -- build optional launch flags ----------------------------
 set "EFFORT_FLAG="
 set "MODEL_FLAG="
 set "SPFILE_FLAG="
@@ -49,26 +49,28 @@ echo ------------------------------------------
 
 if "!ACTION!"=="new" (
     "!CLAUDE!" !EFFORT_FLAG! !MODEL_FLAG! !SPFILE_FLAG!
-    if errorlevel 1 (echo. & echo [claude exited with error !ERRORLEVEL!] & pause)
+    if errorlevel 1 (echo. & echo [claude exited with error %ERRORLEVEL%] & pause)
 ) else if "!ACTION:~0,5!"=="fork:" (
     set "SID=!ACTION:~5!"
     echo Forking session: !SID!
     echo.
     "!CLAUDE!" -r !SID! --fork-session !EFFORT_FLAG! !MODEL_FLAG! !SPFILE_FLAG!
-    if errorlevel 1 (echo. & echo [claude exited with error !ERRORLEVEL!] & pause)
+    if errorlevel 1 (echo. & echo [claude exited with error %ERRORLEVEL%] & pause)
 ) else if "!ACTION:~0,7!"=="resume:" (
     set "SID=!ACTION:~7!"
     echo Resuming: !SID!
     echo.
     "!CLAUDE!" -r !SID! !EFFORT_FLAG! !MODEL_FLAG! !SPFILE_FLAG!
-    if errorlevel 1 (echo. & echo [claude exited with error !ERRORLEVEL!] & pause)
+    if errorlevel 1 (echo. & echo [claude exited with error %ERRORLEVEL%] & pause)
 ) else if "!ACTION:~0,14!"=="resume-named::" (
     for /f "tokens=1,2 delims=::" %%X in ("!ACTION:~14!") do (
         set "SID=%%X"
         set "SNAME=%%Y"
     )
-    "!CLAUDE!" -r !SID! -n "!SNAME!" !EFFORT_FLAG! !MODEL_FLAG! !SPFILE_FLAG!
-    if errorlevel 1 (echo. & echo [claude exited with error !ERRORLEVEL!] & pause)
+    echo Resuming: !SID! [!SNAME!]
+    echo.
+    "!CLAUDE!" -r !SID! !EFFORT_FLAG! !MODEL_FLAG! !SPFILE_FLAG!
+    if errorlevel 1 (echo. & echo [claude exited with error %ERRORLEVEL%] & pause)
 ) else (
     cmd /k
 )

@@ -33,7 +33,7 @@ Windows terminal UI for managing Claude Code sessions.
 
 ### File placement
 
-Place the entire `D:\Claude\` directory as-is. The package lives at `D:\Claude\claude_sessions\`.
+Place the entire `.\claudectl\` directory as-is. The package lives at `.\claudectl\claude_sessions\`.
 
 ### .bat shortcut
 
@@ -60,10 +60,10 @@ Windows 11 blocks pinning `.bat` shortcuts directly. Workaround — point the sh
 1. Right-click the Desktop shortcut → **Properties**
 2. Set **Target** to:
    ```
-   C:\Windows\System32\cmd.exe /c "D:\Claude\Open Repo cmd.bat"
+   C:\Windows\System32\cmd.exe /c ".\claudectl\Open Repo cmd.bat"
    ```
-3. Set **Start in** to `D:\Claude`
-4. Click **Change Icon** → browse to `D:\Claude\claude folder.ico`
+3. Set **Start in** to `.\claudectl`
+4. Click **Change Icon** → browse to `.\claudectl\claude folder.ico`
 5. Click OK → right-click the shortcut → **Pin to taskbar**
 
 Or run this PowerShell snippet to rebuild the shortcut automatically:
@@ -71,9 +71,9 @@ Or run this PowerShell snippet to rebuild the shortcut automatically:
 $shell = New-Object -ComObject WScript.Shell
 $lnk = $shell.CreateShortcut("$env:USERPROFILE\Desktop\Open Repo Claude.lnk")
 $lnk.TargetPath       = "C:\Windows\System32\cmd.exe"
-$lnk.Arguments        = "/c `"D:\Claude\Open Repo cmd.bat`""
-$lnk.WorkingDirectory = "D:\Claude"
-$lnk.IconLocation     = "D:\Claude\claude folder.ico, 0"
+$lnk.Arguments        = "/c `".\claudectl\Open Repo cmd.bat`""
+$lnk.WorkingDirectory = ".\claudectl"
+$lnk.IconLocation     = ".\claudectl\claude folder.ico, 0"
 $lnk.Save()
 ```
 
@@ -136,7 +136,7 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 | ↑ / ↓ | Switch between Effort and Model fields |
 | ← / → | Cycle through values for the selected field |
 | ENTER | Launch with selected options |
-| ESC | Launch with defaults (no effort/model override) |
+| ESC | Back to main menu (no launch) |
 
 ---
 
@@ -210,8 +210,8 @@ claudectl's `find_actual_path()` in `paths.py` reverses this by walking the file
 ## File layout
 
 ```
-D:\Claude\
-├── claude-sessions.py     # launcher stub (5 lines)
+.\claudectl\
+├── claude-sessions.py     # launcher stub + crash handler
 ├── Open Repo cmd.bat      # bat launcher
 ├── README.md
 ├── .gitignore

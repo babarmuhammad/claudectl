@@ -37,26 +37,75 @@ def _cls():
         os.system('cls')
 
 
+# ── keyboard input ───────────────────────────────────────────
+# Events returned by wait_event()/poll_event():
+#   ('up',) ('down',) ('left',) ('right',) ('enter',) ('esc',)
+#   ('back',) ('del',) ('char', c)
+
+def _key_event():
+    key = ord(msvcrt.getch())
+    if key in (0, 224):
+        k2 = ord(msvcrt.getch())
+        return {72: ('up',), 80: ('down',), 75: ('left',), 77: ('right',),
+                83: ('del',)}.get(k2, None)
+    if key == 13: return ('enter',)
+    if key == 27: return ('esc',)
+    if key == 8:  return ('back',)
+    if 32 <= key <= 126 or key > 127:
+        try:
+            return ('char', chr(key))
+        except ValueError:
+            return None
+    return None
+
+
+def wait_event():
+    """Block until a meaningful input event arrives."""
+    while True:
+        ev = _key_event()
+        if ev:
+            return ev
+
+
+def poll_event():
+    """Non-blocking: return an event if one is pending, else None."""
+    if msvcrt.kbhit():
+        return _key_event()
+    return None
+
+
+def flush_input():
+    while msvcrt.kbhit():
+        msvcrt.getch()
+
+
+def pause(msg='  Press Enter to continue...'):
+    """Event-based pause."""
+    print(msg)
+    flush_input()
+    while wait_event()[0] not in ('enter', 'esc'):
+        pass
+
+
 # ── UI primitives ────────────────────────────────────────────
 
 def text_input(prompt, default=''):
+    flush_input()
     buf = list(default)
     while True:
         _cls()
         print(f"\n  {C_TITLE}{prompt}{C_RESET}")
         print(f"\n  {C_SEL}>{C_RESET} {''.join(buf)}_")
         print(f"\n  {C_DIM}ENTER confirm   ESC cancel   BACKSPACE delete{C_RESET}")
-        raw = msvcrt.getwch()
-        if raw in ('\r', '\n'):
+        ev = wait_event()
+        if ev[0] == 'enter':
             return ''.join(buf).strip()
-        elif raw == '\x1b':
+        elif ev[0] == 'esc':
             return None
-        elif raw == '\x08':
+        elif ev[0] == 'back':
             if buf: buf.pop()
-        elif raw in ('\x00', '\xe0'):
-            msvcrt.getwch()
-        elif raw >= ' ':
-            buf.append(raw)
+        elif ev[0] == 'char':
+            buf.append(ev[1])
 
 
 def menu(items, title, footer='', footer_fn=None):
@@ -115,48 +164,54 @@ def menu(items, title, footer='', footer_fn=None):
 
     current_footer = footer_fn() if footer_fn else footer
     _draw(current_footer)
-    _last_footer  = current_footer
-    _footer_done  = False   # True after first live update — stop polling
+    _last_footer = current_footer
+    _footer_done = False   # True after MCP resolves — stop polling
+
+    def _update_footer_inline(new_footer):
+        """Update only the footer line using ANSI cursor — no full redraw, no flash."""
+        if not _VT_ENABLED:
+            return   # skip; footer shows on next keypress redraw
+        line = new_footer if new_footer else ''
+        sys.stdout.write('\x1b[1A\x1b[G\x1b[2K')
+        sys.stdout.write(line)
+        sys.stdout.write('\n')
+        sys.stdout.flush()
 
     while True:
-        if not msvcrt.kbhit():
+        ev = poll_event()
+        if ev is None:
             if footer_fn and not _footer_done:
                 current = footer_fn()
                 if current != _last_footer:
                     _last_footer = current
                     _footer_done = True   # update exactly once
-                    if _VT_ENABLED:
-                        _draw(_last_footer)
-            time.sleep(0.1)
+                    _update_footer_inline(current)
+            time.sleep(0.05)
             continue
 
-        key = ord(msvcrt.getch())
+        disp = _filtered()
+        ni   = _nav_idx(disp)
 
-        if key == 224:
-            k2   = ord(msvcrt.getch())
-            disp = _filtered()
-            ni   = _nav_idx(disp)
+        if ev[0] in ('up', 'down'):
             if ni:
-                if k2 == 72:   nav_pos = (nav_pos - 1) % len(ni)
-                elif k2 == 80: nav_pos = (nav_pos + 1) % len(ni)
-        elif key == 13:   # ENTER
-            disp = _filtered()
-            ni   = _nav_idx(disp)
+                step = -1 if ev[0] == 'up' else 1
+                nav_pos = (min(nav_pos, len(ni) - 1) + step) % len(ni)
+        elif ev[0] == 'enter':
             if ni:
                 return disp[ni[min(nav_pos, len(ni) - 1)]][1]
             return None
-        elif key == 27:   # ESC
+        elif ev[0] == 'esc':
             if search_str:
                 search_str = ''
                 nav_pos    = 0
             else:
                 return None
-        elif key == 8:    # BACKSPACE
+        elif ev[0] == 'back':
             if search_str:
                 search_str = search_str[:-1]
                 nav_pos    = 0
-        elif 32 <= key <= 126:
-            search_str += chr(key)
+        elif ev[0] == 'char':
+            search_str += ev[1]
             nav_pos    = 0
 
         _draw(_last_footer)
@@ -189,32 +244,36 @@ def paths_menu(proj_folder, project_name):
                 else:
                     print(f"    {label}")
             print(f"\n  {C_DIM}↑↓ navigate   ENTER select   DEL remove   ESC back{C_RESET}")
-            key = ord(msvcrt.getch())
-            if key == 224:
-                k2 = ord(msvcrt.getch())
-                if k2 == 72:   nav_pos = (nav_pos - 1) % len(nav_indices)
-                elif k2 == 80: nav_pos = (nav_pos + 1) % len(nav_indices)
-                elif k2 == 83:
-                    val = items[cur][1]
-                    if val and val.startswith('path:'):
-                        save_extra_paths(proj_folder, [p for p in paths if p != val[5:]])
-                        redraw = True
-            elif key == 13:
+
+            ev = wait_event()
+            activate = None
+            if ev[0] == 'up':
+                nav_pos = (nav_pos - 1) % len(nav_indices)
+            elif ev[0] == 'down':
+                nav_pos = (nav_pos + 1) % len(nav_indices)
+            elif ev[0] == 'del':
                 val = items[cur][1]
-                if val == 'back':
-                    return
-                elif val == 'add':
-                    new_path = text_input("Enter Windows path to add (e.g. C:\\tools\\bin):")
-                    if new_path and new_path not in paths:
-                        paths.append(new_path)
-                        save_extra_paths(proj_folder, paths)
+                if val and val.startswith('path:'):
+                    save_extra_paths(proj_folder, [p for p in paths if p != val[5:]])
                     redraw = True
-            elif key == 27:
+            elif ev[0] == 'enter':
+                activate = items[cur][1]
+            elif ev[0] == 'esc':
                 return
+
+            if activate == 'back':
+                return
+            elif activate == 'add':
+                new_path = text_input("Enter Windows path to add (e.g. C:\\tools\\bin):")
+                if new_path and new_path not in paths:
+                    paths.append(new_path)
+                    save_extra_paths(proj_folder, paths)
+                redraw = True
 
 
 def launch_options_menu(project_name):
-    """Returns (effort: str, model: str). Empty = use global default."""
+    """Returns (effort: str, model: str), empty = global default.
+    Returns None on ESC (caller should go back instead of launching)."""
     effort_idx = 0
     model_idx  = 0
     field = 0
@@ -228,19 +287,16 @@ def launch_options_menu(project_name):
         print(f"  {e_sel}{'>' if field == 0 else ' '}  Effort :  [ {EFFORT_LABELS[effort_idx]:<10} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}")
         print(f"  {m_sel}{'>' if field == 1 else ' '}  Model  :  [ {MODEL_LABELS[model_idx]:<15} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}")
         print(f"  {C_DIM}{'─' * W}{C_RESET}")
-        print(f"\n  {C_DIM}↑↓ switch field   ← → cycle   ENTER launch   ESC use defaults{C_RESET}")
-        key = ord(msvcrt.getch())
-        if key == 224:
-            k2 = ord(msvcrt.getch())
-            if k2 == 72:   field = (field - 1) % 2
-            elif k2 == 80: field = (field + 1) % 2
-            elif k2 == 75:
-                if field == 0: effort_idx = (effort_idx - 1) % len(EFFORTS)
-                else:           model_idx  = (model_idx  - 1) % len(MODELS)
-            elif k2 == 77:
-                if field == 0: effort_idx = (effort_idx + 1) % len(EFFORTS)
-                else:           model_idx  = (model_idx  + 1) % len(MODELS)
-        elif key == 13:
+        print(f"\n  {C_DIM}↑↓ switch field   ← → cycle   ENTER launch   ESC back{C_RESET}")
+
+        ev = wait_event()
+        if ev[0] in ('up', 'down'):
+            field = (field + 1) % 2
+        elif ev[0] in ('left', 'right'):
+            step = -1 if ev[0] == 'left' else 1
+            if field == 0: effort_idx = (effort_idx + step) % len(EFFORTS)
+            else:           model_idx  = (model_idx  + step) % len(MODELS)
+        elif ev[0] == 'enter':
             return EFFORTS[effort_idx], MODELS[model_idx]
-        elif key == 27:
-            return '', ''
+        elif ev[0] == 'esc':
+            return None

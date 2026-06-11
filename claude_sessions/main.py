@@ -5,7 +5,7 @@ from .config import projects_dir, choice_file, global_claude_md
 from .config import C_RESET, C_STAR, C_DIM, C_TITLE, C_BOLD
 from .paths import find_actual_path
 from .sessions import get_session_info, load_recent_sessions, save_last_session, format_age
-from .ui import menu, launch_options_menu
+from .ui import menu, launch_options_menu, pause
 from .session_menu import sessions_menu
 from .mcp import mcp_status_line, global_claude_md_menu, mcp_servers
 from .ui import _cls
@@ -38,7 +38,7 @@ def run():
     if not entries:
         _cls()
         print(f"  No Claude sessions found.\n  Scanned: {projects_dir}")
-        input("\n  Press Enter to exit...")
+        pause("\n  Press Enter to exit...")
         sys.exit(0)
 
     W = 62
@@ -63,6 +63,7 @@ def run():
     # ── main loop ─────────────────────────────────────────────────
 
     path = encoded_name = proj_folder = choice = None
+    effort, model = '', ''
 
     while True:
         sel = menu(full_items, "SELECT PROJECT", footer_fn=mcp_status_line)
@@ -70,42 +71,47 @@ def run():
             sys.exit(0)
 
         if sel and sel.startswith('__quickresume_'):
-            idx  = int(sel.split('_')[-2]) if sel.count('_') >= 3 else 0
+            idx  = int(sel[len('__quickresume_'):-2])
             sess = recent[idx]
             path         = sess['project_path']
             encoded_name = sess['encoded_name']
             proj_folder  = os.path.join(projects_dir, encoded_name)
             choice       = f"resume:{sess['session_id']}"
-            break
 
-        if sel == '__global_claude_md__':
+        elif sel == '__global_claude_md__':
             global_claude_md_menu()
             continue
 
-        path = sel
-        encoded_name = next((n for _, p, n in entries if p == path), None)
-        proj_folder  = os.path.join(projects_dir, encoded_name) if encoded_name else None
+        else:
+            path = sel
+            encoded_name = next((n for _, p, n in entries if p == path), None)
+            proj_folder  = os.path.join(projects_dir, encoded_name) if encoded_name else None
 
-        sessions = []
-        if proj_folder and os.path.exists(proj_folder):
-            for f in os.listdir(proj_folder):
-                if not f.endswith('.jsonl'):
-                    continue
-                fpath = os.path.join(proj_folder, f)
-                mtime = os.path.getmtime(fpath)
-                preview, count = get_session_info(fpath)
-                sessions.append((mtime, f[:-6], preview, count))
-            sessions.sort(reverse=True)
+            sessions = []
+            if proj_folder and os.path.exists(proj_folder):
+                for f in os.listdir(proj_folder):
+                    if not f.endswith('.jsonl'):
+                        continue
+                    fpath = os.path.join(proj_folder, f)
+                    mtime = os.path.getmtime(fpath)
+                    preview, count = get_session_info(fpath)
+                    sessions.append((mtime, f[:-6], preview, count))
+                sessions.sort(reverse=True)
 
-        project_name = os.path.basename(path) or path
-        choice = sessions_menu(sessions, proj_folder, project_name, path)
-        if choice:
+            project_name = os.path.basename(path) or path
+            choice = sessions_menu(sessions, proj_folder, project_name, path)
+            if not choice:
+                continue
+
+        # Launch options (skip for terminal); ESC = back to main menu
+        if choice == 'terminal':
             break
-
-    # Launch options (skip for terminal)
-    effort, model = '', ''
-    if choice != 'terminal':
-        effort, model = launch_options_menu(os.path.basename(path) or path)
+        opts = launch_options_menu(os.path.basename(path) or path)
+        if opts is None:
+            choice = None
+            continue
+        effort, model = opts
+        break
 
     # Persist last session for quick-resume (resume/fork only)
     if choice and choice not in ('terminal', 'new'):

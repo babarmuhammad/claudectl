@@ -5,12 +5,11 @@ import time
 import queue
 import threading
 import subprocess
-import msvcrt
 import shutil
 
 from .config import (W, _AUTOGEN_START, _AUTOGEN_END, _SESSIONS_START, _SESSIONS_END, _AI_MARKER)
 from .sessions import get_session_info, get_session_rich_summary, read_extra_paths, format_age
-from .ui import text_input, _cls
+from .ui import text_input, _cls, wait_event, poll_event
 
 
 def find_git_repos(root, max_depth=2):
@@ -311,20 +310,16 @@ def _pager_confirm(title, content):
         else:
             print(f"\n  (end of content)")
             print(f"  ENTER approve & write   ESC reject & discard   LEFT back")
-        key = ord(msvcrt.getch())
-        if key == 224:
-            k2 = ord(msvcrt.getch())
-            if k2 == 75 and page > 0:   # LEFT arrow
-                page -= 1
-            elif k2 == 77 and page < total_pages - 1:  # RIGHT arrow
-                page += 1
-        elif key == 32 and page < total_pages - 1:  # SPACE
-            page += 1
-        elif key == 8 and page > 0:    # BACKSPACE
+        ev = wait_event()
+        if ev[0] in ('left', 'back') and page > 0:
             page -= 1
-        elif key == 13:  # ENTER
+        elif ev[0] == 'right' and page < total_pages - 1:
+            page += 1
+        elif ev[0] == 'char' and ev[1] == ' ' and page < total_pages - 1:
+            page += 1
+        elif ev[0] == 'enter':
             return True
-        elif key == 27:  # ESC
+        elif ev[0] == 'esc':
             return False
 
 
@@ -370,8 +365,8 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
     # ── Optional extra prompt ────────────────────────────────────
     extra_prompt = ''
     while True:
-        key = ord(msvcrt.getch())
-        if key == 13:   # ENTER — show extra prompt input
+        ev = wait_event()
+        if ev[0] == 'enter':   # show extra prompt input
             _cls()
             print(f"\n  AI ANALYZE  /  {name}\n")
             print(f"  Optional: add extra instructions for Claude (ENTER to skip)\n")
@@ -381,7 +376,7 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
                 return
             extra_prompt = result
             break
-        elif key == 27: # ESC
+        elif ev[0] == 'esc':
             return
         # ignore any other key — require explicit ENTER
 
@@ -551,12 +546,11 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
                 print(f"\r  {spinner[spin_i % 4]} ", end='', flush=True)
                 spin_i += 1
                 time.sleep(0.1)
-                if msvcrt.kbhit():
-                    key = ord(msvcrt.getch())
-                    if key == 27:  # ESC
-                        proc.terminate()
-                        cancelled = True
-                        done = True
+                ev = poll_event()
+                if ev and ev[0] == 'esc':
+                    proc.terminate()
+                    cancelled = True
+                    done = True
 
         _dbg_f.close()
 
