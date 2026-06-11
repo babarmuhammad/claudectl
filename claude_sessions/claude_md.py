@@ -376,7 +376,10 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
             print(f"\n  AI ANALYZE  /  {name}\n")
             print(f"  Optional: add extra instructions for Claude (ENTER to skip)\n")
             print(f"  Example: 'focus on API endpoints' / 'add client-facing language rules'\n")
-            extra_prompt = text_input("Extra instructions:", default='') or ''
+            result = text_input("Extra instructions:", default='')
+            if result is None:  # ESC — cancel
+                return
+            extra_prompt = result
             break
         elif key == 27: # ESC
             return
