@@ -1,0 +1,13 @@
+# Normalize line endings
+* text=auto
+
+# Force LF for Python (cross-platform)
+*.py text eol=lf
+
+# Force CRLF for Windows-only scripts
+*.bat text eol=crlf
+
+# Binary files — no conversion
+*.ico binary
+*.png binary
+*.jpg binary

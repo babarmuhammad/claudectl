@@ -1,0 +1,699 @@
+import os
+import re
+import json
+import time
+import queue
+import threading
+import subprocess
+import msvcrt
+import shutil
+
+from .config import (W, _AUTOGEN_START, _AUTOGEN_END, _SESSIONS_START, _SESSIONS_END, _AI_MARKER)
+from .sessions import get_session_info, get_session_rich_summary, read_extra_paths, format_age
+from .ui import text_input
+
+
+def find_git_repos(root, max_depth=2):
+    """Return list of paths that contain a .git dir, up to max_depth levels deep."""
+    repos = []
+    # root itself may be a repo
+    if os.path.isdir(os.path.join(root, '.git')):
+        repos.append(root)
+    if max_depth <= 0:
+        return repos
+    try:
+        for entry in sorted(os.scandir(root), key=lambda e: e.name):
+            if not entry.is_dir(follow_symlinks=False):
+                continue
+            sub = entry.path
+            if os.path.isdir(os.path.join(sub, '.git')):
+                repos.append(sub)
+            elif max_depth > 1:
+                # one more level
+                try:
+                    for e2 in sorted(os.scandir(sub), key=lambda e: e.name):
+                        if e2.is_dir(follow_symlinks=False) and os.path.isdir(os.path.join(e2.path, '.git')):
+                            repos.append(e2.path)
+                except PermissionError:
+                    pass
+    except PermissionError:
+        pass
+    return repos
+
+
+def _parse_existing_sessions(text):
+    """Extract session entries from SESSIONS block. Returns dict {sid_prefix: line}."""
+    entries = {}
+    if _SESSIONS_START not in text or _SESSIONS_END not in text:
+        return entries
+    block = text[text.index(_SESSIONS_START) + len(_SESSIONS_START):text.index(_SESSIONS_END)]
+    for line in block.splitlines():
+        line = line.strip()
+        if line.startswith('- '):
+            m = re.search(r'\*\*(.+?)\*\*', line)
+            key = m.group(1) if m else line[:20]
+            entries[key] = line
+    return entries
+
+
+def _build_sessions_block(proj_folder, existing_entries):
+    """Merge fresh session scan with existing entries. Returns full sessions block text."""
+    if not proj_folder or not os.path.isdir(proj_folder):
+        if existing_entries:
+            return "## Session topics\n" + '\n'.join(existing_entries.values()) + "\n\n"
+        return ''
+
+    merged = dict(existing_entries)  # key -> line, preserves all old entries
+
+    try:
+        jsonl_files = sorted(
+            [f for f in os.listdir(proj_folder) if f.endswith('.jsonl')],
+            key=lambda f: os.path.getmtime(os.path.join(proj_folder, f)),
+            reverse=True
+        )
+    except Exception:
+        jsonl_files = []
+
+    new_keys = []
+    for jf in jsonl_files:
+        jpath = os.path.join(proj_folder, jf)
+        sid = jf[:-6]
+        name_file = os.path.join(proj_folder, sid + '.name')
+        sess_name = ''
+        if os.path.exists(name_file):
+            try:
+                sess_name = open(name_file, encoding='utf-8').read().strip()
+            except Exception:
+                pass
+        preview, count = get_session_info(jpath)
+        if not preview:
+            continue
+        key = sess_name if sess_name else sid[:8]
+        line = f"- **{key}** ({count} msgs): {preview[:120]}"
+        if key not in merged:
+            new_keys.append(key)
+        merged[key] = line  # always update count/preview for existing keys
+
+    if not merged:
+        return ''
+
+    # New sessions first, then older ones (preserving existing order for old entries)
+    old_keys = [k for k in existing_entries if k not in new_keys]
+    ordered = new_keys + old_keys
+    # any keys in merged not yet ordered (edge case)
+    for k in merged:
+        if k not in ordered:
+            ordered.append(k)
+
+    return "## Session topics\n" + '\n'.join(merged[k] for k in ordered) + "\n\n"
+
+
+def _build_autogen_block(project_path, proj_folder):
+    """Build repos/commits/READMEs block (always refreshed)."""
+    block = ''
+
+    extra_paths = read_extra_paths(proj_folder)
+    search_roots = [(project_path, None)]
+    for ep in extra_paths:
+        if os.path.normcase(ep) != os.path.normcase(project_path):
+            search_roots.append((ep, ep))
+
+    seen_repos = set()
+    all_repos = []
+    for root, label_override in search_roots:
+        for repo in find_git_repos(root, max_depth=2):
+            key = os.path.normcase(repo)
+            if key not in seen_repos:
+                seen_repos.add(key)
+                all_repos.append((repo, root, label_override))
+
+    repos = [r for r, _, _ in all_repos]
+
+    for repo, base_root, label_override in all_repos:
+        rel = os.path.relpath(repo, base_root)
+        if label_override:
+            label = os.path.join(os.path.basename(label_override), rel) if rel != '.' else os.path.basename(label_override)
+        else:
+            label = '.' if rel == '.' else rel
+        try:
+            ru = subprocess.run(['git', '-C', repo, 'remote', 'get-url', 'origin'],
+                                capture_output=True, text=True, timeout=5)
+            origin = ru.stdout.strip() if ru.returncode == 0 else ''
+        except Exception:
+            origin = ''
+        block += f"## Repo: {label}" + (f"  ({origin})" if origin else "") + "\n"
+        try:
+            r = subprocess.run(['git', '-C', repo, 'log', '--oneline', '-7'],
+                               capture_output=True, text=True, timeout=5)
+            if r.returncode == 0 and r.stdout.strip():
+                block += f"```\n{r.stdout.strip()}\n```\n"
+        except Exception:
+            pass
+        for readme in ['README.md', 'readme.md', 'README.txt']:
+            rp = os.path.join(repo, readme)
+            if os.path.exists(rp):
+                try:
+                    with open(rp, 'r', encoding='utf-8', errors='ignore') as f:
+                        lines = f.readlines()[:15]
+                    block += "\n**README:**\n" + ''.join(lines) + "\n"
+                    break
+                except Exception:
+                    pass
+        block += "\n"
+
+    if not repos:
+        try:
+            items = sorted(os.listdir(project_path))[:25]
+            block += "## Root structure\n```\n" + '\n'.join(items) + "\n```\n\n"
+        except Exception:
+            pass
+
+    return block
+
+
+def _build_ai_context(project_path, proj_folder):
+    """Build rich plaintext context for AI prompt: tree, git repos, extra paths, sessions."""
+    SKIP_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.venv',
+                 '.tox', 'dist', 'build', '.mypy_cache', '.pytest_cache'}
+    parts = []
+
+    # 1. Directory tree (2 levels, skip noise)
+    parts.append("=== DIRECTORY STRUCTURE ===")
+    try:
+        def _tree(path, depth):
+            if depth > 2:
+                return
+            try:
+                entries = sorted(os.scandir(path), key=lambda e: (not e.is_dir(), e.name))[:20]
+            except (PermissionError, OSError):
+                return
+            for entry in entries:
+                indent = '  ' * depth
+                parts.append(f"{indent}{entry.name}{'/' if entry.is_dir() else ''}")
+                if entry.is_dir() and entry.name not in SKIP_DIRS and depth < 2:
+                    _tree(entry.path, depth + 1)
+        _tree(project_path, 0)
+    except Exception as e:
+        parts.append(f"(error: {e})")
+
+    # 2. Git repos across project + extra paths
+    extra_paths = read_extra_paths(proj_folder) if proj_folder else []
+    search_roots = [(project_path, None)]
+    for ep in extra_paths:
+        if os.path.normcase(ep) != os.path.normcase(project_path):
+            search_roots.append((ep, ep))
+
+    seen_repos = set()
+    for root, label in search_roots:
+        root_label = label or project_path
+        repos = find_git_repos(root, max_depth=2)
+        if repos:
+            parts.append(f"\n=== GIT REPOS ({root_label}) ===")
+        for repo in repos:
+            key = os.path.normcase(repo)
+            if key in seen_repos:
+                continue
+            seen_repos.add(key)
+            rel = os.path.relpath(repo, root)
+            parts.append(f"\nRepo: {rel if rel != '.' else os.path.basename(repo)}")
+            try:
+                r = subprocess.run(['git', '-C', repo, 'remote', 'get-url', 'origin'],
+                                   capture_output=True, text=True, timeout=5)
+                if r.returncode == 0 and r.stdout.strip():
+                    parts.append(f"Origin: {r.stdout.strip()}")
+            except Exception:
+                pass
+            try:
+                r = subprocess.run(['git', '-C', repo, 'branch', '--show-current'],
+                                   capture_output=True, text=True, timeout=5)
+                if r.returncode == 0 and r.stdout.strip():
+                    parts.append(f"Branch: {r.stdout.strip()}")
+            except Exception:
+                pass
+            try:
+                r = subprocess.run(['git', '-C', repo, 'log', '--oneline', '-15'],
+                                   capture_output=True, text=True, timeout=5)
+                if r.returncode == 0 and r.stdout.strip():
+                    parts.append(f"Recent commits:\n{r.stdout.strip()}")
+            except Exception:
+                pass
+            for readme in ['README.md', 'readme.md', 'README.txt', 'README.rst']:
+                rp = os.path.join(repo, readme)
+                if os.path.exists(rp):
+                    try:
+                        with open(rp, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read(3000)
+                        parts.append(f"README ({readme}):\n{content}")
+                        break
+                    except Exception:
+                        pass
+
+    # 3. Extra linked paths detail
+    if extra_paths:
+        parts.append("\n=== EXTRA LINKED PATHS ===")
+        for ep in extra_paths:
+            parts.append(f"\nLinked path: {ep}")
+            try:
+                items = sorted(os.listdir(ep))[:30]
+                parts.append(f"Contents: {', '.join(items)}")
+            except Exception:
+                parts.append("(unreadable)")
+
+    # 4. Session history (last 10 sessions, top 5 user msgs each)
+    if proj_folder and os.path.isdir(proj_folder):
+        parts.append("\n=== SESSION HISTORY ===")
+        try:
+            jsonl_files = sorted(
+                [f for f in os.listdir(proj_folder) if f.endswith('.jsonl')],
+                key=lambda f: os.path.getmtime(os.path.join(proj_folder, f)),
+                reverse=True
+            )[:10]
+        except Exception:
+            jsonl_files = []
+        for jf in jsonl_files:
+            jpath = os.path.join(proj_folder, jf)
+            sid = jf[:-6]
+            name = ''
+            name_path = os.path.join(proj_folder, sid + '.name')
+            if os.path.exists(name_path):
+                try:
+                    name = open(name_path, encoding='utf-8').read().strip()
+                except Exception:
+                    pass
+            ai_title, user_msgs = get_session_rich_summary(jpath)
+            label = name or ai_title or sid[:8]
+            if user_msgs:
+                parts.append(f"\nSession [{label}]:")
+                for msg in user_msgs[:5]:
+                    parts.append(f"  - {msg[:150]}")
+
+    return '\n'.join(parts)
+
+
+def _pager_confirm(title, content):
+    """Page through content in terminal. Returns True=approve, False=reject."""
+    lines = content.splitlines()
+    PAGE = 28
+    total_pages = max(1, (len(lines) + PAGE - 1) // PAGE)
+    page = 0
+    while True:
+        os.system('cls')
+        start = page * PAGE
+        chunk = lines[start:start + PAGE]
+        print(f"\n  {title}  (page {page+1}/{total_pages})\n")
+        print(f"  {'─' * W}")
+        for ln in chunk:
+            # indent and truncate to terminal width
+            print(f"  {ln[:W+10]}")
+        print(f"  {'─' * W}")
+        if page < total_pages - 1:
+            print(f"\n  SPACE next page   ENTER approve   ESC reject")
+        else:
+            print(f"\n  (end of content)")
+            print(f"  ENTER approve & write   ESC reject & discard   LEFT back")
+        key = ord(msvcrt.getch())
+        if key == 224:
+            k2 = ord(msvcrt.getch())
+            if k2 == 75 and page > 0:   # LEFT arrow
+                page -= 1
+            elif k2 == 77 and page < total_pages - 1:  # RIGHT arrow
+                page += 1
+        elif key == 32 and page < total_pages - 1:  # SPACE
+            page += 1
+        elif key == 8 and page > 0:    # BACKSPACE
+            page -= 1
+        elif key == 13:  # ENTER
+            return True
+        elif key == 27:  # ESC
+            return False
+
+
+def ai_scaffold_claude_md(project_path, proj_folder=None):
+    """Use Claude CLI (-p) to deeply analyze project and generate comprehensive CLAUDE.md."""
+    md_path = os.path.join(project_path, 'CLAUDE.md')
+    name = os.path.basename(project_path) or project_path
+
+    # Read existing CLAUDE.md.
+    # Update mode = any existing content (not just files with AI marker).
+    # This ensures we NEVER rewrite a file the user has edited manually.
+    existing_for_sessions = ''
+    is_update = False
+    existing_ai_sections = ''
+    if os.path.exists(md_path):
+        try:
+            existing_for_sessions = open(md_path, 'r', encoding='utf-8', errors='ignore').read()
+            if existing_for_sessions.strip():
+                is_update = True
+                # Extract content before AUTOGEN block to pass to Claude for updating
+                cut = (existing_for_sessions.index(_AUTOGEN_START)
+                       if _AUTOGEN_START in existing_for_sessions
+                       else len(existing_for_sessions))
+                existing_ai_sections = (existing_for_sessions[:cut]
+                                        .replace(_AI_MARKER + '\n', '')
+                                        .replace(_AI_MARKER, '')
+                                        .strip())
+        except Exception:
+            pass
+
+    # ── Confirmation screen ──────────────────────────────────────
+    os.system('cls')
+    print(f"\n  AI ANALYZE  /  {name}\n")
+    if is_update:
+        md_age = format_age(os.path.getmtime(md_path))
+        print(f"  Mode    : UPDATE  (existing file, last modified {md_age} ago)")
+        print(f"  Existing content preserved. Only outdated facts updated.")
+    else:
+        print(f"  Mode    : FRESH  (no existing CLAUDE.md)")
+        print(f"  Will generate full structured CLAUDE.md from project data.")
+    print(f"\n  ENTER start   ESC cancel\n")
+
+    # ── Optional extra prompt ────────────────────────────────────
+    extra_prompt = ''
+    while True:
+        key = ord(msvcrt.getch())
+        if key == 13:   # ENTER — show extra prompt input
+            os.system('cls')
+            print(f"\n  AI ANALYZE  /  {name}\n")
+            print(f"  Optional: add extra instructions for Claude (ENTER to skip)\n")
+            print(f"  Example: 'focus on API endpoints' / 'add client-facing language rules'\n")
+            extra_prompt = text_input("Extra instructions:", default='') or ''
+            break
+        elif key == 27: # ESC
+            return
+        # ignore any other key — require explicit ENTER
+
+    # Gather context
+    os.system('cls')
+    print(f"\n  AI ANALYZE  /  {name}\n")
+    print(f"  Gathering project context...", flush=True)
+    context = _build_ai_context(project_path, proj_folder)
+
+    # Build prompt — update vs fresh
+    _EXTRA = (f"\n\nADDITIONAL INSTRUCTIONS FROM USER:\n{extra_prompt}\n" if extra_prompt else '')
+    _TAIL = (
+        f"End the file with EXACTLY these four lines (no extra text after):\n"
+        f"<!-- AUTOGEN:START -->\n"
+        f"<!-- AUTOGEN:END -->\n"
+        f"<!-- SESSIONS:START -->\n"
+        f"<!-- SESSIONS:END -->\n\n"
+        f"CRITICAL: You are running in non-interactive print mode. A script reads your stdout.\n"
+        f"DO NOT use any tools (Write, Edit, Bash, or any other tool).\n"
+        f"DO NOT write or create any files.\n"
+        f"Output ONLY the raw CLAUDE.md text directly. No preamble, no code fences, no commentary."
+    )
+
+    if is_update:
+        prompt = (
+            f"Update the existing CLAUDE.md for project '{name}'.\n\n"
+            f"STRICT RULES:\n"
+            f"- Preserve ALL existing sections and their content verbatim unless factually wrong\n"
+            f"- Do NOT remove any section, even custom user-written ones\n"
+            f"- Do NOT rewrite sections that are still accurate\n"
+            f"- Only update specific facts that have clearly changed (new deps, new files, etc.)\n"
+            f"- Add new sections ONLY if clearly missing critical information\n"
+            f"- Preserve all user comments, notes, and custom content exactly\n\n"
+            f"EXISTING CLAUDE.MD (treat as ground truth — modify minimally):\n{existing_ai_sections}\n\n"
+            f"NEW PROJECT DATA (use ONLY to correct outdated facts):\n{context}\n\n"
+            f"Output the complete CLAUDE.md with minimal changes from the existing version.\n"
+            + _EXTRA + _TAIL
+        )
+    else:
+        prompt = (
+            f"Analyze this software project and write a comprehensive CLAUDE.md file.\n"
+            f"This file is context for future Claude Code sessions — be accurate and specific.\n\n"
+            f"PROJECT NAME: {name}\n"
+            f"PROJECT PATH: {project_path}\n\n"
+            f"PROJECT DATA:\n{context}\n\n"
+            f"Write CLAUDE.md with ONLY these sections (omit any section if truly not applicable):\n\n"
+            f"# {name}\n\n"
+            f"## Project context\n"
+            f"[What this project does, its purpose, current state]\n\n"
+            f"## Tech stack\n"
+            f"[Languages, frameworks, key libraries with versions if visible]\n\n"
+            f"## Architecture\n"
+            f"[Key components, how they interact, data flow]\n\n"
+            f"## Key files\n"
+            f"[Most important files/dirs and what they do]\n\n"
+            f"## Development workflow\n"
+            f"[How to build, run, test, deploy]\n\n"
+            f"## Important notes\n"
+            f"[Gotchas, special setup, known issues, conventions]\n\n"
+            + _EXTRA + _TAIL
+        )
+
+    # Locate claude.exe
+    claude_exe = os.path.join(os.environ['USERPROFILE'], '.local', 'bin', 'claude.exe')
+    if not os.path.exists(claude_exe):
+        print(f"\n  claude.exe not found at {claude_exe}")
+        print(f"  Falling back to standard scaffold...")
+        time.sleep(2)
+        scaffold_claude_md(project_path, proj_folder)
+        return
+
+    os.system('cls')
+    print(f"\n  AI ANALYZE  /  {name}  — generating...\n")
+    print(f"  {'─' * W}")
+    print(f"  Press ESC to cancel.\n", flush=True)
+
+    stderr_lines = []
+    cancelled = False
+    ai_content = ''
+
+    try:
+        proc = subprocess.Popen(
+            [claude_exe, '-p', prompt, '--output-format', 'stream-json', '--verbose', '--allowedTools', ''],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding='utf-8', errors='ignore',
+            cwd=project_path
+        )
+
+        # Reader thread feeds raw stdout lines into a queue
+        line_q = queue.Queue()
+        def _read_stdout():
+            for ln in iter(proc.stdout.readline, ''):
+                line_q.put(ln)
+            line_q.put(None)  # sentinel
+        def _read_stderr():
+            for ln in iter(proc.stderr.readline, ''):
+                stderr_lines.append(ln)
+
+        threading.Thread(target=_read_stdout, daemon=True).start()
+        threading.Thread(target=_read_stderr, daemon=True).start()
+
+        # Collect ALL raw events to a log so we can inspect structure if needed
+        _dbg_log = os.path.join(os.environ['TEMP'], 'ai_analyze_debug.jsonl')
+        _dbg_f = open(_dbg_log, 'w', encoding='utf-8')
+
+        printed_len = 0
+        spin_i = 0
+        spinner = ['|', '/', '-', '\\']
+        done = False
+
+        while not done:
+            try:
+                while True:
+                    raw = line_q.get_nowait()
+                    if raw is None:
+                        done = True
+                        break
+                    _dbg_f.write(raw if raw.endswith('\n') else raw + '\n')
+                    _dbg_f.flush()
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        ev = json.loads(raw)
+                    except Exception:
+                        continue
+                    etype = ev.get('type', '')
+
+                    # Collect candidate text from all known locations
+                    candidates = []
+                    # ev.message.content[].text  (standard API format)
+                    for block in ev.get('message', {}).get('content', []):
+                        if isinstance(block, dict) and block.get('type') == 'text':
+                            candidates.append(block.get('text', ''))
+                    # ev.content[].text
+                    for block in ev.get('content', []):
+                        if isinstance(block, dict) and block.get('type') == 'text':
+                            candidates.append(block.get('text', ''))
+                    # ev.delta.text  (streaming delta format)
+                    candidates.append(ev.get('delta', {}).get('text', ''))
+                    # ev.text  (direct)
+                    candidates.append(ev.get('text', ''))
+                    # ev.result / ev.output  (result event)
+                    candidates.append(ev.get('result', ''))
+                    candidates.append(ev.get('output', ''))
+
+                    text = max(candidates, key=len)
+                    if not text:
+                        continue
+
+                    if etype in ('assistant', 'result', 'text', 'content_block_delta', 'message'):
+                        if len(text) > printed_len:
+                            print(text[printed_len:], end='', flush=True)
+                            printed_len = len(text)
+                            ai_content = text
+                        elif text and not ai_content:
+                            # delta mode — append
+                            print(text, end='', flush=True)
+                            ai_content += text
+                            printed_len = len(ai_content)
+
+            except queue.Empty:
+                pass
+
+            if not done:
+                # Show spinner while waiting for next event
+                print(f"\r  {spinner[spin_i % 4]} ", end='', flush=True)
+                spin_i += 1
+                time.sleep(0.1)
+                if msvcrt.kbhit():
+                    key = ord(msvcrt.getch())
+                    if key == 27:  # ESC
+                        proc.terminate()
+                        cancelled = True
+                        done = True
+
+        _dbg_f.close()
+
+        proc.wait()
+
+    except Exception as e:
+        print(f"\n\n  Error: {e}")
+        print(f"  Falling back to standard scaffold...")
+        time.sleep(2)
+        scaffold_claude_md(project_path, proj_folder)
+        return
+
+    if cancelled:
+        print(f"\n\n  Cancelled. Falling back to standard scaffold...")
+        time.sleep(1)
+        scaffold_claude_md(project_path, proj_folder)
+        return
+
+    if not ai_content or proc.returncode != 0:
+        msg = ''.join(stderr_lines).strip()[:200] if stderr_lines else 'no output'
+        print(f"\n\n  AI analysis failed: {msg}")
+        print(f"  Falling back to standard scaffold...")
+        time.sleep(2)
+        scaffold_claude_md(project_path, proj_folder)
+        return
+
+    print(f"\n  {'─' * W}\n")
+
+    # Inject mechanical blocks into AUTOGEN/SESSIONS placeholders
+    autogen_content = _build_autogen_block(project_path, proj_folder)
+    new_autogen = f"{_AUTOGEN_START}\n{autogen_content}{_AUTOGEN_END}\n"
+
+    existing_sessions = _parse_existing_sessions(existing_for_sessions)
+    sessions_content = _build_sessions_block(proj_folder, existing_sessions)
+    new_sessions = (f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n"
+                    if sessions_content else f"{_SESSIONS_START}\n{_SESSIONS_END}\n")
+
+    # Replace AUTOGEN block
+    if _AUTOGEN_START in ai_content and _AUTOGEN_END in ai_content:
+        pre  = ai_content[:ai_content.index(_AUTOGEN_START)]
+        post = ai_content[ai_content.index(_AUTOGEN_END) + len(_AUTOGEN_END):]
+    else:
+        pre  = ai_content.rstrip('\n') + '\n\n'
+        post = ''
+
+    # Replace SESSIONS block in remainder
+    if _SESSIONS_START in post and _SESSIONS_END in post:
+        post = (post[:post.index(_SESSIONS_START)]
+                + new_sessions
+                + post[post.index(_SESSIONS_END) + len(_SESSIONS_END):])
+    else:
+        post = (post.rstrip('\n') + '\n\n' + new_sessions) if post.strip() else new_sessions
+
+    final = pre + new_autogen + post
+
+    # Preview full final content (with injected AUTOGEN/SESSIONS) — approve or reject
+    if not _pager_confirm(f"AI ANALYZE  /  {name}  — approve to write CLAUDE.md", final):
+        os.system('cls')
+        print(f"\n  Rejected — CLAUDE.md not written.\n")
+        time.sleep(1)
+        return
+
+    # Inject AI marker as second line (after the # title) so future runs detect update mode
+    # Only scan first 5 lines to avoid matching '# Heading' inside README content in AUTOGEN block
+    lines = final.split('\n')
+    insert_at = 1
+    for i, ln in enumerate(lines[:5]):
+        if ln.strip().startswith('# '):
+            insert_at = i + 1
+            break
+    if _AI_MARKER not in final:
+        lines.insert(insert_at, _AI_MARKER)
+    final = '\n'.join(lines)
+
+    try:
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(final)
+        print(f"  Done — CLAUDE.md {'updated' if is_update else 'written'}.")
+        time.sleep(1)
+    except Exception as e:
+        print(f"\n  Write error: {e}")
+        time.sleep(2)
+        return
+
+    try:
+        subprocess.Popen([r'C:\Program Files\Notepad++\notepad++.exe',md_path])
+    except Exception:
+        pass
+
+
+def scaffold_claude_md(project_path, proj_folder=None):
+    md_path = os.path.join(project_path, 'CLAUDE.md')
+    name = os.path.basename(project_path) or project_path
+
+    existing = ''
+    if os.path.exists(md_path):
+        try:
+            existing = open(md_path, 'r', encoding='utf-8', errors='ignore').read()
+        except Exception:
+            pass
+
+    # Build fresh repos/commits/READMEs block
+    autogen_content = _build_autogen_block(project_path, proj_folder)
+    new_autogen = f"{_AUTOGEN_START}\n{autogen_content}{_AUTOGEN_END}\n"
+
+    # Merge session topics (accumulate, never discard old entries)
+    existing_sessions = _parse_existing_sessions(existing)
+    sessions_content = _build_sessions_block(proj_folder, existing_sessions)
+    new_sessions = f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n" if sessions_content else ''
+
+    if existing:
+        # Replace AUTOGEN block in-place
+        if _AUTOGEN_START in existing and _AUTOGEN_END in existing:
+            pre  = existing[:existing.index(_AUTOGEN_START)]
+            post = existing[existing.index(_AUTOGEN_END) + len(_AUTOGEN_END):]
+        else:
+            pre  = existing.rstrip('\n') + '\n\n'
+            post = ''
+        # Replace or append SESSIONS block from post section
+        if _SESSIONS_START in post and _SESSIONS_END in post:
+            post = post[:post.index(_SESSIONS_START)] + (new_sessions or '') + post[post.index(_SESSIONS_END) + len(_SESSIONS_END):]
+        elif new_sessions:
+            post = post.rstrip('\n') + '\n\n' + new_sessions
+        final = pre + new_autogen + post
+    else:
+        # First time
+        final = (f"# {name}\n\n"
+                 f"## Project context\n"
+                 f"<!-- Edit this section freely — it will never be overwritten -->\n\n"
+                 + new_autogen
+                 + ('\n' + new_sessions if new_sessions else ''))
+
+    try:
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(final)
+    except Exception:
+        return
+    try:
+        subprocess.Popen([r'C:\Program Files\Notepad++\notepad++.exe',md_path])
+    except Exception:
+        pass
+
+

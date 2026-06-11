@@ -1,0 +1,17 @@
+# Project-specific Claude context (private)
+CLAUDE.md
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# Local setup / environment launchers (machine-specific)
+Environment Start.bat
+setup environment.ico
+*.lnk
