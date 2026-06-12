@@ -129,6 +129,7 @@ def view_transcript(proj_folder, sid, project_name, project_path):
 
     width = max(40, render.content_width() - 6)
     lines = []
+    marks = []   # line index of each message start → pager position counter
     for m in msgs:
         ts = ''
         if m['ts']:
@@ -139,6 +140,7 @@ def view_transcript(proj_folder, sid, project_name, project_path):
                 pass
             if ep:
                 ts = f"  {C_DIM}{datetime.fromtimestamp(ep).strftime('%H:%M')}{C_RESET}"
+        marks.append(len(lines))
         if m['role'] == 'user':
             lines.append(f"{C_ACCENT}▸ You{C_RESET}{ts}")
         else:
@@ -150,13 +152,15 @@ def view_transcript(proj_folder, sid, project_name, project_path):
 
     if not lines:
         lines = [f"{C_DIM}(no conversation text in this session){C_RESET}"]
+        marks = []
 
     show_meta = False
     while True:
         header = metadata_lines(stats, name, sid) if show_meta else None
         key = pager(('CLAUDECTL', project_name, 'TRANSCRIPT'),
                     lines, hint="i info   e export",
-                    header_lines=header, extra_keys=('i', 'e'))
+                    header_lines=header, extra_keys=('i', 'e'),
+                    marks=marks, mark_label='msg')
         if key == 'i':
             show_meta = not show_meta
             continue

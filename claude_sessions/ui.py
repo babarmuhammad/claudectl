@@ -330,27 +330,56 @@ def settings_menu():
                 flash("Saved")
 
 
-def pager(crumbs, lines, hint='', header_lines=None, extra_keys=()):
-    """Scrollable frame-rendered pager.
+def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
+          marks=None, mark_label='msg'):
+    """Scrollable frame-rendered pager with in-content search.
     crumbs: breadcrumb tuple for the header bar.
     lines: pre-wrapped content lines (ANSI ok).
     header_lines: optional pinned lines under the header.
     extra_keys: chars returned to the caller when pressed (e.g. ('i','e')).
+    marks: optional sorted line indices of logical units (e.g. message starts) —
+           the position indicator then counts units instead of raw lines.
     Returns None on exit, or the pressed extra key."""
+    import bisect
+
     top = 0
     header_lines = header_lines or []
+    query = ''
+    matches = []
+
+    def _find(q):
+        ql = q.lower()
+        return [i for i, ln in enumerate(lines)
+                if ql in render.strip_ansi(ln).lower()]
+
     while True:
         page = max(4, render.frame_height() - len(header_lines) - 6)
         top = max(0, min(top, max(0, len(lines) - page)))
-        pos = f"{min(top + page, len(lines))}/{len(lines)}"
+
+        if marks:
+            cur = bisect.bisect_right(marks, top)
+            pos = f"{mark_label} {max(1, cur)}/{len(marks)}"
+        else:
+            pos = f"{min(top + page, len(lines))}/{len(lines)}"
+        if query:
+            mpos = bisect.bisect_right(matches, top)
+            pos += f"   {C_SRCH}'{query}' {mpos}/{len(matches)}{C_RESET}"
+
+        match_set = set(matches) if query else ()
         frame = [render.header(*crumbs), '']
         frame += header_lines
         if header_lines:
             frame.append(render.hline())
-        for ln in lines[top:top + page]:
-            frame.append(render.fit('  ' + ln, render.content_width()))
+        for idx in range(top, min(top + page, len(lines))):
+            ln = lines[idx]
+            if idx in match_set:
+                frame.append(f"{C_SRCH}▌{C_RESET}" +
+                             render.fit(' ' + ln, render.content_width() - 1))
+            else:
+                frame.append(render.fit('  ' + ln, render.content_width()))
         frame += ['', render.hint_bar(
-            f"{pos}   ↑↓ scroll   ←→/SPACE page   ESC back" + (f"   {hint}" if hint else ''))]
+            f"{pos}   ↑↓ scroll   ←→/SPACE page   / search   n/p match   ESC back"
+            + (f"   {hint}" if hint else ''))]
         render.render_frame(frame)
 
         ev = wait_event()
@@ -364,7 +393,28 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=()):
             top += page
         elif ev[0] == 'char' and ev[1] == ' ':
             top += page
-        elif ev[0] in ('esc', 'enter'):
+        elif ev[0] == 'char' and ev[1] == '/':
+            q = text_input("Search transcript:", default=query)
+            if q is not None:
+                query = q
+                matches = _find(query) if query else []
+                if query and not matches:
+                    flash(f"No matches for '{query}'", ok=False)
+                elif matches:
+                    top = matches[0]
+        elif ev[0] == 'char' and ev[1] == 'n' and matches:
+            nxt = [m for m in matches if m > top]
+            top = nxt[0] if nxt else matches[0]          # wrap to first
+        elif ev[0] == 'char' and ev[1] == 'p' and matches:
+            prv = [m for m in matches if m < top]
+            top = prv[-1] if prv else matches[-1]        # wrap to last
+        elif ev[0] == 'esc':
+            if query:
+                query = ''
+                matches = []
+            else:
+                return None
+        elif ev[0] == 'enter':
             return None
         elif ev[0] == 'char' and ev[1] in extra_keys:
             return ev[1]

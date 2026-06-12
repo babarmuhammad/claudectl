@@ -12,7 +12,7 @@ Claude Code treats your work as a collection of chats. claudectl treats each pro
 - **Session browser** — every Claude Code project and session, sorted by recency
 - **Quick-resume** — ★/☆ shortcuts on the main screen jump straight back into recent sessions across all projects
 - **Search** — type to filter sessions live; **🔍 Search all sessions** finds and resumes any session across every project
-- **Transcript viewer & export** — read any session in a pager (`v`), export to markdown (`e`)
+- **Transcript viewer & export** — read any session in a pager (`v`) with full-text search inside the conversation (`/`, `n`/`p` to jump between matches) and a message-position counter; export to markdown (`e`)
 - **Session info** — per-session tokens, est. cost, models, git branch, duration (`i`)
 - **Archive** — move sessions to a restorable `archived/` folder instead of deleting (`d`, toggle view with `A`)
 - **Rename / Fork / Continue** — rename (`r`), fork (`f`), or continue the latest session (`claude -c`)
@@ -100,9 +100,17 @@ Then right-click the Desktop shortcut → **Pin to taskbar**.
 On launch, claudectl shows all projects Claude Code has ever opened, sorted by most recently used.
 
 - Quick-resume items appear at the top (★ = most recent session, ☆ = older sessions)
-- All other projects follow, sorted by recency
+- All other projects follow, sorted by recency — type to filter live
 - The MCP status footer shows connected MCP servers once the background check completes
-- Select **⚙ Global CLAUDE.md / MCP Analysis** at the bottom to open the global context menu
+- Bottom menu: **🔍 Search all sessions**, **⚙ Usage stats**, **⚙ Global CLAUDE.md / MCP Analysis**, **⚙ Settings**, **? Help**
+
+### 🔍 Search all sessions
+
+Indexes session names, AI titles, and previews across every project (cached — instant after the first scan). Type to filter, ENTER resumes the selected session directly, no matter which project it belongs to.
+
+### ⚙ Usage stats
+
+Per-project table of sessions, messages, tokens (in / out / cache) and estimated API-equivalent cost, parsed from local transcripts. ENTER drills into per-session rows. Costs are estimates at published API rates — useful as a value/consumption gauge if you're on a subscription plan. First scan shows progress and can be stopped with ESC (partial results); later opens are instant thanks to a persistent cache.
 
 ### Quick-resume items (★ / ☆)
 
@@ -110,7 +118,7 @@ These are the 5 most recently used sessions across all projects. Selecting one i
 
 ### ⚙ Global CLAUDE.md / MCP Analysis
 
-Opens a sub-menu listing all connected MCP servers. Select any server to run Claude with a prompt that calls the MCP's `tools/list` endpoint and formats the result as markdown. The output is written into `~/.claude/CLAUDE.md` inside a per-server sentinel block so it can be cleanly updated on subsequent runs. You can also open the global CLAUDE.md directly in Notepad++ from this menu.
+Opens a sub-menu listing all connected MCP servers. Select any server to run Claude with a prompt that calls the MCP's `tools/list` endpoint and formats the result as markdown. The output is written into `~/.claude/CLAUDE.md` inside a per-server sentinel block so it can be cleanly updated on subsequent runs. You can also open the global CLAUDE.md directly in your editor from this menu.
 
 ---
 
@@ -121,8 +129,9 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 | Key | Action |
 |-----|--------|
 | ↑ / ↓ | Navigate |
-| ENTER | Select project |
-| ESC | Exit |
+| ENTER | Select project / resume / open menu item |
+| Type text | Filter projects live |
+| ESC | Clear filter, then exit |
 
 ### Sessions screen (session list for a project)
 
@@ -147,6 +156,20 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 | ? | Help / keyboard reference |
 | BACKSPACE | Delete last filter character |
 | Type text | Filter sessions live by name or preview |
+
+### Transcript viewer (`v`)
+
+| Key | Action |
+|-----|--------|
+| ↑ / ↓ | Scroll line by line |
+| ← / → / SPACE | Page up / down |
+| / | Search inside the conversation |
+| n / p | Jump to next / previous match (wraps) |
+| i | Toggle session info header (tokens, cost, models, branch) |
+| e | Export to markdown |
+| ESC | Clear search, then exit |
+
+The footer shows your position as `msg N/M` — counting conversation messages, not raw lines.
 
 ### Launch options screen
 
@@ -225,6 +248,7 @@ Access via: main screen → **⚙ Global CLAUDE.md / MCP Analysis**
 | Window closes instantly with an error | Check `%TEMP%\claudectl_crash.log` — the crash handler writes the traceback there |
 | Projects missing from the list | The project folder was moved/deleted, or the path can't be decoded — see *Session encoding* below |
 | Settings location | `~/.claude/claudectl.json` — safe to edit by hand or delete to reset |
+| Usage stats look stale | Delete `~/.claude/claudectl-stats-cache.json` — it rebuilds on the next scan |
 
 ---
 
