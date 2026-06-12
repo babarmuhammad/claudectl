@@ -1,10 +1,19 @@
 import os
+import re
 
 
 # ── path resolution ──────────────────────────────────────────
 
+# Claude Code encodes each path component with /[^a-zA-Z0-9]/g -> '-'
+# (verified against claude.exe). ASCII-only: dots, spaces, _, +, #, parens,
+# AND non-ASCII letters (accents, CJK) all collapse to '-'. Mirror it
+# exactly — Python's str.isalnum() is Unicode-aware and would wrongly keep
+# accented chars, so use an explicit ASCII class instead.
+_NON_ALNUM = re.compile(r'[^a-zA-Z0-9]')
+
+
 def encode_component(name):
-    return ''.join('-' if c in '_+-#' else c for c in name)
+    return _NON_ALNUM.sub('-', name)
 
 
 def find_actual_path(encoded, max_depth=8):

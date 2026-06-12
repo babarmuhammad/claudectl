@@ -14,6 +14,12 @@ def test_encode_component_specials():
     assert encode_component('my_app') == 'my-app'
     assert encode_component('c++') == 'c--'
     assert encode_component('a#b_c+d-e') == 'a-b-c-d-e'
+    # dots and spaces are separators too (Claude Code replaces all non-alnum)
+    assert encode_component('IKM.Platform.AINode') == 'IKM-Platform-AINode'
+    assert encode_component('My Project (v2)') == 'My-Project--v2-'
+    # ASCII-only: non-ASCII letters collapse to '-' (matches Claude's /[^a-zA-Z0-9]/g)
+    assert encode_component('Caffè') == 'Caff-'
+    assert encode_component('日本') == '--'
 
 
 def test_find_actual_path_no_separator():
