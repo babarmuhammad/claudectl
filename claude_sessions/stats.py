@@ -4,13 +4,13 @@ import os
 import json
 
 from .config import (COST_PER_MTOK, CACHE_READ_MULT, CACHE_WRITE_MULT,
-                     load_settings, projects_dir, _USERPROFILE,
+                     load_settings, projects_dir, config_dir,
                      C_RESET, C_DIM, C_BOLD, C_TITLE)
 from .sessions import get_session_stats, scan_sessions, format_age, load_name
 from . import sessions as _sessions
 from . import render
 
-cache_file = os.path.join(_USERPROFILE, '.claude', 'claudectl-stats-cache.json')
+cache_file = os.path.join(config_dir, 'claudectl-stats-cache.json')
 
 _disk_cache  = None    # path -> {'key': [mtime_ns, size], 'stats': {...}}
 _cache_dirty = False

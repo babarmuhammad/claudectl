@@ -282,12 +282,14 @@ def settings_menu():
         wv = render.content_width() - 22
         editor_now = render.trunc(s['editor'] or (find_editor() or 'NOT FOUND'), wv)
         claude_now = render.trunc(s['claude_exe'] or (get_claude_exe() or 'NOT FOUND'), wv)
+        cfg_now = render.trunc(s['claude_config_dir'] or 'default (~/.claude)', wv)
         eff = s['default_effort'] or 'default'
         mod = s['default_model'] or 'default'
         perm = s['default_permission'] or 'default'
         items = [
             (f"Editor      :  {editor_now}", 'editor'),
             (f"claude.exe  :  {claude_now}", 'claude'),
+            (f"Config dir  :  {cfg_now}   {C_DIM}(CLAUDE_CONFIG_DIR / account){C_RESET}", 'config_dir'),
             (f"Effort      :  {eff}   {C_DIM}(preselected in launch options){C_RESET}", 'effort'),
             (f"Model       :  {mod}   {C_DIM}(preselected in launch options){C_RESET}", 'model'),
             (f"Permissions :  {perm}   {C_DIM}(--permission-mode){C_RESET}", 'permission'),
@@ -316,6 +318,17 @@ def settings_menu():
                     s['claude_exe'] = v
                     save_settings(s)
                     flash("Saved")
+        elif sel == 'config_dir':
+            v = text_input("CLAUDE_CONFIG_DIR (blank = default ~/.claude):",
+                           default=s['claude_config_dir'])
+            if v is not None:
+                expanded = os.path.expanduser(os.path.expandvars(v)) if v else ''
+                if v and not os.path.isdir(expanded):
+                    flash(f"Dir not found: {expanded}", ok=False, secs=1.4)
+                else:
+                    s['claude_config_dir'] = v
+                    save_settings(s)
+                    flash("Saved — restart claudectl to apply", secs=1.6)
         elif sel in ('effort', 'model', 'permission'):
             values, labels = {
                 'effort':     (EFFORTS, EFFORT_LABELS),

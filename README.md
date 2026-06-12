@@ -37,7 +37,7 @@ Claude Code treats your work as a collection of chats. claudectl treats each pro
 
 **Quality of life**
 - **AI session titles** — sessions without a manual name show their AI-generated transcript title
-- **Settings screen** (⚙) — configure editor, claude.exe path, and default launch options (`~/.claude/claudectl.json`)
+- **Settings screen** (⚙) — configure editor, claude.exe path, **config dir / account** (`CLAUDE_CONFIG_DIR`), and default launch options (`~/.claude/claudectl.json`)
 - **Help screen** — press `?` for a keyboard reference
 
 ---
@@ -247,7 +247,8 @@ Access via: main screen → **⚙ Global CLAUDE.md / MCP Analysis**
 | Generated files don't open in an editor | Set your editor path in **⚙ Settings** (auto-detects Notepad++, VS Code, falls back to Notepad) |
 | Window closes instantly with an error | Check `%TEMP%\claudectl_crash.log` — the crash handler writes the traceback there |
 | Projects missing from the list | The project folder was moved/deleted, or the path can't be decoded — see *Session encoding* below |
-| Settings location | `~/.claude/claudectl.json` — safe to edit by hand or delete to reset |
+| Wrong account / want a second account | Set **Config dir** in **⚙ Settings** to that account's `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work`). Drives both session browsing and the env handed to `claude` at launch. Blank = default `~/.claude`. Restart claudectl to apply. One config dir active at a time. |
+| Settings location | `~/.claude/claudectl.json` — safe to edit by hand or delete to reset (always read from `~/.claude`, independent of Config dir) |
 | Usage stats look stale | Delete `~/.claude/claudectl-stats-cache.json` — it rebuilds on the next scan |
 
 ---

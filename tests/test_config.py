@@ -41,6 +41,25 @@ def test_load_settings_corrupt_file(monkeypatch, tmp_path):
     assert s == config._DEFAULT_SETTINGS or s['editor'] == ''
 
 
+def test_get_config_dir_default(monkeypatch, tmp_path):
+    monkeypatch.setattr(config, 'settings_file', str(tmp_path / 'nope.json'))
+    assert config.get_config_dir() == os.path.join(config._USERPROFILE, '.claude')
+
+
+def test_get_config_dir_override(monkeypatch, tmp_path):
+    f = tmp_path / 'claudectl.json'
+    f.write_text(json.dumps({'claude_config_dir': str(tmp_path / 'acct')}), encoding='utf-8')
+    monkeypatch.setattr(config, 'settings_file', str(f))
+    assert config.get_config_dir() == str(tmp_path / 'acct')
+
+
+def test_get_config_dir_expands(monkeypatch, tmp_path):
+    f = tmp_path / 'claudectl.json'
+    f.write_text(json.dumps({'claude_config_dir': '~/.claude-work'}), encoding='utf-8')
+    monkeypatch.setattr(config, 'settings_file', str(f))
+    assert config.get_config_dir() == os.path.expanduser('~/.claude-work')
+
+
 def test_find_editor_returns_existing_or_none():
     e = config.find_editor()
     assert e is None or os.path.exists(e)

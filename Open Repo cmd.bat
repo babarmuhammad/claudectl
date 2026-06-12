@@ -20,7 +20,7 @@ if not exist "%CHOICE_FILE%" (
     exit /b
 )
 
-for /f "usebackq tokens=1-9 delims=|" %%A in ("%CHOICE_FILE%") do (
+for /f "usebackq tokens=1-10 delims=|" %%A in ("%CHOICE_FILE%") do (
     set "T1=%%A"
     set "T2=%%B"
     set "T3=%%C"
@@ -30,11 +30,31 @@ for /f "usebackq tokens=1-9 delims=|" %%A in ("%CHOICE_FILE%") do (
     set "T7=%%G"
     set "T8=%%H"
     set "T9=%%I"
+    set "T10=%%J"
 )
 
-if "!T1!"=="v2" (
-    rem v2 format: v2^|path^|encoded^|action^|effort^|model^|perm^|name^|worktree
+set "CFGDIR="
+if "!T1!"=="v3" (
+    rem v3 format: v3^|path^|encoded^|action^|effort^|model^|perm^|name^|worktree^|config_dir
     rem empty fields are written as '-' so for /f cannot collapse them
+    set "SCELTA=!T2!"
+    set "ENCODED=!T3!"
+    set "ACTION=!T4!"
+    set "EFFORT=!T5!"
+    set "MODEL=!T6!"
+    set "PERM=!T7!"
+    set "SNAME=!T8!"
+    set "WTREE=!T9!"
+    set "CFGDIR=!T10!"
+    if "!EFFORT!"=="-" set "EFFORT="
+    if "!MODEL!"=="-"  set "MODEL="
+    if "!PERM!"=="-"   set "PERM="
+    if "!SNAME!"=="-"  set "SNAME="
+    if "!WTREE!"=="-"  set "WTREE="
+    if "!ENCODED!"=="-" set "ENCODED="
+    if "!CFGDIR!"=="-" set "CFGDIR="
+) else if "!T1!"=="v2" (
+    rem v2 format: v2^|path^|encoded^|action^|effort^|model^|perm^|name^|worktree
     set "SCELTA=!T2!"
     set "ENCODED=!T3!"
     set "ACTION=!T4!"
@@ -65,8 +85,14 @@ del "%CHOICE_FILE%"
 
 cd /d "!SCELTA!"
 
+rem -- pin account / config dir (v3+) ------------------------
+rem Empty CFGDIR -> default ~/.claude; set it explicitly so it overrides
+rem any ambient CLAUDE_CONFIG_DIR this console was launched under.
+if "!CFGDIR!"=="" set "CFGDIR=%USERPROFILE%\.claude"
+set "CLAUDE_CONFIG_DIR=!CFGDIR!"
+
 rem -- inject per-project extra PATH entries ------------------
-set "EXTRA_PATHS_FILE=%USERPROFILE%\.claude\projects\!ENCODED!\extra-paths.txt"
+set "EXTRA_PATHS_FILE=!CFGDIR!\projects\!ENCODED!\extra-paths.txt"
 if exist "!EXTRA_PATHS_FILE!" (
     for /f "usebackq delims=" %%P in ("!EXTRA_PATHS_FILE!") do set "PATH=%%P;!PATH!"
 )
@@ -89,9 +115,9 @@ if "!WTREE!"=="*" (
 ) else if not "!WTREE!"=="" (
     set WT_FLAG=-w "!WTREE!"
 )
-set "SYS_PROMPT_FILE=%USERPROFILE%\.claude\projects\!ENCODED!\system-prompt.txt"
+set "SYS_PROMPT_FILE=!CFGDIR!\projects\!ENCODED!\system-prompt.txt"
 if exist "!SYS_PROMPT_FILE!" set SPFILE_FLAG=--system-prompt-file "!SYS_PROMPT_FILE!"
-set "ADD_DIRS_FILE=%USERPROFILE%\.claude\projects\!ENCODED!\add-dirs.txt"
+set "ADD_DIRS_FILE=!CFGDIR!\projects\!ENCODED!\add-dirs.txt"
 if exist "!ADD_DIRS_FILE!" (
     for /f "usebackq delims=" %%P in ("!ADD_DIRS_FILE!") do (
         if exist "%%P\" set ADDDIRS=!ADDDIRS! "%%P"

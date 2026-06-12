@@ -3,7 +3,7 @@ import sys
 import atexit
 import subprocess
 
-from .config import projects_dir, choice_file, global_claude_md
+from .config import projects_dir, choice_file, global_claude_md, config_dir
 from .config import C_RESET, C_STAR, C_DIM, C_TITLE, C_BOLD
 from .config import get_claude_exe, load_settings, save_settings
 from .paths import find_actual_path
@@ -196,7 +196,7 @@ def run():
         print(f"\n  Internal error — invalid action: {choice!r}")
         pause("\n  Press Enter to exit...")
         sys.exit(1)
-    if '|' in f"{path}{encoded_name}{choice}{opts['name']}{opts['worktree']}":
+    if '|' in f"{path}{encoded_name}{choice}{opts['name']}{opts['worktree']}{config_dir}":
         _cls()
         print(f"\n  Internal error — '|' not allowed in launch data.")
         pause("\n  Press Enter to exit...")
@@ -222,14 +222,16 @@ def run():
 
 
 def build_choice_line(path, encoded_name, choice, opts):
-    """v2 choice-file line. Sentinel '-' for empty fields: cmd's for /f
+    """v3 choice-file line. Sentinel '-' for empty fields: cmd's for /f
     collapses consecutive delimiters, which silently shifted fields in the
-    old 5-field format (empty effort + set model -> model became effort)."""
+    old 5-field format (empty effort + set model -> model became effort).
+    v3 appends config_dir so the bat launcher can pin CLAUDE_CONFIG_DIR and
+    resolve per-project files under the active account's config dir."""
     def sv(x):
         return x if x else '-'
-    return '|'.join(['v2', path, encoded_name or '-', choice,
+    return '|'.join(['v3', path, encoded_name or '-', choice,
                      sv(opts['effort']), sv(opts['model']), sv(opts['perm']),
-                     sv(opts['name']), sv(opts['worktree'])])
+                     sv(opts['name']), sv(opts['worktree']), sv(config_dir)])
 
 
 def _direct_launch(path, encoded_name, choice, opts):
@@ -241,6 +243,9 @@ def _direct_launch(path, encoded_name, choice, opts):
     proj_folder = os.path.join(projects_dir, encoded_name) if encoded_name else None
 
     env = os.environ.copy()
+    # Pin the account/config dir explicitly — overrides any ambient
+    # CLAUDE_CONFIG_DIR claudectl itself may have been launched under.
+    env['CLAUDE_CONFIG_DIR'] = config_dir
     extra = read_extra_paths(proj_folder)
     if extra:
         env['PATH'] = ';'.join(extra) + ';' + env.get('PATH', '')

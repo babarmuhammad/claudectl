@@ -5,19 +5,19 @@ import shutil
 _USERPROFILE = os.environ.get('USERPROFILE') or os.path.expanduser('~')
 _TEMP        = os.environ.get('TEMP') or os.environ.get('TMP') or _USERPROFILE
 
-projects_dir = os.path.join(_USERPROFILE, '.claude', 'projects')
 choice_file = os.environ.get('CHOICE_FILE', os.path.join(_TEMP, 'choice_claude.txt'))
-last_session_file = os.path.join(projects_dir, 'last-session.json')
 
-global_claude_md = os.path.join(_USERPROFILE, '.claude', 'CLAUDE.md')
-
-# ── user settings (~/.claude/claudectl.json) ─────────────────
+# ── user settings ────────────────────────────────────────────
+# settings_file is FIXED under ~/.claude (account-independent) so the
+# claude_config_dir selector can always be read regardless of which
+# config dir is active.
 
 settings_file = os.path.join(_USERPROFILE, '.claude', 'claudectl.json')
 
 _DEFAULT_SETTINGS = {
     'editor': '',              # path to preferred text editor ('' = auto-detect)
     'claude_exe': '',          # path to claude.exe ('' = auto-detect)
+    'claude_config_dir': '',   # CLAUDE_CONFIG_DIR override ('' = default ~/.claude)
     'default_effort': '',      # preselected effort in launch options
     'default_model': '',       # preselected model in launch options
     'default_permission': '',  # preselected --permission-mode
@@ -62,6 +62,25 @@ def save_settings(s):
         return True
     except Exception:
         return False
+
+
+# ── active config dir ────────────────────────────────────────
+# claude_config_dir setting drives BOTH session browsing (projects_dir)
+# and the CLAUDE_CONFIG_DIR env handed to claude.exe at launch, so the
+# whole tool works against one account/config dir at a time.
+
+def get_config_dir():
+    """Resolve active CLAUDE_CONFIG_DIR. Setting > default ~/.claude."""
+    override = load_settings().get('claude_config_dir', '')
+    if override:
+        return os.path.expanduser(os.path.expandvars(override))
+    return os.path.join(_USERPROFILE, '.claude')
+
+
+config_dir        = get_config_dir()
+projects_dir      = os.path.join(config_dir, 'projects')
+last_session_file = os.path.join(projects_dir, 'last-session.json')
+global_claude_md  = os.path.join(config_dir, 'CLAUDE.md')
 
 
 # ── executable discovery ────────────────────────────────────

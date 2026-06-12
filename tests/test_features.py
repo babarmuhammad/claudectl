@@ -5,6 +5,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from claude_sessions.main import build_choice_line
+from claude_sessions.config import config_dir
 from claude_sessions.sessions import get_session_stats
 from claude_sessions.transcript import _slug, iter_transcript
 from claude_sessions.stats import estimate_cost, fmt_tok
@@ -14,9 +15,9 @@ from claude_sessions.session_menu import _sid_of, _move_session
 OPTS = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
 
 
-def test_choice_line_v2_sentinels():
+def test_choice_line_v3_sentinels():
     line = build_choice_line(r'D:\proj', 'D--proj', 'new', dict(OPTS))
-    assert line == r'v2|D:\proj|D--proj|new|-|-|-|-|-'
+    assert line == rf'v3|D:\proj|D--proj|new|-|-|-|-|-|{config_dir}'
 
 
 def test_choice_line_empty_effort_set_model():
@@ -32,7 +33,7 @@ def test_choice_line_full():
     o = dict(OPTS, effort='high', model='fable-5', perm='plan',
              name='My Sess', worktree='*')
     line = build_choice_line(r'D:\p', 'D--p', 'new', o)
-    assert line == r'v2|D:\p|D--p|new|high|fable-5|plan|My Sess|*'
+    assert line == rf'v3|D:\p|D--p|new|high|fable-5|plan|My Sess|*|{config_dir}'
 
 
 def test_sid_of():
