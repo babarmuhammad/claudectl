@@ -9,7 +9,7 @@ from harness import Sandbox
 from claude_sessions import main as main_mod
 
 
-OPTS0 = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
+OPTS0 = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': '', 'agent': ''}
 
 
 def captured_launch(monkeypatch, sb, choice, opts, folder_files=None,
@@ -64,6 +64,13 @@ def test_direct_launch_continue(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     call = captured_launch(monkeypatch, sb, 'continue', {})
     assert argv_of(call)[1] == '-c'
+
+
+def test_direct_launch_agent(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    call = captured_launch(monkeypatch, sb, 'resume:abc', {'agent': 'reviewer'})
+    argv = argv_of(call)
+    assert '--agent' in argv and argv[argv.index('--agent') + 1] == 'reviewer'
 
 
 def test_direct_launch_all_flags(monkeypatch, tmp_path):
@@ -122,13 +129,13 @@ def test_choice_line_matrix(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)          # pins main_mod.config_dir
     cfg = str(sb.cfg)
     cases = [
-        ('new', dict(OPTS0), f'v3|P|E|new|-|-|-|-|-|{cfg}'),
+        ('new', dict(OPTS0), f'v5|P|E|new|-|-|-|-|-|{cfg}|-|-'),
         ('continue', dict(OPTS0, effort='low'),
-         f'v3|P|E|continue|low|-|-|-|-|{cfg}'),
+         f'v5|P|E|continue|low|-|-|-|-|{cfg}|-|-'),
         ('resume:abc', dict(OPTS0, model='claude-fable-5', perm='dontAsk'),
-         f'v3|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}'),
-        ('new', dict(OPTS0, name='N N', worktree='wt'),
-         f'v3|P|E|new|-|-|-|N N|wt|{cfg}'),
+         f'v5|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}|-|-'),
+        ('new', dict(OPTS0, name='N N', worktree='wt', agent='rev'),
+         f'v5|P|E|new|-|-|-|N N|wt|{cfg}|rev|-'),
     ]
     for choice, opts, expected in cases:
         line = main_mod.build_choice_line('P', 'E', choice, opts)

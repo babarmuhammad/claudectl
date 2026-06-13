@@ -3,8 +3,10 @@ import shutil
 from datetime import datetime
 
 from .config import W, C_RESET, C_TITLE, C_SEL, C_DIM, C_SRCH, C_BOLD, C_NAME
-from .sessions import load_name, save_name, format_age, get_session_title, scan_sessions
-from .ui import text_input, paths_menu, _cls, wait_event, help_screen, flash, menu
+from .sessions import (load_name, save_name, format_age, get_session_title,
+                       scan_sessions, load_tags, save_tags)
+from .ui import (text_input, paths_menu, _cls, wait_event, help_screen,
+                 flash, menu, confirm)
 from . import render
 from .claude_md import scaffold_claude_md, ai_scaffold_claude_md
 from .system_prompt import edit_system_prompt
@@ -100,6 +102,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
 
     def build_rows(active):
         folder = archived_dir if show_archived else proj_folder
+        tags_map = load_tags(proj_folder) if not show_archived else {}
         if show_archived:
             rows = [(f"{'─' * W}", None)]
             if not active:
@@ -120,6 +123,9 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                 disp = f"{badge}{preview}"
             else:
                 disp = f"{badge}{C_DIM}(no preview — {date}){C_RESET}"
+            tg = tags_map.get(sid)
+            if tg:
+                disp += f"  {C_SRCH}#{' #'.join(tg)}{C_RESET}"
             val = f"resume-named::{sid}::{name}" if name else f"resume:{sid}"
             label = render.cols(
                 [f"{C_DIM}#{i}{C_RESET}", f"{C_DIM}{age}{C_RESET}", disp],
@@ -159,7 +165,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
         # window rows so hints always fit the terminal height.
         # chrome below the list = blank(1) + hint lines (2 only in the
         # full non-focused non-archived state, else 1)
-        hint_n = 2 if (not search_focused and not show_archived) else 1
+        hint_n = 3 if (not search_focused and not show_archived) else 1
         fixed = 2 + 2 + 1 + hint_n   # header+blank, search+blank, blank, hints
         avail = max(3, render.frame_height() - fixed)
         n = len(rows)
@@ -181,14 +187,22 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
 
         frame.append('')
         if search_focused:
-            frame.append(render.hint_bar("type to search   ↓/ENTER go to list   ESC clear / exit"))
+            frame.append(render.hint_keys([('type', 'to search'), ('↓/ENTER', 'go to list'),
+                                            ('ESC', 'clear / exit')]))
         elif show_archived:
-            frame.append(render.hint_bar("d restore/delete   A back to sessions   ESC back"))
+            frame.append(render.hint_keys([('d', 'restore/delete'), ('⇧A', 'back to sessions'),
+                                            ('ESC', 'back')]))
         else:
+            frame.append(render.hint_keys([
+                ('a', 'ai-analyze'), ('⇧A', 'archived'), ('c', 'claude.md'),
+                ('d', 'archive'), ('e', 'export'), ('f', 'fork'),
+                ('⇧F', 'files'), ('g', 'agents'), ('i', 'info')]))
+            frame.append(render.hint_keys([
+                ('⇧M', 'memory'), ('p', 'paths'), ('r', 'rename'),
+                ('s', 'sys-prompt'), ('t', 'tag'), ('u', 'usage'),
+                ('v', 'view'), ('x', 'add-dirs'), ('?', 'help')]))
             frame.append(render.hint_bar(
-                "r rename  d archive/delete  f fork  v view  e export  i info  u usage"))
-            frame.append(render.hint_bar(
-                "p paths  x add-dirs  c claude.md  a ai-analyze  s sys-prompt  A archived  ? help"))
+                f"{C_DIM}keys are case-sensitive — ⇧ = hold Shift (capital letter){C_RESET}"))
         render.render_frame(frame)
 
         ev = wait_event()
@@ -285,8 +299,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                         sessions = scan_sessions(proj_folder)
                         arch_sessions = None
                 elif act == 'delete':
-                    confirm = text_input("Delete permanently? Type 'yes':")
-                    if confirm and confirm.lower() == 'yes':
+                    if confirm(f"Delete '{label}' permanently?", danger=True):
                         errors = _delete_session(archived_dir, cur_sid)
                         if errors:
                             flash("Delete failed: " + "; ".join(errors)[:120], ok=False, secs=2)
@@ -307,8 +320,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                         sessions = [s for s in sessions if s[1] != cur_sid]
                         arch_sessions = None
                 elif act == 'delete':
-                    confirm = text_input("Delete permanently? Type 'yes':")
-                    if confirm and confirm.lower() == 'yes':
+                    if confirm(f"Delete '{label}' permanently?", danger=True):
                         errors = _delete_session(proj_folder, cur_sid)
                         if errors:
                             flash("Delete failed: " + "; ".join(errors)[:120], ok=False, secs=2)
@@ -336,6 +348,34 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
             from .transcript import show_metadata
             show_metadata(folder, cur_sid, project_name)
 
+        elif ev[0] == 'char' and ev[1] == 'F' and cur_sid:
+            from .sessions import session_changed_files
+            from .ui import pager
+            changed = session_changed_files(os.path.join(folder, f"{cur_sid}.jsonl"))
+            if changed:
+                lines = [f"{render.fit(p, render.content_width() - 8)}  {C_DIM}×{n}{C_RESET}"
+                         for p, n in changed]
+            else:
+                lines = [f"{C_DIM}(no file edits recorded in this session){C_RESET}"]
+            pager(('CLAUDECTL', project_name, 'CHANGED FILES'), lines)
+
+        elif ev[0] == 'char' and ev[1] == 'M' and not show_archived:
+            from .claude_md import memory_map_menu
+            memory_map_menu(project_path, project_name)
+
+        elif ev[0] == 'char' and ev[1] == 't' and cur_sid and not show_archived:
+            tags = load_tags(proj_folder)
+            cur = ', '.join(tags.get(cur_sid, []))
+            v = text_input("Tags (comma-separated):", default=cur)
+            if v is not None:
+                newtags = [t.strip() for t in v.split(',') if t.strip()]
+                if newtags:
+                    tags[cur_sid] = newtags
+                else:
+                    tags.pop(cur_sid, None)
+                save_tags(proj_folder, tags)
+                flash("Tags saved")
+
         elif ev[0] == 'char' and ev[1] == 'u' and not show_archived:
             from .stats import project_usage_screen
             project_usage_screen(proj_folder, project_name)
@@ -355,6 +395,17 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
 
         elif ev[0] == 'char' and ev[1] == 's' and not show_archived:
             edit_system_prompt(proj_folder, project_name, project_path)
+
+        elif ev[0] == 'char' and ev[1] == 'g' and not show_archived:
+            from .agents import select_session_agents, sync_project_agents
+            from .sessions import load_session_agents, save_session_agents
+            pre = load_session_agents(proj_folder).get('__project__', []) if proj_folder else []
+            refs = select_session_agents(project_name, pre)
+            if refs is not None:
+                if proj_folder:
+                    save_session_agents(proj_folder, '__project__', refs)
+                n = sync_project_agents(project_path, refs)
+                flash(f"{n} project agent(s) active" if refs else "Project agents cleared")
 
         elif ev[0] == 'char' and ev[1] == '?':
             help_screen()

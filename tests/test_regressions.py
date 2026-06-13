@@ -52,9 +52,10 @@ def test_pipe_in_name_stripped(monkeypatch, tmp_path):
     _, enc, folder, _ = sb.add_project('alpha', n_sessions=0)
     captured = {}
 
-    def fake_launch_opts(name, defaults=None, is_new=False):
+    def fake_launch_opts(name, defaults=None, is_new=False, agents=None,
+                         selected_session_agents=None):
         return {'effort': '', 'model': '', 'perm': '',
-                'name': 'a|b|c', 'worktree': 'w|t'}
+                'name': 'a|b|c', 'worktree': 'w|t', 'agent': 'x|y'}
     monkeypatch.setattr(main_mod, 'launch_options_menu', fake_launch_opts)
     # ENTER project -> ENTER New Chat -> launch (opts faked)
     keys = flat(ENTER, ENTER)
@@ -69,10 +70,11 @@ def test_pipe_in_name_stripped(monkeypatch, tmp_path):
     line = sb.choice_line()
     assert line is not None
     parts = line.split('|')
-    # v3|path|enc|action|effort|model|perm|name|worktree|cfg  -> 10 fields
-    assert len(parts) == 10
+    # v5|path|enc|action|effort|model|perm|name|worktree|cfg|agent|agents_json -> 12
+    assert len(parts) == 12
     assert parts[7] == 'abc'      # name pipes stripped
     assert parts[8] == 'wt'       # worktree pipes stripped
+    assert parts[10] == 'xy'      # agent pipes stripped
 
 
 # ── #7: project with no matching entry skipped safely (no crash) ──

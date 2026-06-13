@@ -8,9 +8,63 @@ import subprocess
 import shutil
 
 from .config import (W, _AUTOGEN_START, _AUTOGEN_END, _SESSIONS_START, _SESSIONS_END, _AI_MARKER)
-from .config import get_claude_exe, open_in_editor
+from .config import get_claude_exe, open_in_editor, config_dir
 from .sessions import get_session_info, get_session_rich_summary, read_extra_paths, format_age
 from .ui import text_input, _cls, wait_event, poll_event
+
+
+def resolve_memory_files(project_path):
+    """Which CLAUDE.md files load for a project, broadest→narrowest, with
+    @import references resolved one level. Returns [(label, path, exists, imports)]."""
+    candidates = [
+        ('user',          os.path.join(config_dir, 'CLAUDE.md')),
+        ('project',       os.path.join(project_path, 'CLAUDE.md')),
+        ('project/.claude', os.path.join(project_path, '.claude', 'CLAUDE.md')),
+        ('local',         os.path.join(project_path, 'CLAUDE.local.md')),
+    ]
+    out = []
+    for label, path in candidates:
+        exists = os.path.isfile(path)
+        imports = []
+        if exists:
+            try:
+                text = open(path, encoding='utf-8', errors='ignore').read()
+                for m in re.finditer(r'@([^\s]+)', text):
+                    ref = m.group(1)
+                    rp = os.path.expanduser(ref)
+                    if not os.path.isabs(rp):
+                        rp = os.path.join(os.path.dirname(path), rp)
+                    imports.append((ref, os.path.isfile(rp)))
+            except Exception:
+                pass
+        out.append((label, path, exists, imports))
+    return out
+
+
+def memory_map_menu(project_path, project_name):
+    """Show the CLAUDE.md hierarchy for a project; open any file in editor."""
+    from .ui import menu, flash
+    from . import config as _c
+    while True:
+        rows = resolve_memory_files(project_path)
+        items = []
+        for label, path, exists, imports in rows:
+            mark = f'{_c.C_OK}●{_c.C_RESET}' if exists else f'{_c.C_DIM}○{_c.C_RESET}'
+            imp = (f"  {_c.C_DIM}{len(imports)} @import{_c.C_RESET}" if imports else '')
+            items.append((f"{mark} {label:<16} {_c.C_DIM}{path}{_c.C_RESET}{imp}",
+                          f'file:{path}' if exists else f'new:{path}'))
+        sel = menu(items, f"MEMORY MAP  /  {project_name}")
+        if not sel:
+            return
+        path = sel.split(':', 1)[1]
+        if sel.startswith('new:'):
+            try:
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                open(path, 'a', encoding='utf-8').close()
+            except Exception as e:
+                flash(f"Create failed: {e}", ok=False, secs=1.4)
+                continue
+        open_in_editor(path)
 
 
 def find_git_repos(root, max_depth=2):
@@ -309,10 +363,11 @@ def _pager_confirm(title, content):
         for ln in lines[top:top + page]:
             frame.append(render.fit('  ' + ln, render.content_width()))
         frame.append('')
-        frame.append(render.hint_bar(
-            f"{min(top + page, len(lines))}/{len(lines)}"
-            + ("  (end)" if at_end else "")
-            + "   ↑↓ scroll   ←→/SPACE page   ENTER approve & write   ESC reject"))
+        frame.append(render.hint_keys(
+            [('↑↓', 'scroll'), ('←→/SPACE', 'page'),
+             ('ENTER', 'approve & write'), ('ESC', 'reject')],
+            prefix=f"{min(top + page, len(lines))}/{len(lines)}"
+                   + ("  (end)" if at_end else "")))
         render.render_frame(frame)
 
         ev = pending if pending else wait_event()
@@ -573,7 +628,7 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
                     '',
                     (f"  {C_DIM}{preview}{C_RESET}" if preview else ''),
                     '',
-                    render.hint_bar("ESC cancel (falls back to standard scaffold)"),
+                    render.hint_keys([('ESC', 'cancel (falls back to standard scaffold)')]),
                 ])
                 spin_i += 1
                 time.sleep(0.1)

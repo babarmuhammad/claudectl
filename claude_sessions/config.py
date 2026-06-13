@@ -1,11 +1,27 @@
 import os
 import json
 import shutil
+import logging
 
 _USERPROFILE = os.environ.get('USERPROFILE') or os.path.expanduser('~')
 _TEMP        = os.environ.get('TEMP') or os.environ.get('TMP') or _USERPROFILE
 
 choice_file = os.environ.get('CHOICE_FILE', os.path.join(_TEMP, 'choice_claude.txt'))
+
+
+# ── logging ──────────────────────────────────────────────────
+# Quiet by default; file logging to %TEMP%\claudectl.log when CLAUDECTL_DEBUG
+# is set. Background-thread/render failures log here instead of vanishing.
+log = logging.getLogger('claudectl')
+log.addHandler(logging.NullHandler())
+if os.environ.get('CLAUDECTL_DEBUG'):
+    try:
+        _h = logging.FileHandler(os.path.join(_TEMP, 'claudectl.log'), encoding='utf-8')
+        _h.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
+        log.addHandler(_h)
+        log.setLevel(logging.DEBUG)
+    except Exception:
+        pass
 
 # ── user settings ────────────────────────────────────────────
 # settings_file is FIXED under ~/.claude (account-independent) so the
@@ -13,6 +29,11 @@ choice_file = os.environ.get('CHOICE_FILE', os.path.join(_TEMP, 'choice_claude.t
 # config dir is active.
 
 settings_file = os.path.join(_USERPROFILE, '.claude', 'claudectl.json')
+
+# Agent library — account-independent store of subagent .md files organized
+# into category subfolders. NOT under projects/agents so Claude doesn't
+# auto-load them; claudectl injects the chosen ones per session via --agents.
+agents_library_dir = os.path.join(_USERPROFILE, '.claude', 'claudectl-agents')
 
 _DEFAULT_SETTINGS = {
     'editor': '',              # path to preferred text editor ('' = auto-detect)
@@ -23,6 +44,7 @@ _DEFAULT_SETTINGS = {
     'default_permission': '',  # preselected --permission-mode
     'project_defaults': {},    # encoded_name -> {'effort','model','permission'}
     'cost_table': {},          # user overrides for COST_PER_MTOK
+    'theme': 'default',        # named palette (see THEMES)
 }
 
 
@@ -142,14 +164,67 @@ C_GREEN  = '\033[92m'     # green — MCP connected
 C_BOLD   = '\033[1m'      # bold
 C_SRCH   = '\033[96;1m'   # bright cyan bold — active search bar
 
-# ── theme palette (256-color; see use_16color_fallback) ─────
-C_ACCENT    = '\033[38;5;117m'              # light blue accent
-C_SEL_BG    = '\033[48;5;237m\033[97m'      # selected row: gray bg, bright fg
-C_HEADER_BG = '\033[48;5;24m\033[38;5;231m' # header bar: deep blue bg, white fg
-C_OK        = '\033[38;5;114m'              # soft green — connected / success
-C_WARN      = '\033[38;5;215m'              # orange — needs attention
-C_ERR       = '\033[91m'                    # red — errors
-C_NAME      = '\033[97m'                    # bright white — session names
+# ── theme palette (256-color; switchable, see THEMES / apply_theme) ─
+C_ACCENT    = '\033[38;5;117m'              # accent
+C_SEL_BG    = '\033[48;5;237m\033[97m'      # selected row: bg + bright fg
+C_HEADER_BG = '\033[48;5;24m\033[38;5;231m' # header bar: bg + fg
+C_OK        = '\033[38;5;114m'              # success / connected
+C_WARN      = '\033[38;5;215m'              # attention
+C_ERR       = '\033[91m'                    # errors
+C_NAME      = '\033[97m'                    # session names
+
+# Named palettes. Each maps the switchable C_* entries; missing keys keep
+# the default. Title/search/star also retint to the accent family.
+THEMES = {
+    'default': {'C_ACCENT': '\033[38;5;117m', 'C_SEL_BG': '\033[48;5;237m\033[97m',
+                'C_HEADER_BG': '\033[48;5;24m\033[38;5;231m', 'C_OK': '\033[38;5;114m',
+                'C_WARN': '\033[38;5;215m', 'C_TITLE': '\033[96m', 'C_SRCH': '\033[96;1m',
+                'C_STAR': '\033[93m'},
+    'ocean':   {'C_ACCENT': '\033[38;5;39m', 'C_SEL_BG': '\033[48;5;24m\033[97m',
+                'C_HEADER_BG': '\033[48;5;23m\033[38;5;231m', 'C_OK': '\033[38;5;43m',
+                'C_WARN': '\033[38;5;214m', 'C_TITLE': '\033[38;5;39m', 'C_SRCH': '\033[38;5;45;1m',
+                'C_STAR': '\033[38;5;45m'},
+    'forest':  {'C_ACCENT': '\033[38;5;78m', 'C_SEL_BG': '\033[48;5;22m\033[97m',
+                'C_HEADER_BG': '\033[48;5;22m\033[38;5;231m', 'C_OK': '\033[38;5;120m',
+                'C_WARN': '\033[38;5;179m', 'C_TITLE': '\033[38;5;78m', 'C_SRCH': '\033[38;5;120;1m',
+                'C_STAR': '\033[38;5;185m'},
+    'mono':    {'C_ACCENT': '\033[97m', 'C_SEL_BG': '\033[7m', 'C_HEADER_BG': '\033[7m',
+                'C_OK': '\033[97m', 'C_WARN': '\033[97m', 'C_TITLE': '\033[1m',
+                'C_SRCH': '\033[1m', 'C_STAR': '\033[97m'},
+    'mocha':   {'C_ACCENT': '\033[38;5;141m', 'C_SEL_BG': '\033[48;5;237m\033[38;5;231m',
+                'C_HEADER_BG': '\033[48;5;60m\033[38;5;231m', 'C_OK': '\033[38;5;150m',
+                'C_WARN': '\033[38;5;216m', 'C_TITLE': '\033[38;5;141m', 'C_SRCH': '\033[38;5;218;1m',
+                'C_STAR': '\033[38;5;223m'},
+    'tokyo':   {'C_ACCENT': '\033[38;5;111m', 'C_SEL_BG': '\033[48;5;237m\033[38;5;189m',
+                'C_HEADER_BG': '\033[48;5;24m\033[38;5;231m', 'C_OK': '\033[38;5;149m',
+                'C_WARN': '\033[38;5;215m', 'C_TITLE': '\033[38;5;111m', 'C_SRCH': '\033[38;5;117;1m',
+                'C_STAR': '\033[38;5;179m'},
+    'dracula': {'C_ACCENT': '\033[38;5;135m', 'C_SEL_BG': '\033[48;5;238m\033[38;5;231m',
+                'C_HEADER_BG': '\033[48;5;61m\033[38;5;231m', 'C_OK': '\033[38;5;84m',
+                'C_WARN': '\033[38;5;215m', 'C_TITLE': '\033[38;5;212m', 'C_SRCH': '\033[38;5;123;1m',
+                'C_STAR': '\033[38;5;228m'},
+    'nord':    {'C_ACCENT': '\033[38;5;109m', 'C_SEL_BG': '\033[48;5;239m\033[38;5;231m',
+                'C_HEADER_BG': '\033[48;5;60m\033[38;5;231m', 'C_OK': '\033[38;5;108m',
+                'C_WARN': '\033[38;5;222m', 'C_TITLE': '\033[38;5;110m', 'C_SRCH': '\033[38;5;116;1m',
+                'C_STAR': '\033[38;5;222m'},
+    'gruvbox': {'C_ACCENT': '\033[38;5;214m', 'C_SEL_BG': '\033[48;5;237m\033[38;5;223m',
+                'C_HEADER_BG': '\033[48;5;94m\033[38;5;223m', 'C_OK': '\033[38;5;142m',
+                'C_WARN': '\033[38;5;208m', 'C_TITLE': '\033[38;5;214m', 'C_SRCH': '\033[38;5;108;1m',
+                'C_STAR': '\033[38;5;214m'},
+    'rose':    {'C_ACCENT': '\033[38;5;183m', 'C_SEL_BG': '\033[48;5;237m\033[38;5;189m',
+                'C_HEADER_BG': '\033[48;5;66m\033[38;5;231m', 'C_OK': '\033[38;5;116m',
+                'C_WARN': '\033[38;5;222m', 'C_TITLE': '\033[38;5;183m', 'C_SRCH': '\033[38;5;217;1m',
+                'C_STAR': '\033[38;5;222m'},
+}
+THEME_NAMES = list(THEMES)
+
+
+def apply_theme(name):
+    """Switch the active palette. Unknown name → 'default'. Safe to call live."""
+    g = globals()
+    pal = THEMES.get(name) or THEMES['default']
+    for k, v in pal.items():
+        g[k] = v
 
 
 def use_16color_fallback():

@@ -4,7 +4,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harness import (Sandbox, run_flow, typed,
-                     UP, DOWN, ENTER, ESC, BACK)
+                     UP, DOWN, LEFT, RIGHT, ENTER, ESC, BACK)
 
 from claude_sessions.session_menu import sessions_menu
 from claude_sessions.sessions import scan_sessions
@@ -93,7 +93,7 @@ def test_delete_with_confirmation(monkeypatch, tmp_path):
     _, enc, folder, sids = sb.add_project(n_sessions=1)
     keys = flat(DOWN, DOWN, typed('d'),
                 DOWN, ENTER,                 # second option: Delete permanently
-                typed('yes'), ENTER,
+                RIGHT, ENTER,                # confirm modal: No->Yes, confirm
                 ESC)
     open_menu(monkeypatch, sb, keys, folder)
     assert not [f for f in os.listdir(folder) if f.endswith('.jsonl')]

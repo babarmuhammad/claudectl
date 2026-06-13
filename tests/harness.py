@@ -136,6 +136,7 @@ class Sandbox:
         self.projects.mkdir(parents=True)
         self.choice = tmp_path / 'choice.txt'
         self.settings = tmp_path / 'claudectl.json'
+        self.agents_lib = tmp_path / 'agents-lib'   # empty by default
         self.editor_opened = []
         self._encoded_to_actual = {}
         self._patch_paths()
@@ -162,6 +163,7 @@ class Sandbox:
             (config, 'settings_file', str(self.settings)),
             (config, 'choice_file', str(self.choice)),
             (config, 'global_claude_md', os.path.join(cfg, 'CLAUDE.md')),
+            (config, 'agents_library_dir', str(self.agents_lib)),
             (sessions, 'projects_dir', prj), (sessions, 'last_session_file', lsf),
             (stats, 'projects_dir', prj), (stats, 'config_dir', cfg),
             (stats, 'cache_file', os.path.join(cfg, 'stats-cache.json')),

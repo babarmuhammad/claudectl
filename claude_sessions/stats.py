@@ -165,7 +165,7 @@ def iter_all_sessions(entries, title='SCANNING SESSIONS'):
                 '',
                 f"  Scanning project {pi}/{total} — {render.trunc(os.path.basename(ppath) or ppath, 40)}",
                 '',
-                render.hint_bar("ESC stop early (partial results)"),
+                render.hint_keys([('ESC', 'stop early (partial results)')]),
             ])
         if stopped:
             yield None   # sentinel: partial
@@ -235,7 +235,8 @@ def usage_dashboard(entries):
         frame += [render.hline(),
                   f"  {C_DIM}total est. cost:{C_RESET} {C_BOLD}${total_cost:.2f}{C_RESET}   {C_DIM}(API-rate estimate; cache-aware){C_RESET}",
                   '',
-                  render.hint_bar("↑↓ navigate   ENTER project detail   ESC back")]
+                  render.hint_keys([('↑↓', 'navigate'), ('ENTER', 'project detail'),
+                                    ('ESC', 'back')])]
         render.render_frame(frame)
 
         ev = ui.wait_event()
@@ -281,7 +282,7 @@ def project_usage_screen(proj_folder, project_name):
                 [7, None, 6, 8, 8, 8],
                 aligns=['left', 'left', 'right', 'right', 'right', 'right'])
             frame.append(render.row(label, selected=(i == nav)))
-        frame += ['', render.hint_bar("↑↓ navigate   ESC back")]
+        frame += ['', render.hint_keys([('↑↓', 'navigate'), ('ESC', 'back')])]
         render.render_frame(frame)
 
         ev = ui.wait_event()

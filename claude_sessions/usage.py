@@ -51,7 +51,11 @@ def fetch_usage():
 
 def _background():
     global _data, _ready
-    d = fetch_usage()
+    try:
+        d = fetch_usage()
+    except Exception:
+        _c.log.exception('usage fetch failed')
+        d = None
     with _lock:
         _data = d
         _ready = True

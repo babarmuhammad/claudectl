@@ -5,7 +5,10 @@ import time
 
 from .config import W, global_claude_md, get_claude_exe, open_in_editor
 from .sessions import get_session_info
-from .ui import menu, _cls, pause, run_with_progress
+from .ui import (menu, _cls, pause, run_with_progress, text_input,
+                 confirm, flash, paths_menu, pager)
+from . import config as _c
+from . import render
 
 
 # ── MCP status ────────────────────────────────────────────────
@@ -40,10 +43,15 @@ def get_mcp_status():
 
 mcp_servers = []
 _mcp_ready = False
+_mcp_error = False
 
 def _mcp_background():
-    global mcp_servers, _mcp_ready
-    mcp_servers = get_mcp_status()
+    global mcp_servers, _mcp_ready, _mcp_error
+    try:
+        mcp_servers = get_mcp_status()
+    except Exception:
+        _mcp_error = True
+        _c.log.exception('mcp status failed')
     _mcp_ready = True
 
 threading.Thread(target=_mcp_background, daemon=True).start()
@@ -142,8 +150,139 @@ def global_claude_md_menu():
             return
 
 
+# ── MCP server management (claude mcp add/remove/get/list) ───
+
+MCP_SCOPES     = ['local', 'user', 'project']
+MCP_TRANSPORTS = ['stdio', 'http', 'sse']
+
+
+def _mcp_run(args, label, crumbs=('CLAUDECTL', 'MCP')):
+    """Run `claude mcp <args>` with progress. Returns (stdout, cancelled)."""
+    claude = get_claude_exe()
+    if not claude:
+        return None, False
+    return run_with_progress([claude, 'mcp', *args], crumbs, label, timeout=60)
+
+
+def _list_servers():
+    """Parsed server rows: [(name, status, raw_line)]."""
+    rows = []
+    for name, status in get_mcp_status():
+        rows.append((name, status))
+    return rows
+
+
+def mcp_manager_menu():
+    """Full MCP management: list / add / remove / detail via `claude mcp`."""
+    if not get_claude_exe():
+        _cls()
+        print("\n  claude.exe not found — cannot manage MCP servers.\n")
+        pause("  Press Enter...")
+        return
+
+    while True:
+        servers = _list_servers()
+        items = []
+        for name, status in servers:
+            icon = f'{_c.C_OK}✔{_c.C_RESET}' if status == 'ok' else f'{_c.C_WARN}!{_c.C_RESET}'
+            items.append((f"{icon}  {name}", f'srv:{name}'))
+        if not servers:
+            items.append((f"{_c.C_DIM}(no MCP servers configured){_c.C_RESET}", None))
+        items += [(f"{'─' * W}", None),
+                  ('＋  Add MCP server', '__add__'),
+                  ('↻  Re-check status', '__refresh__'),
+                  ('📝  Global CLAUDE.md / tool docs', '__docs__')]
+
+        sel = menu(items, "MCP SERVERS")
+        if not sel:
+            return
+        if sel == '__refresh__':
+            global mcp_servers, _mcp_ready
+            mcp_servers = get_mcp_status()
+            _mcp_ready = True
+            flash("Status refreshed")
+        elif sel == '__docs__':
+            global_claude_md_menu()
+        elif sel == '__add__':
+            _mcp_add_flow()
+        elif sel.startswith('srv:'):
+            _mcp_detail(sel[4:])
+
+
+def _mcp_add_flow():
+    name = text_input("MCP server name:")
+    if not name:
+        return
+    transport = menu([(t, t) for t in MCP_TRANSPORTS], "TRANSPORT")
+    if transport is None:
+        return
+    if transport == 'stdio':
+        target = text_input("Command to run (e.g. npx my-mcp-server):")
+    else:
+        target = text_input(f"Server URL ({transport}):")
+    if not target:
+        return
+    scope = menu([(s, s) for s in MCP_SCOPES], "SCOPE")
+    if scope is None:
+        return
+
+    args = ['add', '-s', scope, '-t', transport, name]
+    if transport == 'stdio':
+        # split command into the bare program + args after `--`
+        parts = target.split()
+        args += ['--', *parts]
+    else:
+        args += [target]
+
+    out, cancelled = _mcp_add_with_extras(args, transport, name)
+    if cancelled:
+        flash("Cancelled", ok=False)
+        return
+    flash(f"Added {name}" if out is not None else "Add failed",
+          ok=out is not None, secs=1.4)
+
+
+def _mcp_add_with_extras(args, transport, name):
+    # optional env vars / headers via line-list temp prompts
+    extra = []
+    if transport == 'stdio':
+        env = text_input("Env vars KEY=VAL (space-separated, blank = none):")
+        for kv in env.split():
+            extra += ['-e', kv]
+    else:
+        hdr = text_input("Header 'Name: value' (blank = none):")
+        if hdr:
+            extra += ['-H', hdr]
+    # insert extras before the trailing target/command
+    final = args[:3] + extra + args[3:]
+    return _mcp_run(final, f"Adding MCP server {name}...")
+
+
+def _mcp_detail(name):
+    out, _ = _mcp_run(['get', name], f"Loading {name}...")
+    lines = (out or 'no details').splitlines() or ['(empty)']
+    while True:
+        key = pager(('CLAUDECTL', 'MCP', name), lines,
+                    hint="d remove   t tool docs", extra_keys=('d', 't'))
+        if key == 'd':
+            scope = menu([(s, s) for s in MCP_SCOPES], f"REMOVE {name} — scope")
+            if scope and confirm(f"Remove MCP server '{name}' ({scope})?", danger=True):
+                res, _ = _mcp_run(['remove', name, '-s', scope], f"Removing {name}...")
+                flash(f"Removed {name}", secs=1.2)
+                return
+        elif key == 't':
+            doc = analyze_mcp_tools(name)
+            if doc:
+                pager(('CLAUDECTL', 'MCP', name, 'TOOLS'), doc.splitlines())
+            else:
+                flash("No tool docs (MCP may need auth)", ok=False, secs=1.4)
+        else:
+            return
+
+
 def mcp_status_line():
-    from . import config as _c
+    if _mcp_error:
+        return f'  {_c.C_WARN}MCP: unavailable{_c.C_RESET}'
     if not _mcp_ready:
         return f'  {_c.C_DIM}MCP: checking...{_c.C_RESET}'
     connected = [name for name, status in mcp_servers if status == 'ok']

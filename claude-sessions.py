@@ -5,8 +5,17 @@ import sys, os, traceback
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 try:
-    from claude_sessions.main import run
-    run()
+    # apply the saved theme BEFORE main/ui import config's C_* by value
+    from claude_sessions import config as _cfg
+    _cfg.apply_theme(_cfg.load_settings().get('theme', 'default'))
+    if '--launch' in sys.argv:
+        # bat re-invokes us to launch claude from the choice file (handles
+        # big --agents JSON the cmd choice-file can't carry)
+        from claude_sessions.main import launch_from_choice
+        launch_from_choice()
+    else:
+        from claude_sessions.main import run
+        run()
 except SystemExit:
     raise   # normal exit — let bat file handle choice_file check
 except BaseException:

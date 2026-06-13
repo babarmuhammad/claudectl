@@ -11,6 +11,7 @@ from .config import load_settings, save_settings, find_editor, get_claude_exe, s
 from .config import use_16color_fallback
 from .sessions import load_extra_paths, save_extra_paths
 from . import render
+from . import config as _c
 
 
 # ── VT mode ──────────────────────────────────────────────────
@@ -201,13 +202,94 @@ def run_with_progress(args, crumbs, label, timeout=120, cwd=None):
             '  ' + render.progress_bar(tick),
             f"  {C_DIM}{int(time.time() - start)}s elapsed{C_RESET}",
             '',
-            render.hint_bar("ESC cancel"),
+            render.hint_keys([('ESC', 'cancel')]),
         ])
         tick += 1
         time.sleep(0.1)
 
     reader.join(timeout=5)
     return (chunks[0] if chunks else ''), False
+
+
+# ── modal widgets ────────────────────────────────────────────
+
+def confirm(question, danger=False, yes_label='Yes', no_label='No'):
+    """Yes/No modal. ←→/↑↓ switch, ENTER confirms, ESC = No. Returns bool."""
+    flush_input()
+    sel = 0   # 0 = No (safe default), 1 = Yes
+    qcol = _c.C_ERR if danger else _c.C_TITLE
+    while True:
+        opts = [no_label, yes_label]
+        row = '   '.join(
+            (f"{_c.C_SEL_BG} {o} {C_RESET}" if i == sel else f"  {o}  ")
+            for i, o in enumerate(opts))
+        frame = [
+            render.header('CLAUDECTL', 'CONFIRM'), '',
+            f"  {qcol}{render.trunc(question, render.content_width() - 4)}{C_RESET}",
+            '', '  ' + row, '',
+            render.hint_keys([('←→', 'choose'), ('ENTER', 'confirm'), ('ESC', 'cancel')]),
+        ]
+        render.render_frame(frame)
+        ev = wait_event()
+        if ev[0] in ('left', 'right', 'up', 'down'):
+            sel = 1 - sel
+        elif ev[0] == 'enter':
+            return sel == 1
+        elif ev[0] == 'esc':
+            return False
+        elif ev[0] == 'char' and ev[1] in 'yY':
+            return True
+        elif ev[0] == 'char' and ev[1] in 'nN':
+            return False
+
+
+def multiselect(items, title, preselected=None, hint='', view_fn=None):
+    """Checkbox list. items: [(label, value)]. SPACE toggles, ENTER confirms,
+    'a' all, 'n' none, ESC cancels. Returns set of chosen values or None.
+    view_fn: optional callback(value) bound to 'v' to inspect the row."""
+    flush_input()
+    chosen = set(preselected or set())
+    nav = 0
+    n = len(items)
+    keys = [('SPACE', 'toggle'), ('a', 'all'), ('n', 'none')]
+    if view_fn:
+        keys.append(('v', 'view'))
+    keys += [('ENTER', 'confirm'), ('ESC', 'cancel')]
+    while True:
+        frame = [render.header('CLAUDECTL', title), '']
+        page = max(3, render.frame_height() - 6)
+        start = min(max(nav - page // 2, 0), max(0, n - page)) if n > page else 0
+        if start > 0:
+            frame.append(f"  {C_DIM}… {start} more ↑{C_RESET}")
+        for i in range(start, min(start + page, n)):
+            label, val = items[i]
+            box = '[x]' if val in chosen else '[ ]'
+            line = f"{box} {label}"
+            frame.append(render.row(line, selected=(i == nav)))
+        if start + page < n:
+            frame.append(f"  {C_DIM}… {n - start - page} more ↓{C_RESET}")
+        frame += ['', render.hint_keys(keys)
+                  + f"   {C_DIM}{len(chosen)} selected{C_RESET}"
+                  + (f"   {hint}" if hint else '')]
+        render.render_frame(frame)
+        ev = wait_event()
+        if ev[0] == 'up':
+            nav = (nav - 1) % n if n else 0
+        elif ev[0] == 'down':
+            nav = (nav + 1) % n if n else 0
+        elif ev[0] == 'char' and ev[1] == ' ' and n:
+            v = items[nav][1]
+            chosen.discard(v) if v in chosen else chosen.add(v)
+        elif ev[0] == 'char' and ev[1] == 'a':
+            chosen = {v for _, v in items}
+        elif ev[0] == 'char' and ev[1] == 'n':
+            chosen = set()
+        elif ev[0] == 'char' and ev[1] == 'v' and view_fn and n:
+            view_fn(items[nav][1])
+        elif ev[0] == 'enter':
+            return chosen
+        elif ev[0] == 'esc':
+            return None
 
 
 # ── UI primitives ────────────────────────────────────────────
@@ -223,7 +305,7 @@ def text_input(prompt, default=''):
             '',
             f"  {C_SEL}>{C_RESET} {''.join(buf)}{C_SRCH}▌{C_RESET}",
             '',
-            render.hint_bar("ENTER confirm   ESC cancel   BACKSPACE delete"),
+            render.hint_keys([('ENTER', 'confirm'), ('ESC', 'cancel'), ('BACKSPACE', 'delete')]),
         ]
         render.render_frame(frame)
         ev = wait_event()
@@ -307,10 +389,12 @@ def menu(items, title, footer='', footer_fn=None, banner_fn=None):
 
         frame.append('')
         if search_str:
-            hint = "↑↓ navigate   ENTER select   BACKSPACE delete   ESC clear"
+            hint = render.hint_keys([('↑↓', 'navigate'), ('ENTER', 'select'),
+                                     ('BACKSPACE', 'delete'), ('ESC', 'clear')])
         else:
-            hint = "↑↓ navigate   ENTER select   type to search   ESC back"
-        frame.append(render.hint_bar(hint))
+            hint = render.hint_keys([('↑↓', 'navigate'), ('ENTER', 'select'),
+                                     ('type', 'to search'), ('ESC', 'back')])
+        frame.append(hint)
         # footer slot — may be multi-line ('\n'-joined status lines)
         if current_footer:
             for fl in current_footer.split('\n'):
@@ -380,25 +464,32 @@ def help_screen():
         f"  {C_BOLD}Main screen{C_RESET}",
         f"    ↑↓ navigate    ENTER open project / resume    ESC exit",
         f"    type to search projects    ★/☆ quick-resume recent sessions",
-        f"    🔍 search all sessions    ⚙ usage stats / settings / MCP docs",
+        f"    🔍 search all   ⚙ usage / MCP servers / agents / hooks / settings",
         '',
         f"  {C_BOLD}Sessions screen{C_RESET}",
         f"    ↑↓ navigate    ENTER resume    ESC back    type to filter",
         f"    r  rename                 d  archive / delete",
-        f"    f  fork                   v  view transcript",
+        f"    f  fork                   v  view transcript (/ search)",
         f"    e  export markdown        i  session info (tokens, cost, model)",
-        f"    u  project usage stats    A  toggle archived view",
+        f"    F  changed files          t  tag session",
+        f"    u  project usage          M  memory map (CLAUDE.md hierarchy)",
         f"    p  extra PATH entries     x  add-dirs (--add-dir)",
         f"    c  scaffold CLAUDE.md     a  AI-generate CLAUDE.md",
-        f"    s  system prompt          ?  this help",
+        f"    s  system prompt          A  archived view    ?  help",
         '',
         f"  {C_BOLD}Launch options{C_RESET}",
         f"    ↑↓ field    ← → change    ENTER launch    ESC back",
-        f"    fields: effort, model, permissions (+ worktree, name for new sessions)",
+        f"    effort, model, permissions, agent (+ worktree, name for new sessions)",
+        '',
+        f"  {C_BOLD}Managers{C_RESET}",
+        f"    MCP servers: add/remove/inspect    Hooks: template/toggle",
+        f"    Agents: 154-agent library by category, scaffold/AI-generate",
+        f"    Per project ('g'): pick agents → copied into .claude/agents/",
+        f"    Theme: Settings → Theme",
         '',
         f"  {C_DIM}Settings file: {render.trunc(settings_file, render.content_width() - 20)}{C_RESET}",
         '',
-        render.hint_bar("ENTER / ESC go back"),
+        render.hint_keys([('ENTER / ESC', 'go back')]),
     ]
     render.render_frame(frame)
     flush_input()
@@ -417,6 +508,7 @@ def settings_menu():
         eff = s['default_effort'] or 'default'
         mod = s['default_model'] or 'default'
         perm = s['default_permission'] or 'default'
+        theme = s.get('theme', 'default')
         items = [
             (f"Editor      :  {editor_now}", 'editor'),
             (f"claude.exe  :  {claude_now}", 'claude'),
@@ -424,6 +516,7 @@ def settings_menu():
             (f"Effort      :  {eff}   {C_DIM}(preselected in launch options){C_RESET}", 'effort'),
             (f"Model       :  {mod}   {C_DIM}(preselected in launch options){C_RESET}", 'model'),
             (f"Permissions :  {perm}   {C_DIM}(--permission-mode){C_RESET}", 'permission'),
+            (f"Theme       :  {theme}", 'theme'),
             (f"{'─' * W}", None),
             (f"Back", 'back'),
         ]
@@ -460,6 +553,14 @@ def settings_menu():
                     s['claude_config_dir'] = v
                     save_settings(s)
                     flash("Saved — restart claudectl to apply", secs=1.6)
+        elif sel == 'theme':
+            pick = menu([(n, n) for n in _c.THEME_NAMES], "THEME")
+            if pick is not None:
+                s['theme'] = pick
+                save_settings(s)
+                _c.apply_theme(pick)          # live for dynamic-color screens
+                render.invalidate()
+                flash("Theme applied (restart for full effect)", secs=1.4)
         elif sel in ('effort', 'model', 'permission'):
             values, labels = {
                 'effort':     (EFFORTS, EFFORT_LABELS),
@@ -523,9 +624,10 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
                              render.fit(' ' + ln, render.content_width() - 1))
             else:
                 frame.append(render.fit('  ' + ln, render.content_width()))
-        frame += ['', render.hint_bar(
-            f"{pos}   ↑↓ scroll   ←→/SPACE page   / search   n/p match   ESC back"
-            + (f"   {hint}" if hint else ''))]
+        frame += ['', render.hint_keys(
+            [('↑↓', 'scroll'), ('←→/SPACE', 'page'), ('/', 'search'),
+             ('n/p', 'match'), ('ESC', 'back')],
+            prefix=pos, suffix=hint or '')]
         render.render_frame(frame)
 
         ev = pending if pending else wait_event()
@@ -617,7 +719,8 @@ def paths_menu(proj_folder, project_name, filename='extra-paths.txt', title='EXT
                 else:
                     frame.append(render.row(label, selected=(i == cur)))
             frame.append('')
-            frame.append(render.hint_bar("↑↓ navigate   ENTER select   DEL remove   ESC back"))
+            frame.append(render.hint_keys([('↑↓', 'navigate'), ('ENTER', 'select'),
+                                            ('DEL', 'remove'), ('ESC', 'back')]))
             render.render_frame(frame)
 
             ev = wait_event()
@@ -646,10 +749,13 @@ def paths_menu(proj_folder, project_name, filename='extra-paths.txt', title='EXT
                 redraw = True
 
 
-def launch_options_menu(project_name, defaults=None, is_new=False):
+def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
+                        selected_session_agents=None):
     """Launch configuration screen.
-    Returns None on ESC, else dict {'effort','model','perm','name','worktree'}.
+    Returns None on ESC, else dict {'effort','model','perm','name','worktree','agent'}.
     'worktree': '' = off, '*' = auto-named, other = custom name (new sessions only).
+    agents: optional list of agent names → adds an Agent field ('' = none).
+    selected_session_agents: refs chosen in the prior agent screen, shown read-only.
     defaults: optional dict with preselected 'effort'/'model'/'permission'."""
     d = defaults or {}
     effort_idx = EFFORTS.index(d.get('effort', '')) if d.get('effort', '') in EFFORTS else 0
@@ -657,8 +763,13 @@ def launch_options_menu(project_name, defaults=None, is_new=False):
     perm_idx   = PERMS.index(d.get('permission', '')) if d.get('permission', '') in PERMS else 0
     wt_state   = ''      # '' off | '*' auto | custom name
     name_val   = ''
+    agent_opts = [''] + list(agents or [])
+    agent_idx  = 0
 
-    n_fields = 5 if is_new else 3
+    base_fields = 3
+    new_extra   = 2 if is_new else 0
+    agent_field = base_fields + new_extra if len(agent_opts) > 1 else -1
+    n_fields    = base_fields + new_extra + (1 if agent_field >= 0 else 0)
     field = 0
 
     def _wt_label():
@@ -685,10 +796,30 @@ def launch_options_menu(project_name, defaults=None, is_new=False):
                 f"  {sel_c(3)}{'▸' if field == 3 else ' '}  Worktree    :  [ {render.trunc(_wt_label(), 18):<18} ]{C_RESET}   {C_DIM}← → cycle, → on 'custom'{C_RESET}",
                 f"  {sel_c(4)}{'▸' if field == 4 else ' '}  Name        :  [ {render.trunc(name_val or '(none)', 18):<18} ]{C_RESET}   {C_DIM}→ edit{C_RESET}",
             ]
+        if agent_field >= 0:
+            al = agent_opts[agent_idx] or '(none)'
+            frame.append(
+                f"  {sel_c(agent_field)}{'▸' if field == agent_field else ' '}  Lead agent  :  [ {render.trunc(al, 18):<18} ]{C_RESET}   {C_DIM}← → primary --agent (~/.claude/agents){C_RESET}")
+        frame.append(render.hline())
+        if selected_session_agents:
+            frame.append(f"  {_c.C_OK}project agents ({len(selected_session_agents)}){C_RESET}"
+                         f"   {C_DIM}'g' in sessions menu to change{C_RESET}")
+            names = [r.split('/', 1)[-1] for r in selected_session_agents]
+            wrap_w = render.content_width() - 4
+            line = ''
+            for nm in names:
+                piece = (nm + ',')
+                if line and render.disp_width(line + ' ' + piece) > wrap_w:
+                    frame.append(f"    {C_DIM}{line}{C_RESET}")
+                    line = piece
+                else:
+                    line = (line + ' ' + piece) if line else piece
+            if line:
+                frame.append(f"    {C_DIM}{line.rstrip(',')}{C_RESET}")
         frame += [
-            render.hline(),
             '',
-            render.hint_bar("↑↓ field   ← → change   ENTER launch   ESC back"),
+            render.hint_keys([('↑↓', 'field'), ('← →', 'change'),
+                              ('ENTER', 'launch'), ('ESC', 'back')]),
         ]
         render.render_frame(frame)
 
@@ -721,10 +852,12 @@ def launch_options_menu(project_name, defaults=None, is_new=False):
                         wt_state = ''
                 else:
                     wt_state = '' if step > 0 else '*'
-            elif field == 4:
+            elif field == 4 and is_new:
                 v = text_input("Session name (blank = none):", default=name_val)
                 if v is not None:
                     name_val = v
+            elif field == agent_field:
+                agent_idx = (agent_idx + step) % len(agent_opts)
         elif ev[0] == 'enter':
             return {
                 'effort': EFFORTS[effort_idx],
@@ -732,6 +865,7 @@ def launch_options_menu(project_name, defaults=None, is_new=False):
                 'perm':   PERMS[perm_idx],
                 'name':   name_val if is_new else '',
                 'worktree': wt_state if is_new else '',
+                'agent':  agent_opts[agent_idx],
             }
         elif ev[0] == 'esc':
             return None

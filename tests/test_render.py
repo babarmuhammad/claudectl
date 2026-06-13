@@ -5,8 +5,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from claude_sessions.render import (strip_ansi, disp_width, trunc, pad, fit,
                                      cols, meter, progress_bar, sep_line,
-                                     hline, header, content_width)
+                                     hline, header, content_width, hint_keys)
 from claude_sessions import render
+from claude_sessions import config as _c
 
 
 def test_strip_ansi():
@@ -168,6 +169,14 @@ def test_meter_clamps():
     assert strip_ansi(meter(100)) == '▕██████████▏'
     assert strip_ansi(meter(250)) == '▕██████████▏'   # clamp >100
     assert strip_ansi(meter(-10)) == '▕░░░░░░░░░░▏'    # clamp <0
+
+
+def test_hint_keys_colors_and_fits(monkeypatch):
+    monkeypatch.setattr(render, 'content_width', lambda: 80)
+    line = hint_keys([('g', 'agents'), ('?', 'help')])
+    assert _c.C_ACCENT in line          # keys accent-colored
+    assert 'agents' in strip_ansi(line) and 'help' in strip_ansi(line)
+    assert disp_width(line) <= 80
 
 
 def test_progress_bar_width(monkeypatch):

@@ -15,9 +15,9 @@ from claude_sessions.session_menu import _sid_of, _move_session
 OPTS = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
 
 
-def test_choice_line_v3_sentinels():
+def test_choice_line_v5_sentinels():
     line = build_choice_line(r'D:\proj', 'D--proj', 'new', dict(OPTS))
-    assert line == rf'v3|D:\proj|D--proj|new|-|-|-|-|-|{config_dir}'
+    assert line == rf'v5|D:\proj|D--proj|new|-|-|-|-|-|{config_dir}|-|-'
 
 
 def test_choice_line_empty_effort_set_model():
@@ -31,9 +31,9 @@ def test_choice_line_empty_effort_set_model():
 
 def test_choice_line_full():
     o = dict(OPTS, effort='high', model='fable-5', perm='plan',
-             name='My Sess', worktree='*')
+             name='My Sess', worktree='*', agent='reviewer', agents_json='')
     line = build_choice_line(r'D:\p', 'D--p', 'new', o)
-    assert line == rf'v3|D:\p|D--p|new|high|fable-5|plan|My Sess|*|{config_dir}'
+    assert line == rf'v5|D:\p|D--p|new|high|fable-5|plan|My Sess|*|{config_dir}|reviewer|-'
 
 
 def test_sid_of():

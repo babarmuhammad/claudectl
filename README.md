@@ -6,9 +6,30 @@ Claude Code treats your work as a collection of chats. claudectl treats each pro
 
 ---
 
+## Contents
+
+- [Features](#features)
+- [Install](#install)
+  - [Requirements](#requirements)
+  - [Setup](#setup)
+  - [Installing the agent library](#installing-the-agent-library)
+- [Usage](#usage)
+  - [Main screen](#main-screen)
+  - [Built-in screens](#built-in-screens)
+  - [Key bindings](#key-bindings)
+- [Reference](#reference)
+  - [Per-project files](#per-project-files)
+  - [CLAUDE.md auto-generation](#claudemd-auto-generation)
+  - [Global CLAUDE.md](#global-claudemd)
+  - [Session encoding](#session-encoding)
+  - [File layout](#file-layout)
+- [Troubleshooting](#troubleshooting)
+
+---
+
 ## Features
 
-**Session management**
+### Session management
 - **Session browser** — every Claude Code project and session, sorted by recency
 - **Quick-resume** — ★/☆ shortcuts on the main screen jump straight back into recent sessions across all projects
 - **Search** — type to filter sessions live; **🔍 Search all sessions** finds and resumes any session across every project
@@ -16,44 +37,61 @@ Claude Code treats your work as a collection of chats. claudectl treats each pro
 - **Session info** — per-session tokens, est. cost, models, git branch, duration (`i`)
 - **Archive** — move sessions to a restorable `archived/` folder instead of deleting (`d`, toggle view with `A`)
 - **Rename / Fork / Continue** — rename (`r`), fork (`f`), or continue the latest session (`claude -c`)
+- **Tags** — tag sessions (`t`); tags show inline and are searchable
+- **Changed files** — list the files a session edited/created, derived from its tool calls (`F`)
 
-**Project memory**
-- **Scaffold CLAUDE.md** (C) — build project context mechanically from git repos, recent commits, READMEs, and prior session topics
-- **AI CLAUDE.md generation** (A) — Claude itself deep-analyzes the codebase and writes or updates a comprehensive CLAUDE.md; you review before anything is written
-- **System prompts** (S) — AI-generate or hand-edit a per-project system prompt injected on every launch
+### MCP servers
+- **Full management** — add, remove, and inspect MCP servers via `claude mcp` (scopes local/user/project, transports stdio/http/sse, env vars and headers)
+- **Status footer** — connected servers shown live on the main screen
+- **Tool documentation** — analyze any server's tools and write the docs into the global `~/.claude/CLAUDE.md`
 
-**MCP awareness**
-- **MCP status** — connected servers shown in the footer on startup
-- **MCP documentation** — analyze any MCP server's tools and write the docs into the global `~/.claude/CLAUDE.md` so Claude knows them in every session
+### Agents (subagents)
+- **Agent library** — a category-organized store at `~/.claude/claudectl-agents/<category>/` (not auto-loaded by Claude, so sessions stay lean). Roll your own or bulk-install the [awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) catalog (154 agents across 10 categories) — see [Installing the agent library](#installing-the-agent-library).
+- **Per-project selection** (`g` in the sessions menu) — pick agents from a category checklist (optional, default none). The chosen agents are **copied into `<project>/.claude/agents/`** where Claude auto-discovers them, so they apply to every launch of that project and the selection auto-restores next time. claudectl only manages the files it placed (tracked in `.claudectl-managed.json`) — your own project agents are never touched.
+- **Scaffold** — create an agent into a chosen or new category: pick tools (multi-select) and model, edit the body
+- **AI-generated** — Claude analyzes the project and authors a focused subagent (role, when-to-use, tool subset, system prompt); you review before it's written
+- **Lead agent** — also set a single `--agent` (from `~/.claude/agents/`) in launch options
+- **Why copy, not `--agents`** — inline `--agents` JSON rides the command line (Windows ~32KB cap); a handful of real, multi-KB agents overruns it (`WinError 206`). Copying into `.claude/agents/` has no size limit and matches how Claude Code natively loads project subagents.
 
-**Usage analytics**
+### Project memory
+- **Scaffold CLAUDE.md** (`c`) — build project context mechanically from git repos, recent commits, READMEs, and prior session topics
+- **AI CLAUDE.md generation** (`a`) — Claude deep-analyzes the codebase and writes/updates a comprehensive CLAUDE.md; reviewed before writing
+- **System prompts** (`s`) — AI-generate or hand-edit a per-project system prompt injected on every launch
+- **Memory map** (`M`) — see which CLAUDE.md files load for a project (user / project / .claude / local) and their `@import`s; open any in your editor
+
+### Hooks
+- **Template & toggle** — drop in ready-made hooks (prettier-on-edit, block-curl, notify-on-stop), enable/disable, or remove; edits `settings.json` safely
+
+### Usage analytics
 - **Usage stats dashboard** — tokens (in/out/cache) and estimated cost per project and per session, parsed from local transcripts; cached for instant reopening
+- **Plan usage** — daily/weekly limit bars with reset times shown on the main screen
 
-**Per-project launch control**
-- **Effort / model / permissions** — reasoning effort, model override, and `--permission-mode` preset before each launch; last choice remembered per project
+### Per-project launch control
+- **Effort / model / permissions / agent** — reasoning effort, model override, `--permission-mode`, and `--agent` before each launch; effort/model/permission remembered per project
 - **New-session options** — name the session (`-n`) and launch in a git worktree (`-w`)
-- **Extra PATH entries** — per-project PATH dirs injected into Claude's environment
-- **Add directories** — per-project `--add-dir` list for extra context roots
+- **Extra PATH entries** / **Add directories** — per-project PATH dirs and `--add-dir` context roots
 
-**Quality of life**
-- **AI session titles** — sessions without a manual name show their AI-generated transcript title
-- **Settings screen** (⚙) — configure editor, claude.exe path, **config dir / account** (`CLAUDE_CONFIG_DIR`), and default launch options (`~/.claude/claudectl.json`)
+### Quality of life
+- **Themes** — switch palette in Settings: default, ocean, forest, mono, plus six trending dev schemes — Catppuccin Mocha, Tokyo Night, Dracula, Nord, Gruvbox, Rosé Pine
+- **AI session titles** — unnamed sessions show their AI-generated transcript title
+- **Settings screen** (⚙) — editor, claude.exe path, **config dir / account** (`CLAUDE_CONFIG_DIR`), theme, and default launch options (`~/.claude/claudectl.json`)
+- **Confirm dialogs & multi-select** — modern yes/no and checkbox pickers throughout; command keys accent-colored on every screen
 - **Help screen** — press `?` for a keyboard reference
 
 ---
 
-## Requirements
+## Install
+
+### Requirements
 
 - Python 3.10+
 - Windows 10 or Windows 11
 - [Claude Code CLI](https://docs.anthropic.com/claude-code) installed (auto-detected at `%USERPROFILE%\.local\bin\claude.exe` or on PATH; overridable in Settings)
 - Any text editor — Notepad++ / VS Code are auto-detected, Windows Notepad is the fallback (overridable in Settings)
 
----
+### Setup
 
-## Setup
-
-### Option A — pipx (recommended)
+**Option A — pipx (recommended)**
 
 ```
 pipx install claudectl
@@ -62,7 +100,7 @@ claudectl
 
 That's it — `claudectl` launches the session browser and starts Claude directly.
 
-### Option B — clone and run
+**Option B — clone and run**
 
 ```
 git clone https://github.com/babarmuhammad/claudectl.git
@@ -71,13 +109,12 @@ cd claudectl
 
 Double-click `Open Repo cmd.bat` (or run it from a terminal).
 
-### Optional: Desktop shortcut
+<details>
+<summary>Optional: Desktop shortcut & taskbar pin</summary>
 
-Right-click `Open Repo cmd.bat` → **Send to** → **Desktop (create shortcut)**.
+**Desktop shortcut** — right-click `Open Repo cmd.bat` → **Send to** → **Desktop (create shortcut)**.
 
-### Optional: Pin to taskbar (Windows 11)
-
-Windows 11 can't pin `.bat` shortcuts directly — the shortcut must point to `cmd.exe`. Run this once in PowerShell from the repo folder:
+**Pin to taskbar (Windows 11)** — Windows 11 can't pin `.bat` shortcuts directly; the shortcut must point to `cmd.exe`. Run this once in PowerShell from the repo folder:
 
 ```powershell
 $shell = New-Object -ComObject WScript.Shell
@@ -91,6 +128,37 @@ $lnk.Save()
 
 Then right-click the Desktop shortcut → **Pin to taskbar**.
 
+</details>
+
+### Installing the agent library
+
+The **⚙ Agents** screen reads `~/.claude/claudectl-agents/<category>/*.md`. To bulk-install the [awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents) catalog (154 agents, mirrored by category), run this PowerShell snippet once:
+
+> The agent catalog is created and maintained by **[VoltAgent](https://github.com/VoltAgent)** — [awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents). claudectl only mirrors it into the library; all credit for the agents goes to the original authors. Please refer to that repository for its license and contribution terms.
+
+```powershell
+$repo = 'https://api.github.com/repos/VoltAgent/awesome-claude-code-subagents/contents/categories'
+$raw  = 'https://raw.githubusercontent.com/VoltAgent/awesome-claude-code-subagents/main/categories'
+$lib  = "$env:USERPROFILE\.claude\claudectl-agents"
+foreach ($cat in (Invoke-RestMethod $repo | Where-Object { $_.type -eq 'dir' }).name) {
+    $dir = Join-Path $lib $cat
+    New-Item -ItemType Directory -Force $dir | Out-Null
+    foreach ($f in (Invoke-RestMethod "$repo/$cat") | Where-Object { $_.name -like '*.md' -and $_.name -ne 'README.md' }) {
+        Invoke-WebRequest "$raw/$cat/$($f.name)" -OutFile (Join-Path $dir $f.name)
+    }
+    Write-Host "$cat done"
+}
+```
+
+Install a **single** agent directly into the library (e.g. into `09-meta-orchestration`):
+
+```bash
+curl -sL https://raw.githubusercontent.com/VoltAgent/awesome-claude-code-subagents/main/categories/09-meta-orchestration/agent-installer.md \
+  -o "$USERPROFILE/.claude/claudectl-agents/09-meta-orchestration/agent-installer.md"
+```
+
+These land in the library (not `~/.claude/agents/`), so they don't bloat every Claude session — claudectl copies only the ones you select for a project into that project's `.claude/agents/` (`g` in the sessions menu).
+
 ---
 
 ## Usage
@@ -99,32 +167,22 @@ Then right-click the Desktop shortcut → **Pin to taskbar**.
 
 On launch, claudectl shows all projects Claude Code has ever opened, sorted by most recently used.
 
-- Quick-resume items appear at the top (★ = most recent session, ☆ = older sessions)
+- Quick-resume items appear at the top (★ = most recent session, ☆ = older sessions). These are the 5 most recently used sessions across all projects; selecting one resumes that exact session without navigating into the project's list.
 - All other projects follow, sorted by recency — type to filter live
 - The MCP status footer shows connected MCP servers once the background check completes
-- Bottom menu: **🔍 Search all sessions**, **⚙ Usage stats**, **⚙ Global CLAUDE.md / MCP Analysis**, **⚙ Settings**, **? Help**
+- Bottom menu: **🔍 Search all sessions**, **⚙ Usage stats**, **⚙ MCP servers**, **⚙ Agents**, **⚙ Hooks**, **⚙ Global CLAUDE.md**, **⚙ Settings**, **? Help**
 
-### 🔍 Search all sessions
+### Built-in screens
 
-Indexes session names, AI titles, and previews across every project (cached — instant after the first scan). Type to filter, ENTER resumes the selected session directly, no matter which project it belongs to.
+**🔍 Search all sessions** — indexes session names, AI titles, and previews across every project (cached — instant after the first scan). Type to filter, ENTER resumes the selected session directly, no matter which project it belongs to.
 
-### ⚙ Usage stats
+**⚙ Usage stats** — per-project table of sessions, messages, tokens (in / out / cache) and estimated API-equivalent cost, parsed from local transcripts. ENTER drills into per-session rows. Costs are estimates at published API rates — useful as a value/consumption gauge if you're on a subscription plan. First scan shows progress and can be stopped with ESC (partial results); later opens are instant thanks to a persistent cache.
 
-Per-project table of sessions, messages, tokens (in / out / cache) and estimated API-equivalent cost, parsed from local transcripts. ENTER drills into per-session rows. Costs are estimates at published API rates — useful as a value/consumption gauge if you're on a subscription plan. First scan shows progress and can be stopped with ESC (partial results); later opens are instant thanks to a persistent cache.
+**⚙ Global CLAUDE.md / MCP Analysis** — lists all connected MCP servers; select one to run Claude with a prompt that calls the MCP's `tools/list` endpoint and formats the result as markdown, written into `~/.claude/CLAUDE.md` inside a per-server sentinel block (cleanly re-updatable). You can also open the global CLAUDE.md directly in your editor from this menu. See [Global CLAUDE.md](#global-claudemd).
 
-### Quick-resume items (★ / ☆)
+### Key bindings
 
-These are the 5 most recently used sessions across all projects. Selecting one immediately resumes that exact session without navigating into the project's session list. ★ marks the single most recent session; ☆ marks older entries.
-
-### ⚙ Global CLAUDE.md / MCP Analysis
-
-Opens a sub-menu listing all connected MCP servers. Select any server to run Claude with a prompt that calls the MCP's `tools/list` endpoint and formats the result as markdown. The output is written into `~/.claude/CLAUDE.md` inside a per-server sentinel block so it can be cleanly updated on subsequent runs. You can also open the global CLAUDE.md directly in your editor from this menu.
-
----
-
-## Key Bindings
-
-### Main screen (project list)
+**Main screen (project list)**
 
 | Key | Action |
 |-----|--------|
@@ -133,7 +191,7 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 | Type text | Filter projects live |
 | ESC | Clear filter, then exit |
 
-### Sessions screen (session list for a project)
+**Sessions screen (session list for a project)**
 
 | Key | Action |
 |-----|--------|
@@ -146,18 +204,22 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 | v | View transcript |
 | e | Export transcript to markdown |
 | i | Session info (tokens, cost, models, branch) |
+| F | Changed files (from session tool calls) |
+| t | Tag session |
 | u | Project usage stats |
+| M | Memory map (CLAUDE.md hierarchy) |
 | A | Toggle archived sessions view |
 | c | Scaffold CLAUDE.md (git + sessions) |
 | a | AI-generate CLAUDE.md (Claude CLI) |
 | s | Edit / generate system prompt |
+| g | Pick project agents (library checklist → `.claude/agents/`) |
 | p | Manage extra PATH entries |
 | x | Manage --add-dir directories |
 | ? | Help / keyboard reference |
 | BACKSPACE | Delete last filter character |
 | Type text | Filter sessions live by name or preview |
 
-### Transcript viewer (`v`)
+**Transcript viewer (`v`)**
 
 | Key | Action |
 |-----|--------|
@@ -171,18 +233,27 @@ Opens a sub-menu listing all connected MCP servers. Select any server to run Cla
 
 The footer shows your position as `msg N/M` — counting conversation messages, not raw lines.
 
-### Launch options screen
+**Launch options screen**
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Switch fields (Effort / Model / Permissions / Worktree / Name) |
+| ↑ / ↓ | Switch fields (Effort / Model / Permissions / Lead agent / Worktree / Name) |
 | ← / → | Cycle values; edit Name/Worktree |
 | ENTER | Launch with selected options |
 | ESC | Back to main menu (no launch) |
 
+Worktree & Name appear only for new sessions; Lead agent appears when `~/.claude/agents/` has agents. Project agents picked with `g` are shown read-only here.
+
+**Multi-select / confirm**
+
+- Checkbox pickers (MCP tools, agent tools): `SPACE` toggle, `a` all, `n` none, `v` view (agent `.md`, where available), `ENTER` confirm, `ESC` cancel.
+- Confirm dialogs: `←→` choose, `ENTER` confirm, `ESC`/`y`/`n`.
+
 ---
 
-## Per-project files
+## Reference
+
+### Per-project files
 
 Each project gets a folder at `~/.claude/projects/<encoded-name>/`. claudectl reads and writes several files there:
 
@@ -193,15 +264,22 @@ Each project gets a folder at `~/.claude/projects/<encoded-name>/`. claudectl re
 | `extra-paths.txt` | Additional PATH directories added when launching Claude |
 | `add-dirs.txt` | Directories passed via `--add-dir` on every launch |
 | `system-prompt.txt` | System prompt injected via `--system-prompt-file` on every launch |
+| `tags.json` | Per-session tags (`sid → [tags]`) |
+| `session-agents.json` | Selected agent refs, keyed by `__project__` (project-level picks) |
 | `archived/` | Archived sessions (restorable from the A view) |
 
----
+In the project's **working directory** (not the encoded folder), claudectl also maintains:
 
-## CLAUDE.md auto-generation
+| File | Purpose |
+|------|---------|
+| `.claude/agents/*.md` | Selected library agents, copied here so Claude auto-discovers them |
+| `.claude/agents/.claudectl-managed.json` | Filenames claudectl placed (so it never removes your own agents) |
 
-### C — Scaffold (fast, mechanical)
+The agent library lives at `~/.claude/claudectl-agents/<category>/*.md` (account-wide, not auto-loaded); selecting agents for a project copies them into that project's `.claude/agents/`. A single lead agent can also come from `~/.claude/agents/`. Hooks and MCP servers are stored in `settings.json` / managed via `claude mcp`.
 
-Builds CLAUDE.md from:
+### CLAUDE.md auto-generation
+
+**`c` — Scaffold (fast, mechanical)** builds CLAUDE.md from:
 
 - Git repos found up to 2 levels deep in the project and any linked extra paths
 - Last 7 commits from each repo (`git log --oneline -7`)
@@ -210,21 +288,13 @@ Builds CLAUDE.md from:
 
 On an existing file, only the `<!-- AUTOGEN:START -->…<!-- AUTOGEN:END -->` and `<!-- SESSIONS:START -->…<!-- SESSIONS:END -->` blocks are replaced. Everything outside those blocks is preserved exactly.
 
-### A — AI analyze (slower, comprehensive)
+**`a` — AI analyze (slower, comprehensive)** runs `claude.exe -p` with a rich prompt containing the full directory tree, git history, READMEs, extra paths, and session history. Claude writes the entire CLAUDE.md. You review it in a pager and approve or reject before any file is written.
 
-Runs `claude.exe -p` with a rich prompt containing the full directory tree, git history, READMEs, extra paths, and session history. Claude writes the entire CLAUDE.md. You review it in a pager and approve or reject before any file is written.
+On an existing file, the current content is passed as ground truth with instructions to update only facts that have clearly changed. After generation the `<!-- AUTOGEN:START/END -->` and `<!-- SESSIONS:START/END -->` blocks are injected mechanically, and `<!-- AI:ANALYZED -->` is inserted on line 2 so future runs enter update mode rather than fresh mode.
 
-On an existing file, the current content is passed as ground truth with instructions to update only facts that have clearly changed.
+### Global CLAUDE.md
 
-After generation the `<!-- AUTOGEN:START/END -->` and `<!-- SESSIONS:START/END -->` blocks are injected mechanically, and `<!-- AI:ANALYZED -->` is inserted on line 2 so future runs enter update mode rather than fresh mode.
-
----
-
-## Global CLAUDE.md
-
-`~/.claude/CLAUDE.md` is loaded by Claude Code in every session across all projects. claudectl uses it to store MCP tool documentation:
-
-Each MCP server gets its own sentinel-delimited section:
+`~/.claude/CLAUDE.md` is loaded by Claude Code in every session across all projects. claudectl uses it to store MCP tool documentation. Each MCP server gets its own sentinel-delimited section:
 
 ```
 <!-- MCP:Notion:START -->
@@ -233,9 +303,44 @@ Each MCP server gets its own sentinel-delimited section:
 <!-- MCP:Notion:END -->
 ```
 
-Re-running the analysis for the same server updates only that section; other content is untouched.
+Re-running the analysis for the same server updates only that section; other content is untouched. Access via: main screen → **⚙ Global CLAUDE.md / MCP Analysis**.
 
-Access via: main screen → **⚙ Global CLAUDE.md / MCP Analysis**
+### Session encoding
+
+Claude Code encodes project paths as folder names under `~/.claude/projects/` by replacing path separators with `--` and certain special characters with `-`. For example:
+
+```
+D:\Projects\my-app  →  D--Projects-my-app
+```
+
+claudectl's `find_actual_path()` in `paths.py` reverses this by walking the filesystem and matching encoded components, handling edge cases like `_`, `+`, `-`, `#` in directory names.
+
+### File layout
+
+```
+.\claudectl\
+├── claude-sessions.py      # launcher stub: applies theme, --launch, crash handler
+├── Open Repo cmd.bat       # bat launcher (runs TUI, then py --launch)
+├── pyproject.toml
+├── README.md
+└── claude_sessions\        # package
+    ├── config.py           # constants, paths, themes, settings
+    ├── paths.py            # encode_component, find_actual_path
+    ├── sessions.py         # session parsing + persistence helpers
+    ├── main.py             # run() — project discovery, launch flow, main loop
+    ├── render.py           # frame-diff renderer, layout + hint helpers
+    ├── ui.py               # menu, pager, multiselect, confirm, launch options, settings
+    ├── session_menu.py     # per-project sessions menu
+    ├── search.py           # cross-project session search
+    ├── transcript.py       # transcript viewer + markdown export
+    ├── stats.py            # usage stats dashboard
+    ├── usage.py            # plan usage limit bars
+    ├── mcp.py              # MCP manager + background status poll
+    ├── agents.py           # agent library, per-project selection, scaffold/AI
+    ├── hooks.py            # hooks template / toggle / remove
+    ├── claude_md.py        # scaffold + AI CLAUDE.md, memory map
+    └── system_prompt.py    # edit / AI-generate system prompt
+```
 
 ---
 
@@ -246,42 +351,7 @@ Access via: main screen → **⚙ Global CLAUDE.md / MCP Analysis**
 | "claude.exe not found" screen on startup | Install [Claude Code](https://docs.anthropic.com/claude-code), or set the path in **⚙ Settings** |
 | Generated files don't open in an editor | Set your editor path in **⚙ Settings** (auto-detects Notepad++, VS Code, falls back to Notepad) |
 | Window closes instantly with an error | Check `%TEMP%\claudectl_crash.log` — the crash handler writes the traceback there |
-| Projects missing from the list | The project folder was moved/deleted, or the path can't be decoded — see *Session encoding* below |
+| Projects missing from the list | The project folder was moved/deleted, or the path can't be decoded — see [Session encoding](#session-encoding) |
 | Wrong account / want a second account | Set **Config dir** in **⚙ Settings** to that account's `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work`). Drives both session browsing and the env handed to `claude` at launch. Blank = default `~/.claude`. Restart claudectl to apply. One config dir active at a time. |
 | Settings location | `~/.claude/claudectl.json` — safe to edit by hand or delete to reset (always read from `~/.claude`, independent of Config dir) |
 | Usage stats look stale | Delete `~/.claude/claudectl-stats-cache.json` — it rebuilds on the next scan |
-
----
-
-## Session encoding
-
-Claude Code encodes project paths as folder names under `~/.claude/projects/` by replacing path separators with `--` and certain special characters with `-`. For example:
-
-```
-D:\Projects\my-app  →  D--Projects-my-app
-```
-
-claudectl's `find_actual_path()` in `paths.py` reverses this by walking the filesystem and matching encoded components, handling edge cases like `_`, `+`, `-`, `#` in directory names.
-
----
-
-## File layout
-
-```
-.\claudectl\
-├── claude-sessions.py     # launcher stub + crash handler
-├── Open Repo cmd.bat      # bat launcher
-├── README.md
-├── .gitignore
-└── claude_sessions\       # package
-    ├── __init__.py
-    ├── config.py          # constants, paths, sentinel strings
-    ├── paths.py           # encode_component, find_actual_path
-    ├── sessions.py        # session parsing, persistence helpers
-    ├── ui.py              # text_input, menu, paths_menu, launch_options_menu
-    ├── claude_md.py       # scaffold_claude_md, ai_scaffold_claude_md, helpers
-    ├── system_prompt.py   # edit_system_prompt, ai_generate_system_prompt
-    ├── session_menu.py    # sessions_menu
-    ├── mcp.py             # MCP background poll, global_claude_md_menu
-    └── main.py            # run() — project discovery and main loop
-```

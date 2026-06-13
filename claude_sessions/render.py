@@ -102,14 +102,14 @@ def _w(text):
     try:
         sys.stdout.write(text)
     except Exception:
-        pass
+        _c.log.exception('render write failed')
 
 
 def _flush():
     try:
         sys.stdout.flush()
     except Exception:
-        pass
+        _c.log.exception('render flush failed')
 
 
 def content_width():
@@ -240,6 +240,16 @@ def hint_bar(text):
     """Bottom hint/status line."""
     w = content_width()
     return f'{C_DIM}{fit("  " + strip_ansi(text).strip(), w)}{C_RESET}'
+
+
+def hint_keys(pairs, prefix='', suffix=''):
+    """Hint line where each (key, label) renders the key in accent and the
+    label dim, so command keys stand out from surrounding text. Optional
+    prefix/suffix are dim. ANSI-safe truncation to terminal width."""
+    parts = [f"{_c.C_ACCENT}{key}{C_RESET} {C_DIM}{label}{C_RESET}" for key, label in pairs]
+    lead = f"  {C_DIM}{prefix}{C_RESET}   " if prefix else "  "
+    tail = f"   {C_DIM}{suffix}{C_RESET}" if suffix else ''
+    return trunc(lead + "   ".join(parts) + tail, content_width())
 
 
 def progress_bar(tick, width=36):

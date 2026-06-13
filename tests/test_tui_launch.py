@@ -24,7 +24,8 @@ def run_menu(monkeypatch, keys, **kw):
 def test_enter_returns_defaults(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     result, _ = run_menu(monkeypatch, flat(ENTER))
-    assert result == {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
+    assert result == {'effort': '', 'model': '', 'perm': '', 'name': '',
+                      'worktree': '', 'agent': ''}
 
 
 def test_esc_returns_none(monkeypatch, tmp_path):
@@ -62,7 +63,7 @@ def test_defaults_preselected(monkeypatch, tmp_path):
                          defaults={'effort': 'high', 'model': 'claude-fable-5',
                                    'permission': 'plan'})
     assert result == {'effort': 'high', 'model': 'claude-fable-5',
-                      'perm': 'plan', 'name': '', 'worktree': ''}
+                      'perm': 'plan', 'name': '', 'worktree': '', 'agent': ''}
 
 
 def test_new_session_has_five_fields(monkeypatch, tmp_path):

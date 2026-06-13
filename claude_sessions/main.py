@@ -10,7 +10,7 @@ from .paths import find_actual_path
 from .sessions import get_session_info, load_recent_sessions, save_last_session, format_age, scan_sessions
 from .ui import menu, launch_options_menu, pause, help_screen, settings_menu
 from .session_menu import sessions_menu
-from .mcp import mcp_status_line, global_claude_md_menu, mcp_servers
+from .mcp import mcp_status_line, global_claude_md_menu, mcp_servers, mcp_manager_menu
 from .usage import usage_status_line
 from .ui import _cls
 from . import render
@@ -90,6 +90,9 @@ def run():
         (f"{'─' * W}", None),
         ('🔍  Search all sessions', '__search_all__'),
         ('⚙  Usage stats', '__usage_stats__'),
+        ('⚙  MCP servers', '__mcp__'),
+        ('⚙  Agents', '__agents__'),
+        ('⚙  Hooks', '__hooks__'),
         ('⚙  Global CLAUDE.md  /  MCP Analysis', '__global_claude_md__'),
         ('⚙  Settings', '__settings__'),
         ('?  Help', '__help__'),
@@ -128,6 +131,20 @@ def run():
             usage_dashboard(entries)
             continue
 
+        elif sel == '__mcp__':
+            mcp_manager_menu()
+            continue
+
+        elif sel == '__agents__':
+            from .agents import agents_menu
+            agents_menu(None)
+            continue
+
+        elif sel == '__hooks__':
+            from .hooks import hooks_menu
+            hooks_menu()
+            continue
+
         elif sel == '__global_claude_md__':
             global_claude_md_menu()
             continue
@@ -159,6 +176,15 @@ def run():
             break
         settings = load_settings()
         proj_def = settings.get('project_defaults', {}).get(encoded_name or '', {})
+        from .agents import list_all_agent_names, sync_project_agents
+        from .sessions import load_session_agents
+
+        # Library agents are selected at PROJECT level ('g' in the sessions
+        # menu) and live in <project>/.claude/agents/. They apply to every
+        # launch of the project, so the launch flow just reflects + re-syncs
+        # the current project selection rather than prompting per session.
+        chosen_refs = load_session_agents(proj_folder).get('__project__', []) if proj_folder else []
+
         opts = launch_options_menu(
             os.path.basename(path) or path,
             defaults={
@@ -167,11 +193,17 @@ def run():
                 'permission': proj_def.get('permission', settings.get('default_permission', '')),
             },
             is_new=(choice == 'new'),
+            agents=list_all_agent_names(path),
+            selected_session_agents=chosen_refs,
         )
         if opts is None:
             choice = None
             continue
-        # Remember per-project launch choices for next time
+        # Re-sync in case the project .claude/agents/ drifted; safe no-op when
+        # the selection already matches. Inline --agents is avoided because its
+        # JSON overruns the Windows command line for real agents.
+        sync_project_agents(path, chosen_refs)
+        # Remember per-project launch choices
         if encoded_name:
             settings.setdefault('project_defaults', {})[encoded_name] = {
                 'effort': opts['effort'], 'model': opts['model'],
@@ -181,7 +213,9 @@ def run():
         break
 
     if choice == 'terminal':
-        opts = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
+        opts = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': '', 'agent': ''}
+    opts.setdefault('agent', '')
+    opts.setdefault('agents_json', '')
 
     # Persist last session for quick-resume (resume/fork only)
     if choice and choice not in ('terminal', 'new', 'continue'):
@@ -206,6 +240,7 @@ def run():
     # (name/worktree) rather than aborting — only path/config_dir we can't fix.
     opts['name']     = opts['name'].replace('|', '')
     opts['worktree'] = opts['worktree'].replace('|', '')
+    opts['agent']    = opts.get('agent', '').replace('|', '')
     if '|' in f"{path}{encoded_name or ''}{config_dir}":
         _cls()
         print(f"\n  Internal error — '|' in project path or config dir; cannot launch.")
@@ -224,38 +259,86 @@ def run():
     with open(choice_file, 'w', encoding='utf-8', newline='') as f:
         f.write(build_choice_line(path, encoded_name, choice, opts) + '\r\n')
 
-    # When run via 'Open Repo cmd.bat' the bat reads the choice file and
-    # launches claude itself. When run standalone (pipx / `claudectl`),
-    # launch directly from Python.
+    # Launch is unified in Python: the bat re-invokes this script with --launch
+    # (so it can pass big --agents JSON the cmd choice-file can't hold), and the
+    # pipx/standalone path launches inline here.
     if os.environ.get('CLAUDECTL_BAT') != '1':
         _direct_launch(path, encoded_name, choice, opts)
 
 
 def build_choice_line(path, encoded_name, choice, opts):
-    """v3 choice-file line. Sentinel '-' for empty fields: cmd's for /f
+    """v5 choice-file line. Sentinel '-' for empty fields: cmd's for /f
     collapses consecutive delimiters, which silently shifted fields in the
-    old 5-field format (empty effort + set model -> model became effort).
-    v3 appends config_dir so the bat launcher can pin CLAUDE_CONFIG_DIR and
-    resolve per-project files under the active account's config dir."""
+    old 5-field format. v3 added config_dir; v4 the --agent name; v5 a path
+    to a temp JSON file of selected subagents (--agents, built per session)."""
     def sv(x):
         return x if x else '-'
-    return '|'.join(['v3', path, encoded_name or '-', choice,
+    return '|'.join(['v5', path, encoded_name or '-', choice,
                      sv(opts['effort']), sv(opts['model']), sv(opts['perm']),
-                     sv(opts['name']), sv(opts['worktree']), sv(config_dir)])
+                     sv(opts['name']), sv(opts['worktree']), sv(config_dir),
+                     sv(opts.get('agent', '')), sv(opts.get('agents_json', ''))])
+
+
+def parse_choice_line(line):
+    """Parse any choice-file version → (path, encoded_name, choice, opts).
+    opts always has effort/model/perm/name/worktree/agent/agents_json + cfgdir."""
+    t = line.rstrip('\r\n').split('|')
+    def g(i):
+        v = t[i] if i < len(t) else ''
+        return '' if v == '-' else v
+    opts = {'effort': '', 'model': '', 'perm': '', 'name': '',
+            'worktree': '', 'agent': '', 'agents_json': '', 'cfgdir': ''}
+    if t and t[0] == 'v5':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
+                    worktree=g(8), cfgdir=g(9), agent=g(10), agents_json=g(11))
+    elif t and t[0] == 'v4':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
+                    worktree=g(8), cfgdir=g(9), agent=g(10))
+    elif t and t[0] == 'v3':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
+                    worktree=g(8), cfgdir=g(9))
+    elif t and t[0] == 'v2':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7), worktree=g(8))
+    else:   # legacy 5-field: path|enc|action|effort|model
+        path, enc, choice = g(0), g(1), g(2)
+        opts.update(effort=g(3), model=g(4))
+    return path, enc, choice, opts
+
+
+def launch_from_choice():
+    """Read the choice file and launch claude (invoked by the bat as --launch)."""
+    try:
+        with open(choice_file, 'r', encoding='utf-8') as f:
+            line = f.read()
+    except Exception:
+        return
+    try:
+        os.remove(choice_file)
+    except Exception:
+        pass
+    path, enc, choice, opts = parse_choice_line(line)
+    _direct_launch(path, enc, choice, opts)
 
 
 def _direct_launch(path, encoded_name, choice, opts):
-    """Launch claude.exe (or a terminal) directly — used when not started via the bat."""
+    """Launch claude.exe (or a terminal) directly. Single launch path for
+    both the bat (--launch) and pipx/standalone flows."""
     from .sessions import read_extra_paths, load_add_dirs
 
     render.screen_restore()   # idempotent — console must be clean for claude
 
-    proj_folder = os.path.join(projects_dir, encoded_name) if encoded_name else None
+    # config dir: from the choice line (bat path) else the module default
+    cfgdir = opts.get('cfgdir') or config_dir
+    proj_folder = os.path.join(cfgdir, 'projects', encoded_name) if encoded_name else None
 
     env = os.environ.copy()
     # Pin the account/config dir explicitly — overrides any ambient
     # CLAUDE_CONFIG_DIR claudectl itself may have been launched under.
-    env['CLAUDE_CONFIG_DIR'] = config_dir
+    env['CLAUDE_CONFIG_DIR'] = cfgdir
     extra = read_extra_paths(proj_folder)
     if extra:
         env['PATH'] = ';'.join(extra) + ';' + env.get('PATH', '')
@@ -288,6 +371,11 @@ def _direct_launch(path, encoded_name, choice, opts):
         args += ['--model', opts['model']]
     if opts['perm']:
         args += ['--permission-mode', opts['perm']]
+    if opts.get('agent'):
+        args += ['--agent', opts['agent']]
+    # Selected library agents are NOT passed inline (--agents JSON overruns the
+    # Windows command line). They're copied into <project>/.claude/agents/ by
+    # sync_project_agents at selection time, where Claude auto-discovers them.
     if choice == 'new':
         if opts['name']:
             args += ['-n', opts['name']]

@@ -55,8 +55,9 @@ def global_search(entries):
             frame.append(render.row(label, selected=(i == nav)))
         if len(matches) > len(shown):
             frame.append(f"  {C_DIM}… {len(matches) - len(shown)} more — refine the search{C_RESET}")
-        frame += ['', render.hint_bar(
-            "type to search (space = AND)   ↑↓ navigate   ENTER resume   ESC back")]
+        frame += ['', render.hint_keys([('type', 'to search (space = AND)'),
+                                         ('↑↓', 'navigate'), ('ENTER', 'resume'),
+                                         ('ESC', 'back')])]
         render.render_frame(frame)
 
         ev = ui.wait_event()

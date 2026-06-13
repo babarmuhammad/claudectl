@@ -232,6 +232,84 @@ def save_extra_paths(proj_folder, paths):
         f.write('\n'.join(paths))
 
 
+def session_changed_files(jsonl_path):
+    """Files the session edited/created, derived from Edit/Write/MultiEdit/
+    NotebookEdit tool calls in the transcript. Returns [(path, count)] sorted
+    by edit count desc."""
+    counts = {}
+    try:
+        with open(jsonl_path, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+    except Exception:
+        return []
+    for line in lines:
+        ls = line.strip()
+        if not ls:
+            continue
+        try:
+            obj = json.loads(ls)
+        except Exception:
+            continue
+        content = (obj.get('message') or {}).get('content')
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if not (isinstance(block, dict) and block.get('type') == 'tool_use'):
+                continue
+            if block.get('name') not in ('Edit', 'Write', 'MultiEdit', 'NotebookEdit'):
+                continue
+            fp = (block.get('input') or {}).get('file_path') \
+                or (block.get('input') or {}).get('notebook_path')
+            if fp:
+                counts[fp] = counts.get(fp, 0) + 1
+    return sorted(counts.items(), key=lambda kv: -kv[1])
+
+
+# ── per-project tags (tags.json: sid -> [tags]) ──────────────
+
+def load_tags(proj_folder):
+    try:
+        with open(os.path.join(proj_folder, 'tags.json'), encoding='utf-8') as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_tags(proj_folder, tags):
+    try:
+        with open(os.path.join(proj_folder, 'tags.json'), 'w', encoding='utf-8') as f:
+            json.dump(tags, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def load_session_agents(proj_folder):
+    """session-agents.json: {session_key: [agent refs]}. Key = sid, or
+    '__new__'/'__continue__' for those actions."""
+    try:
+        with open(os.path.join(proj_folder, 'session-agents.json'), encoding='utf-8') as f:
+            d = json.load(f)
+            return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_session_agents(proj_folder, key, refs):
+    data = load_session_agents(proj_folder)
+    if refs:
+        data[key] = refs
+    else:
+        data.pop(key, None)
+    try:
+        with open(os.path.join(proj_folder, 'session-agents.json'), 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
 def load_add_dirs(proj_folder):
     """Per-project --add-dir entries from add-dirs.txt."""
     if not proj_folder:
