@@ -133,40 +133,46 @@ def iter_all_sessions(entries, title='SCANNING SESSIONS'):
 
     total = len(entries)
     stopped = False
-    for pi, (_, ppath, enc) in enumerate(entries, 1):
-        if stopped:
-            break
-        folder = os.path.join(projects_dir, enc)
-        names = [f for f in (os.listdir(folder) if os.path.isdir(folder) else [])
-                 if f.endswith('.jsonl')]
-        for f in names:
-            # drain all pending input; keys must not backlog into the dashboard
-            while True:
-                ev = ui.poll_event()
-                if not ev:
-                    break
-                if ev[0] == 'esc':
-                    stopped = True
-                    break
+    peeking = True   # stop inspecting input after first non-ESC key, so
+                     # keys queued for the next screen keep their order
+    try:
+        for pi, (_, ppath, enc) in enumerate(entries, 1):
             if stopped:
                 break
-            fpath = os.path.join(folder, f)
-            try:
-                mtime = os.path.getmtime(fpath)
-            except OSError:
-                continue
-            stats = get_session_stats_cached(fpath)
-            yield (mtime, ppath, enc, f[:-6], stats)
-        render.render_frame([
-            render.header('CLAUDECTL', title),
-            '',
-            f"  Scanning project {pi}/{total} — {render.trunc(os.path.basename(ppath) or ppath, 40)}",
-            '',
-            render.hint_bar("ESC stop early (partial results)"),
-        ])
-    save_disk_cache()
-    if stopped:
-        yield None   # sentinel: partial
+            folder = os.path.join(projects_dir, enc)
+            names = [f for f in (os.listdir(folder) if os.path.isdir(folder) else [])
+                     if f.endswith('.jsonl')]
+            for f in names:
+                # peek for ESC; first non-ESC key is preserved for the next
+                # screen and ends the peeking (keeps queued input in order)
+                if peeking:
+                    ev = ui.poll_event()
+                    if ev:
+                        if ev[0] == 'esc':
+                            stopped = True
+                            break
+                        ui.push_event(ev)
+                        peeking = False
+                fpath = os.path.join(folder, f)
+                try:
+                    mtime = os.path.getmtime(fpath)
+                except OSError:
+                    continue
+                stats = get_session_stats_cached(fpath)
+                yield (mtime, ppath, enc, f[:-6], stats)
+            render.render_frame([
+                render.header('CLAUDECTL', title),
+                '',
+                f"  Scanning project {pi}/{total} — {render.trunc(os.path.basename(ppath) or ppath, 40)}",
+                '',
+                render.hint_bar("ESC stop early (partial results)"),
+            ])
+        if stopped:
+            yield None   # sentinel: partial
+    finally:
+        # guarantees parsed stats hit the disk cache even if the consumer
+        # abandons the generator mid-scan
+        save_disk_cache()
 
 
 # ── dashboard screens ────────────────────────────────────────

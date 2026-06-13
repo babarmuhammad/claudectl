@@ -72,6 +72,12 @@ def _key_event():
 
 
 _term_size = None
+_pushback = []   # events peeked by progress scans, preserved for next screen
+
+
+def push_event(ev):
+    """Return an event to the front of the input stream."""
+    _pushback.append(ev)
 
 
 def _size_changed():
@@ -96,6 +102,8 @@ def wait_event():
     size changes — screen loops redraw on any unhandled event, so resizes
     propagate automatically."""
     while True:
+        if _pushback:
+            return _pushback.pop(0)
         if msvcrt.kbhit():
             ev = _key_event()
             if ev:
@@ -108,6 +116,8 @@ def wait_event():
 
 def poll_event():
     """Non-blocking: return an event if one is pending, else None."""
+    if _pushback:
+        return _pushback.pop(0)
     if msvcrt.kbhit():
         return _key_event()
     return None
@@ -481,6 +491,7 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
     header_lines = header_lines or []
     query = ''
     matches = []
+    pending = None  # event carried over from the coalescing drain
 
     def _find(q):
         ql = q.lower()
@@ -517,7 +528,8 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
             + (f"   {hint}" if hint else ''))]
         render.render_frame(frame)
 
-        ev = wait_event()
+        ev = pending if pending else wait_event()
+        pending = None
         if ev[0] == 'up':
             top -= 1
         elif ev[0] == 'down':
@@ -554,7 +566,8 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
         elif ev[0] == 'char' and ev[1] in extra_keys:
             return ev[1]
 
-        # coalesce queued scroll repeats (held arrows / wheel) into one redraw
+        # coalesce queued scroll repeats (held arrows / wheel) into one redraw;
+        # any other queued event becomes next iteration's input — never dropped
         while True:
             nxt = poll_event()
             if not nxt:
@@ -563,12 +576,9 @@ def pager(crumbs, lines, hint='', header_lines=None, extra_keys=(),
                 top -= 1
             elif nxt[0] == 'down':
                 top += 1
-            elif nxt[0] in ('esc', 'enter'):
-                if nxt[0] == 'esc' and query:
-                    query = ''
-                    matches = []
-                else:
-                    return None
+            else:
+                pending = nxt
+                break
 
 
 # ── feature menus ────────────────────────────────────────────

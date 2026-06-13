@@ -115,8 +115,11 @@ def _extract_windows(data):
             pct = float(pct)
         except (TypeError, ValueError):
             continue
-        if pct <= 1.0 and pct > 0:   # some shapes report 0..1
+        if pct < 0:
+            continue                  # invalid
+        if 0 < pct <= 1.0:            # some shapes report 0..1
             pct *= 100
+        pct = min(pct, 100.0)         # clamp — meter can't exceed full
         out.append((_window_label(key), pct, val.get('resets_at')))
     order = {'daily': 0, 'weekly': 1, 'wk-sonnet': 2, 'wk-opus': 3}
     out.sort(key=lambda w: order.get(w[0], 9))

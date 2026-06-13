@@ -78,14 +78,17 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
     search_focused = False   # True = cursor on search bar, typing goes there
     nav_pos        = 0       # index into nav_indices of current list item
 
-    # Display name: manual rename wins, else AI-generated transcript title
+    # Display name: manual rename wins, else AI-generated transcript title.
+    # Cache key includes folder — the same sid can exist in both the live
+    # and archived folders, and must not share a cached name.
     names = {}
 
     def _name_of(folder, sid):
-        if sid not in names:
-            names[sid] = load_name(folder, sid) or \
+        key = (folder, sid)
+        if key not in names:
+            names[key] = load_name(folder, sid) or \
                          get_session_title(os.path.join(folder, f"{sid}.jsonl"))
-        return names[sid]
+        return names[key]
 
     def active_sessions():
         src = arch_sessions if show_archived else sessions
@@ -153,8 +156,11 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
         frame.append('')
 
         cur = nav_indices[nav_pos]
-        # window rows so hints always fit the terminal height
-        fixed = 2 + 2 + 3   # header+blank, search+blank, blank+hint(2)
+        # window rows so hints always fit the terminal height.
+        # chrome below the list = blank(1) + hint lines (2 only in the
+        # full non-focused non-archived state, else 1)
+        hint_n = 2 if (not search_focused and not show_archived) else 1
+        fixed = 2 + 2 + 1 + hint_n   # header+blank, search+blank, blank, hints
         avail = max(3, render.frame_height() - fixed)
         n = len(rows)
         start, end = 0, n
@@ -253,9 +259,10 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
             nav_pos = 0
 
         elif ev[0] == 'char' and ev[1] == 'r' and cur_sid and not show_archived:
-            new_name = text_input("Rename session:", default=names.get(cur_sid, ''))
+            new_name = text_input("Rename session:",
+                                  default=names.get((proj_folder, cur_sid), ''))
             if new_name is not None:
-                names[cur_sid] = new_name
+                names[(proj_folder, cur_sid)] = new_name
                 try:
                     save_name(proj_folder, cur_sid, new_name)
                     flash(f"Renamed to '{new_name}'" if new_name else "Name cleared")
@@ -263,7 +270,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                     flash(f"Rename failed: {e}", ok=False, secs=1.5)
 
         elif ev[0] == 'char' and ev[1] == 'd' and cur_sid:
-            label = names.get(cur_sid) or cur_sid[:8]
+            label = names.get((folder, cur_sid)) or cur_sid[:8]
             if show_archived:
                 act = menu([('Restore  (move back to sessions)', 'restore'),
                             ('Delete permanently', 'delete'),
@@ -309,8 +316,9 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                             flash("Session deleted")
                         if not os.path.exists(os.path.join(proj_folder, f"{cur_sid}.jsonl")):
                             sessions = [s for s in sessions if s[1] != cur_sid]
-                            names.pop(cur_sid, None)
-                nav_pos = min(nav_pos, max(0, len(nav_indices) - 2))
+                            names.pop((proj_folder, cur_sid), None)
+                # rows shrank by one selectable; loop top also re-clamps
+                nav_pos = max(0, min(nav_pos, len(nav_indices) - 2))
 
         elif ev[0] == 'char' and ev[1] == 'f' and cur_sid and not show_archived:
             return f"fork:{cur_sid}"

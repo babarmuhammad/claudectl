@@ -143,7 +143,9 @@ def run():
         else:
             path = sel
             encoded_name = next((n for _, p, n in entries if p == path), None)
-            proj_folder  = os.path.join(projects_dir, encoded_name) if encoded_name else None
+            if not encoded_name:
+                continue   # path not in entries (shouldn't happen) — skip safely
+            proj_folder  = os.path.join(projects_dir, encoded_name)
 
             sessions = scan_sessions(proj_folder)
 
@@ -200,9 +202,13 @@ def run():
         print(f"\n  Internal error — invalid action: {choice!r}")
         pause("\n  Press Enter to exit...")
         sys.exit(1)
-    if '|' in f"{path}{encoded_name}{choice}{opts['name']}{opts['worktree']}{config_dir}":
+    # '|' is the choice-file delimiter. Strip it from user-typed fields
+    # (name/worktree) rather than aborting — only path/config_dir we can't fix.
+    opts['name']     = opts['name'].replace('|', '')
+    opts['worktree'] = opts['worktree'].replace('|', '')
+    if '|' in f"{path}{encoded_name or ''}{config_dir}":
         _cls()
-        print(f"\n  Internal error — '|' not allowed in launch data.")
+        print(f"\n  Internal error — '|' in project path or config dir; cannot launch.")
         pause("\n  Press Enter to exit...")
         sys.exit(1)
 

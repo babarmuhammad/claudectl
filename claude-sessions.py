@@ -28,6 +28,9 @@ except BaseException:
         if log_path:
             print(f"\n  Saved to {log_path}")
         input("\n  Press Enter to close...")
-    except (OSError, EOFError, KeyboardInterrupt):
-        pass   # headless / closed console — log file is enough
+    except BaseException:
+        # stdout/stdin may be None/closed/redirected (GUI launch) → any error
+        # is possible (ValueError, AttributeError, OSError, EOFError). The log
+        # file already has the traceback; never raise from the crash handler.
+        pass
     sys.exit(1)

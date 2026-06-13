@@ -299,6 +299,7 @@ def _pager_confirm(title, content):
     flush_input()   # discard keys buffered during generation
     lines = content.splitlines()
     top = 0
+    pending = None
     while True:
         page = max(4, render.frame_height() - 6)
         top = max(0, min(top, max(0, len(lines) - page)))
@@ -314,7 +315,8 @@ def _pager_confirm(title, content):
             + "   ↑↓ scroll   ←→/SPACE page   ENTER approve & write   ESC reject"))
         render.render_frame(frame)
 
-        ev = wait_event()
+        ev = pending if pending else wait_event()
+        pending = None
         if ev[0] == 'up':
             top -= 1
         elif ev[0] == 'down':
@@ -329,7 +331,7 @@ def _pager_confirm(title, content):
             return True
         elif ev[0] == 'esc':
             return False
-        # coalesce queued repeats (held arrows / wheel) into one redraw
+        # coalesce queued scroll repeats; other events carry to next iteration
         while True:
             nxt = poll_event()
             if not nxt:
@@ -338,10 +340,9 @@ def _pager_confirm(title, content):
                 top -= 1
             elif nxt[0] == 'down':
                 top += 1
-            elif nxt[0] == 'enter':
-                return True
-            elif nxt[0] == 'esc':
-                return False
+            else:
+                pending = nxt
+                break
 
 
 def ai_scaffold_claude_md(project_path, proj_folder=None):
