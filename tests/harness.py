@@ -193,6 +193,16 @@ class Sandbox:
         })
         self.mp.setattr(mcp_mod, '_mcp_ready', True)
         self.mp.setattr(mcp_mod, 'mcp_servers', [('TestMCP', 'ok')])
+        # claude.exe is absent on CI runners → run()'s availability gate would
+        # fire pause() and eat a scripted key, desyncing every flow. Pin a fake
+        # path everywhere it was imported by value so tests are host-independent.
+        import claude_sessions.main as main_mod
+        import claude_sessions.claude_md as cmd
+        import claude_sessions.system_prompt as spm
+        fake_exe = lambda: r'C:\fake\claude.exe'
+        for m in (config, main_mod, mcp_mod, ui, cmd, spm):
+            if hasattr(m, 'get_claude_exe'):
+                self.mp.setattr(m, 'get_claude_exe', fake_exe)
 
     def set_terminal(self, cols, lines):
         import shutil as _sh
