@@ -8,11 +8,50 @@ from harness import Sandbox, run_flow, typed, UP, DOWN, LEFT, RIGHT, ENTER, ESC
 from claude_sessions import ui, config
 
 
+TAB = [b'\t']
+
+
 def flat(*parts):
     out = []
     for p in parts:
         out.extend(p)
     return out
+
+
+# ── path auto-completion ─────────────────────────────────────
+
+def test_path_completions_filter_and_dirs_only(monkeypatch, tmp_path):
+    (tmp_path / 'foo').mkdir()
+    (tmp_path / 'foobar').mkdir()
+    (tmp_path / 'bar').mkdir()
+    (tmp_path / 'baz.txt').write_text('x', encoding='utf-8')
+
+    base, partial, names = ui.path_completions(str(tmp_path) + os.sep)
+    assert set(names) == {'foo', 'foobar', 'bar'}        # dirs only, no baz.txt
+
+    base, partial, names = ui.path_completions(os.path.join(str(tmp_path), 'fo'))
+    assert partial == 'fo'
+    assert names == ['foo', 'foobar']                    # prefix filter, sorted
+
+
+def test_path_completions_empty_lists_drives():
+    _b, _p, names = ui.path_completions('')
+    assert all(n.endswith(':\\') for n in names)
+
+
+def test_path_input_enter_returns_dir(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    res, _, _ = run_flow(monkeypatch, ENTER, ui.path_input, 'Folder?', str(tmp_path))
+    assert res == os.path.abspath(str(tmp_path))
+
+
+def test_path_input_tab_completes(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    (tmp_path / 'project-x').mkdir()
+    # default ends mid-name; TAB completes to the only match, ENTER opens it
+    start = os.path.join(str(tmp_path), 'proj')
+    res, _, _ = run_flow(monkeypatch, flat(TAB, ENTER), ui.path_input, 'Folder?', start)
+    assert res == os.path.abspath(str(tmp_path / 'project-x'))
 
 
 # ── confirm ──────────────────────────────────────────────────

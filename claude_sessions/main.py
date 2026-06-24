@@ -105,6 +105,7 @@ def run():
 
     full_items = full_items + [
         (f"{'─' * W}", None),
+        ('📂  Open new project by path…', '__open_path__'),
         ('🔍  Search all sessions', '__search_all__'),
         ('⚙  Usage stats', '__usage_stats__'),
         ('⚙  MCP servers', '__mcp__'),
@@ -133,6 +134,18 @@ def run():
             encoded_name = sess['encoded_name']
             proj_folder  = os.path.join(projects_dir, encoded_name)
             choice       = f"resume:{sess['session_id']}"
+
+        elif sel == '__open_path__':
+            from .ui import path_input
+            from .paths import encode_component
+            p = path_input("Open Claude in which folder?  (TAB to complete)")
+            if not p:
+                continue
+            path = os.path.abspath(p)
+            encoded_name = encode_component(path)
+            proj_folder  = os.path.join(projects_dir, encoded_name)
+            project_name = os.path.basename(path) or path
+            choice = 'new'
 
         elif sel == '__search_all__':
             from .search import global_search

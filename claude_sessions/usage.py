@@ -103,28 +103,59 @@ def _window_label(key):
     return key[:8]
 
 
+def _limit_label(item):
+    """Label a `limits[]` entry by its kind/group."""
+    k = str(item.get('kind', '')).lower()
+    g = str(item.get('group', '')).lower()
+    if 'opus' in k:
+        return 'wk-opus'
+    if 'sonnet' in k:
+        return 'wk-sonnet'
+    if g == 'weekly' or 'week' in k:
+        return 'weekly'
+    if g == 'session' or 'session' in k or 'five' in k or '5h' in k:
+        return 'daily'
+    return (k or g)[:8]
+
+
 def _extract_windows(data):
     """Find limit windows in the response, tolerant of shape variations.
-    Returns [(label, pct, resets_at_iso)] with the 5h window first."""
+    Returns [(label, pct, resets_at_iso)] ordered daily-first.
+
+    `utilization`/`percent` are already 0-100 percentages from this endpoint —
+    they are NOT divided or rescaled here. (An earlier 0..1 heuristic wrongly
+    multiplied small values by 100, pinning low usage to 100%.)"""
     if not isinstance(data, dict):
         return []
-    out = []
-    for key, val in data.items():
-        if not isinstance(val, dict):
-            continue
-        pct = val.get('utilization')
-        if pct is None:
-            continue
+
+    def norm(v):
         try:
-            pct = float(pct)
+            return max(0.0, min(float(v), 100.0))
         except (TypeError, ValueError):
-            continue
-        if pct < 0:
-            continue                  # invalid
-        if 0 < pct <= 1.0:            # some shapes report 0..1
-            pct *= 100
-        pct = min(pct, 100.0)         # clamp — meter can't exceed full
-        out.append((_window_label(key), pct, val.get('resets_at')))
+            return None
+
+    out = []
+    # Prefer the authoritative `limits` array (explicit percent + group).
+    limits = data.get('limits')
+    if isinstance(limits, list):
+        for item in limits:
+            if not isinstance(item, dict):
+                continue
+            pct = norm(item.get('percent'))
+            if pct is None:
+                continue
+            out.append((_limit_label(item), pct, item.get('resets_at')))
+
+    # Fallback: top-level per-window dicts carrying `utilization`.
+    if not out:
+        for key, val in data.items():
+            if not isinstance(val, dict):
+                continue
+            pct = norm(val.get('utilization'))
+            if pct is None:
+                continue
+            out.append((_window_label(key), pct, val.get('resets_at')))
+
     order = {'daily': 0, 'weekly': 1, 'wk-sonnet': 2, 'wk-opus': 3}
     out.sort(key=lambda w: order.get(w[0], 9))
     return out

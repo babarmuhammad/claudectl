@@ -122,10 +122,12 @@ def test_usage_pct_zero_shown(monkeypatch, tmp_path):
     assert w and w[0][1] == 0
 
 
-def test_usage_pct_fraction_scaled(monkeypatch, tmp_path):
-    w = usage_mod._extract_windows({'five_hour': {'utilization': 0.42,
+def test_usage_pct_not_rescaled(monkeypatch, tmp_path):
+    # utilization is already a 0-100 percentage; small values must NOT be
+    # multiplied by 100 (the old heuristic turned 1% into 100%).
+    w = usage_mod._extract_windows({'seven_day': {'utilization': 1.0,
                                                   'resets_at': None}})
-    assert w and abs(w[0][1] - 42) < 1e-6
+    assert w and abs(w[0][1] - 1.0) < 1e-6
 
 
 def test_usage_negative_rejected(monkeypatch, tmp_path):

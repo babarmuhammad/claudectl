@@ -102,8 +102,9 @@ def test_usage_clamp_and_zero():
         {'five_hour': {'utilization': 250, 'resets_at': None}})[0][1] == 100
     assert usage_mod._extract_windows(
         {'five_hour': {'utilization': 0, 'resets_at': None}})[0][1] == 0
-    assert not usage_mod._extract_windows(
-        {'five_hour': {'utilization': -1, 'resets_at': None}})
+    # negative is invalid → clamped to 0 (not multiplied/rescaled)
+    assert usage_mod._extract_windows(
+        {'five_hour': {'utilization': -1, 'resets_at': None}})[0][1] == 0
 
 
 # ── #6 windowing: full session menu hint always present, small terminal ──

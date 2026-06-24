@@ -64,6 +64,7 @@ def _key_event():
     if key == 13: return ('enter',)
     if key == 27: return ('esc',)
     if key == 8:  return ('back',)
+    if key == 9:  return ('tab',)
     if 32 <= key <= 126 or key > 127:
         try:
             return ('char', chr(key))
@@ -319,6 +320,106 @@ def text_input(prompt, default=''):
             buf.append(ev[1])
 
 
+def path_completions(text):
+    """(base_dir, partial, [child dir names]) for a typed path — directories
+    only. Empty text → drive roots. Pure (no UI) for testability."""
+    raw = os.path.expandvars(os.path.expanduser(text.strip()))
+    if not raw:
+        drives = [f"{d}:\\" for d in 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+                  if os.path.isdir(f"{d}:\\")]
+        return '', '', drives
+    if raw.endswith(('\\', '/')) or os.path.isdir(raw):
+        base, partial = raw, ''
+    else:
+        base, partial = os.path.dirname(raw) or '.', os.path.basename(raw)
+    try:
+        names = [d for d in os.listdir(base)
+                 if os.path.isdir(os.path.join(base, d))]
+    except Exception:
+        return base, partial, []
+    pl = partial.lower()
+    return base, partial, sorted(n for n in names if n.lower().startswith(pl))
+
+
+def _join_path(base, name):
+    return os.path.join(base, name) if base else name
+
+
+def path_input(prompt, default=''):
+    """Text input with live filesystem (directory) auto-completion.
+    TAB completes, ↑↓ pick a suggestion, ENTER opens a directory. Returns the
+    absolute path of an existing directory, or None on cancel."""
+    flush_input()
+    buf = list(default)
+    sel = -1
+    while True:
+        text = ''.join(buf)
+        base, partial, names = path_completions(text)
+        sugg = names[:8]
+        if sel >= len(sugg):
+            sel = len(sugg) - 1
+        cw = render.content_width()
+        frame = [
+            render.header('CLAUDECTL', 'OPEN PROJECT'), '',
+            f"  {C_TITLE}{prompt}{C_RESET}", '',
+            f"  {C_SEL}>{C_RESET} {render.trunc(text, cw - 6)}{C_SRCH}▌{C_RESET}", '',
+        ]
+        for i, n in enumerate(sugg):
+            disp = n if n.endswith(('\\', '/')) else n + '\\'
+            if i == sel:
+                frame.append(f"  {_c.C_ACCENT}▸ {render.trunc(disp, cw - 6)}{C_RESET}")
+            else:
+                frame.append(f"    {C_DIM}{render.trunc(disp, cw - 6)}{C_RESET}")
+        if len(names) > len(sugg):
+            frame.append(f"    {C_DIM}… {len(names) - len(sugg)} more{C_RESET}")
+        if not names:
+            frame.append(f"    {C_DIM}(no matching folders){C_RESET}")
+        frame += ['', render.hint_keys([('TAB', 'complete'), ('↑↓', 'suggestions'),
+                                        ('ENTER', 'open folder'), ('ESC', 'cancel')])]
+        render.render_frame(frame)
+        ev = wait_event()
+
+        if ev[0] == 'esc':
+            return None
+        elif ev[0] == 'enter':
+            if sel >= 0 and sugg:
+                buf = list(_join_path(base, sugg[sel]) + os.sep)
+                sel = -1
+                continue
+            cand = os.path.abspath(os.path.expandvars(os.path.expanduser(text.strip()))) \
+                if text.strip() else ''
+            if cand and os.path.isdir(cand):
+                return cand
+            if len(sugg) == 1:
+                buf = list(_join_path(base, sugg[0]) + os.sep)
+            else:
+                flash("Not a folder — pick a suggestion or type a valid path",
+                      ok=False, secs=1.4)
+        elif ev[0] == 'tab':
+            if sel >= 0 and sugg:
+                buf = list(_join_path(base, sugg[sel]) + os.sep)
+                sel = -1
+            elif sugg:
+                lcp = os.path.commonprefix(sugg)
+                target = _join_path(base, lcp)
+                if len(sugg) == 1:
+                    target += os.sep
+                buf = list(target)
+        elif ev[0] == 'down':
+            if sugg:
+                sel = (sel + 1) % len(sugg)
+        elif ev[0] == 'up':
+            if sugg:
+                sel = (sel - 1) % len(sugg)
+        elif ev[0] == 'back':
+            if buf:
+                buf.pop()
+            sel = -1
+        elif ev[0] == 'char':
+            buf.append(ev[1])
+            sel = -1
+
+
 def menu(items, title, footer='', footer_fn=None, banner_fn=None):
     """Arrow-key menu with live footer and persistent search bar.
     items: list of (label, value). value=None = non-selectable separator.
@@ -464,6 +565,7 @@ def help_screen():
         f"  {C_BOLD}Main screen{C_RESET}",
         f"    ↑↓ navigate    ENTER open project / resume    ESC exit",
         f"    type to search projects    ★/☆ quick-resume recent sessions",
+        f"    📂 open new project by path (TAB-complete folders)",
         f"    🔍 search all   ⚙ usage / MCP servers / agents / hooks / settings",
         '',
         f"  {C_BOLD}Sessions screen{C_RESET}",
