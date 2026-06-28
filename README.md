@@ -1,8 +1,29 @@
-# claudectl
+<h1 align="center">claudectl</h1>
 
-A Windows workspace manager for Claude Code — project memory, MCP awareness, and multi-project workflows in a fast terminal UI.
+<p align="center">
+  <b>The workspace layer for Claude Code.</b><br>
+  Persistent project memory, an interactive architecture graph, MCP awareness, and per-project launch control — in a fast terminal UI.
+</p>
 
-Claude Code treats your work as a collection of chats. claudectl treats each project as a **persistent workspace**: sessions stay browsable and searchable, project context lives in maintained CLAUDE.md files, MCP servers are visible at a glance, and every launch is configured per project. Switching projects stops feeling like losing the agent's memory.
+<p align="center">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.10%2B-blue">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-0078D6">
+  <img alt="Dependencies" src="https://img.shields.io/badge/runtime%20deps-zero%20(stdlib)-brightgreen">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-green">
+  <img alt="Claude Code" src="https://img.shields.io/badge/for-Claude%20Code-8A5CF6">
+</p>
+
+---
+
+Claude Code treats your work as a stream of chats. **claudectl treats each project as a persistent workspace** — sessions stay browsable and searchable, project context lives in maintained CLAUDE.md files, a Claude-built **semantic memory** layer feeds the agent real project knowledge, an interactive **architecture graph** shows how the codebase connects, MCP servers are visible at a glance, and every launch is configured per project. Switching projects stops feeling like losing the agent's memory.
+
+**Why claudectl**
+
+- 🧠 **Persistent memory for the agent** — a knowledge graph of your project, extracted by Claude and written into CLAUDE.md, so every session starts with real context (not a blank slate).
+- 🕸️ **See your architecture** — an animated, expandable dependency graph (Python · C/C++ · C# · JS/TS) that opens at the project level and drills down to single files.
+- 📦 **Workspace, not chats** — browse, search, tag, fork, resume, and archive every Claude Code session across every project.
+- 🔌 **Manage the whole surface** — MCP servers, subagents, hooks, system prompts, and per-project launch defaults from one TUI.
+- ⚡ **Zero runtime dependencies** — pure Python standard library, Windows-native, uses your existing Claude Code auth (no extra API key).
 
 ---
 
@@ -60,12 +81,21 @@ Claude Code treats your work as a collection of chats. claudectl treats each pro
 - **System prompts** (`s`) — AI-generate or hand-edit a per-project system prompt injected on every launch
 - **Memory map** (`M`) — see which CLAUDE.md files load for a project (user / project / .claude / local) and their `@import`s; open any in your editor
 
-### Connections graph & semantic memory (`n`)
-- **Project connections graph** — visualize how a project hangs together as an interactive **plexus** network (force-directed, zoom/pan/hover, grid-approx physics that stays smooth at thousands of nodes). **Dependency edges across languages**: Python `import` (AST) + C/C++ `#include`, C# `using`→namespace, JS/TS `import`/`require` (regex) — so non-Python repos show real architecture, not just folders. Nodes are **clustered and colored per project/repo**; **filters** in the browser: per-type toggles, **dependencies-only** (hide containment → pure architecture), **search**, labels, Fit/Reset. **File view** (~300-file cap) or **module view** (`g`, one node per directory, depth-collapsed) which scales to any repo (large repos default to module view). Self-contained HTML (no CDN), opened in the browser; a TUI summary shows counts + most-connected nodes.
-- **Claude-powered persistent memory** — a cognee-style knowledge graph reimplemented natively (no extra dependency, no separate API key): `claude.exe` extracts entities + relationships from code, CLAUDE.md, and sessions into `<project>/.claudectl/memory/graph.json`, updated **incrementally by file hash**. Entities merge into the plexus graph (violet nodes).
-- **Memory → CLAUDE.md** — the digest is written into a `<!-- CLAUDECTL:MEMORY -->` block in the project CLAUDE.md (only that block; user/AUTOGEN content untouched), so **every Claude session loads the current semantic memory** as context. Toggle with the `memory_to_claudemd` setting (default on); the change is reviewable via the `w` workspace diff.
-- **Ask the project** — grounded Q&A over the memory graph: retrieves the relevant subgraph and asks Claude (`a` in the connections screen). No embeddings, no cloud — uses your existing Claude Code auth.
-- *(Inspired by [cognee](https://github.com/topoteretes/cognee), implemented from scratch — claudectl stays pure-stdlib and offline-friendly.)*
+### Architecture graph (`n` → `o`)
+An interactive, **whole-project dependency graph** rendered as a self-contained HTML (no CDN), opened in your browser.
+
+- **Expandable hierarchy** — opens at the workspace root + its repos (sized by importance); **click a node to drill in** (repo → module → file) with a smooth opening animation. The complete tree is embedded, so any size is explorable via progressive disclosure; small projects auto-expand fully.
+- **Real dependencies, multi-language** — edges come from actual imports: Python `import` (AST) + C/C++ `#include` + C# `using`→namespace + JS/TS `import`/`require`. Edges **lift to the visible level**: collapsed shows repo↔repo bundles, expanded reveals module- and file-level links.
+- **Reads as architecture** — each project sits in its **own contained bubble** (never overlaps others), nodes sized by importance (file count + dependency degree), colored per project, animated **rotating dodecahedra** with flowing connection particles on a neural-network-style canvas.
+- **Controls** — search (expands the path to matches), filters (dependency / containment / hulls / labels), Fit / Reset / Expand-all / Collapse; zoom-aware labels; hover highlights neighbors. Built graph is **cached** (`.claudectl/connections-cache.json`) so reopening is instant; `r` forces a rebuild.
+
+### Claude-powered project memory (`n` → `m`)
+A native, cognee-style **knowledge graph** of your project — no extra dependency, no separate API key (uses your Claude Code auth).
+
+- **Whole-project extraction** — `claude.exe` summarizes **every repo and its important modules** (interfaces, entry points, headers, largest/most-central files), producing entities + relationships, **incrementally by file hash** (only changed modules are re-analyzed). Progress bar, cancellable; stored in `<project>/.claudectl/memory/graph.json`.
+- **Memory → CLAUDE.md** — a structured digest (per repo → module → key entities) is written into a `<!-- CLAUDECTL:MEMORY -->` block in the project CLAUDE.md (only that block; your prose and AUTOGEN content untouched), so **every session loads the current project memory** as context. Toggle via `memory_to_claudemd`; the change is reviewable in the `w` workspace diff.
+- **Ask the project** (`n` → `a`) — grounded Q&A: retrieves the relevant subgraph and asks Claude. No embeddings, no cloud.
+- *(Inspired by [cognee](https://github.com/topoteretes/cognee), reimplemented from scratch so claudectl stays pure-stdlib and offline-friendly.)*
 
 ### Workspace provenance & freshness
 - **Provenance manifest** — `<project>/.claudectl/workspace-manifest.json` records where generated context came from: repo HEAD, source-file hashes (CLAUDE.md/README/configs), sessions analyzed (count + range), CLAUDE.md files, MCP server snapshots + tool counts, and last-run timestamps for scaffold / AI-analyze / launch. Updated automatically after those operations (best-effort — never blocks them).
@@ -226,7 +256,7 @@ On launch, claudectl shows all projects Claude Code has ever opened, sorted by m
 | a | AI-generate CLAUDE.md (Claude CLI) |
 | s | Edit / generate system prompt |
 | g | Pick project agents (library checklist → `.claude/agents/`) |
-| n | Connections graph + Claude project memory (plexus, ask) |
+| n | Architecture graph + project memory screen (then `o` open graph · `m` build memory · `a` ask · `r` rebuild) |
 | w | Workspace status (provenance & freshness) |
 | p | Manage extra PATH entries |
 | x | Manage --add-dir directories |
@@ -290,6 +320,10 @@ In the project's **working directory** (not the encoded folder), claudectl also 
 | `.claude/agents/*.md` | Selected library agents, copied here so Claude auto-discovers them |
 | `.claude/agents/.claudectl-managed.json` | Filenames claudectl placed (so it never removes your own agents) |
 | `.claudectl/workspace-manifest.json` | Provenance & freshness manifest (repo HEAD, hashes, sessions, MCP, timestamps) |
+| `.claudectl/memory/graph.json` | Claude-extracted semantic memory (entities, relations, per-repo/module summaries) |
+| `.claudectl/connections-cache.json` | Cached architecture graph (rebuilt when the file signature changes) |
+| `.claudectl/connections-graph.html` | The rendered interactive architecture graph (opened in the browser) |
+| `.claudectl/snapshots/` | Previous versions of generated files (for the `w` change diffs) |
 
 The agent library lives at `~/.claude/claudectl-agents/<category>/*.md` (account-wide, not auto-loaded); selecting agents for a project copies them into that project's `.claude/agents/`. A single lead agent can also come from `~/.claude/agents/`. Hooks and MCP servers are stored in `settings.json` / managed via `claude mcp`.
 
