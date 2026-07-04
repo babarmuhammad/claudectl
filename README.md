@@ -117,6 +117,9 @@ Launcher-side mitigations for the most common Claude Code problems (2026 field r
 - **Context-loss insurance** — after every session a 5-line summary (goal + files touched) is appended to `.claudectl/session-log.md`, so the next session can recall what happened even after `/compact` wiped the context. Local, free.
 - **Permission fatigue killer** — `P` in the workspace screen scans your history for repeatedly-used Bash commands and proposes `permissions.allow` rules for the project settings.json (diff-previewed, you approve).
 
+### Plan→Execute — two models, one task (`⇧X`)
+Plan with an accurate model, execute with a cheaper/faster one — big token savings for the same result. claudectl plans the task headlessly with `plan_model` (default Opus 4.8), shows you the plan to approve/reject, saves it to `.claudectl/plan-latest.md`, then launches an interactive session on `exec_model` (default Sonnet 5) seeded to read and execute that plan. Expensive reasoning happens once; the build runs on the cheap tier. Nobody else orchestrates this from the launcher.
+
 ### Adaptive agent selection (`g`)
 The agents screen opens with a **"Suggested for this project"** section — library agents ranked against the project's languages (from the dependency graph), memory entities, and name. Local scoring, instant, free. Setting `agents_auto: 'auto'` applies suggestions automatically on first open (your manual picks are never touched).
 

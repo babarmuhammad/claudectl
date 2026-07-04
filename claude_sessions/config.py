@@ -58,6 +58,8 @@ _DEFAULT_SETTINGS = {
     'memory_auto_refresh': 'open',  # 'off' | 'open' (auto-refresh on project open) | 'hub'
     'memory_lessons_autoapprove': 0.8,  # lessons with confidence >= this auto-approve (0 = off)
     'conventions_to_global': True,  # promote cross-project conventions to ~/.claude/CLAUDE.md
+    'plan_model': 'claude-opus-4-8',   # Plan→Execute: model that writes the plan
+    'exec_model': 'claude-sonnet-5',   # Plan→Execute: model that executes it
 }
 
 

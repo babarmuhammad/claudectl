@@ -253,7 +253,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                 ('t', 'tag'), ('d', 'archive'), ('e', 'export'), ('i', 'info'),
                 ('⇧F', 'files'), ('⇧A', 'archived')], prefix='session:'))
             frame.append(render.hint_keys([
-                ('m', 'memory'), ('g', 'agents'), ('n', 'graph'),
+                ('m', 'memory'), ('g', 'agents'), ('n', 'graph'), ('⇧X', 'plan→exec'),
                 ('a', 'ai-analyze'), ('c', 'claude.md'), ('s', 'sys-prompt'),
                 ('u', 'usage'), ('w', 'status')], prefix='project:'))
             frame.append(render.hint_bar(
@@ -466,6 +466,10 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
             from . import memhub
             memhub.hub_screen(project_path, proj_folder, project_name)
 
+        elif ev[0] == 'char' and ev[1] == 'X' and not show_archived:
+            from . import plan_execute
+            plan_execute.run(project_path, proj_folder, project_name)
+
         elif ev[0] == 'char' and ev[1] == '!' and not show_archived and not_set_up:
             # one-key project setup: CLAUDE.md scaffold → memory (rules sync inside)
             if confirm("Set up project now? (scaffold CLAUDE.md + build memory with Claude)"):
@@ -489,6 +493,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
                 ('Archive session', 'd'), ('Export to markdown', 'e'),
                 ('Session info (tokens, cost)', 'i'), ('Changed files', 'F'),
                 ('Archived sessions view', 'A'), ('Lessons review', 'L'),
+                ('Plan with one model, execute with another', 'X'),
                 ('Architecture graph', 'n'), ('Project agents', 'g'),
                 ('AI-analyze CLAUDE.md', 'a'), ('Scaffold CLAUDE.md', 'c'),
                 ('System prompt', 's'), ('Memory files map', 'M'),
