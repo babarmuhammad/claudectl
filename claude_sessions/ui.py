@@ -475,6 +475,48 @@ def path_input(prompt, default=''):
             sel = -1
 
 
+def _theme_picker(s):
+    """Live theme picker: arrows preview instantly and the cursor stays on the
+    selected theme; ESC/ENTER saves the highlighted theme. No trip back to
+    Settings between changes."""
+    from .config import C_DIM, C_RESET, C_OK
+    names = _c.THEME_NAMES
+    cur = s.get('theme', 'default')
+    idx = names.index(cur) if cur in names else 0
+
+    def _apply(i):
+        _c.apply_theme(names[i])
+        render.invalidate()
+
+    _apply(idx)
+    while True:
+        frame = [render.header('CLAUDECTL', 'SETTINGS', 'THEME'), '']
+        for i, n in enumerate(names):
+            mark = f"{C_OK}●{C_RESET} " if n == s.get('theme') else '  '
+            frame.append(render.row(f"{mark}{n}", selected=(i == idx)))
+        frame += ['', render.hline(), '',
+                  render.hint_keys([('↑↓', 'preview'), ('ENTER', 'select'),
+                                    ('ESC', 'back')]),
+                  f"  {C_DIM}live preview; restart for full effect{C_RESET}"]
+        render.render_frame(frame)
+        ev = wait_event()
+        if ev[0] == 'up':
+            idx = (idx - 1) % len(names)
+            _apply(idx)
+        elif ev[0] == 'down':
+            idx = (idx + 1) % len(names)
+            _apply(idx)
+        elif ev[0] == 'enter':
+            s['theme'] = names[idx]
+            save_settings(s)
+            flash(f"Theme '{names[idx]}' saved", ok=True, secs=1.0)
+        elif ev[0] == 'esc':
+            # persist whatever is highlighted, then restore & leave
+            s['theme'] = names[idx]
+            save_settings(s)
+            return
+
+
 def menu(items, title, footer='', footer_fn=None, banner_fn=None):
     """Arrow-key menu with live footer and persistent search bar.
     items: list of (label, value). value=None = non-selectable separator.
@@ -714,13 +756,7 @@ def settings_menu():
                     save_settings(s)
                     flash("Saved — restart claudectl to apply", secs=1.6)
         elif sel == 'theme':
-            pick = menu([(n, n) for n in _c.THEME_NAMES], "THEME")
-            if pick is not None:
-                s['theme'] = pick
-                save_settings(s)
-                _c.apply_theme(pick)          # live for dynamic-color screens
-                render.invalidate()
-                flash("Theme applied (restart for full effect)", secs=1.4)
+            _theme_picker(s)
         elif sel in ('effort', 'model', 'permission'):
             values, labels = {
                 'effort':     (EFFORTS, EFFORT_LABELS),

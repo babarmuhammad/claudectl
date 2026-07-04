@@ -149,3 +149,23 @@ def test_all_themes_have_core_keys():
     for name, pal in config.THEMES.items():
         for k in ('C_ACCENT', 'C_SEL_BG', 'C_HEADER_BG', 'C_OK', 'C_WARN'):
             assert k in pal, (name, k)
+
+
+def test_theme_picker_navigates_and_saves(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    s = config.load_settings()
+    s['theme'] = 'default'
+    names = config.THEME_NAMES
+    # down twice previews, ENTER saves the highlighted theme, stays; ESC exits
+    keys = flat(DOWN, DOWN, ENTER, ESC)
+    run_flow(monkeypatch, keys, ui._theme_picker, s)
+    assert s['theme'] == names[2]                       # stayed on selected theme
+    assert config.load_settings()['theme'] == names[2]  # persisted
+
+
+def test_theme_picker_esc_persists_highlight(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    s = config.load_settings()
+    s['theme'] = 'default'
+    run_flow(monkeypatch, flat(DOWN, ESC), ui._theme_picker, s)
+    assert s['theme'] == config.THEME_NAMES[1]

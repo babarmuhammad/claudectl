@@ -145,6 +145,30 @@ def test_pending_units_recorded(monkeypatch, tmp_path):
     assert mem['pending_units'] == 2                         # coverage notice data
 
 
+# ── background refresh ───────────────────────────────────────
+
+def test_background_refresh_runs_off_main_thread(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'mod1/a.py')
+    _stub(monkeypatch)
+    memory.refresh_memory(actual, folder, 'alpha')          # seed memory
+    _mkfile(actual, 'mod1/a.py', 'changed = 2\n')           # make it stale
+    calls = []
+    _stub(monkeypatch, calls)
+    t = memory.start_background_refresh(actual, folder, 'alpha')
+    assert t is not None
+    t.join(timeout=10)
+    assert calls == ['mod1/(root)']                          # refreshed in the thread
+
+
+def test_background_refresh_noop_without_memory(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'mod1/a.py')
+    assert memory.start_background_refresh(actual, folder, 'alpha') is None  # no graph yet
+
+
 # ── digest ───────────────────────────────────────────────────
 
 def test_micro_digest_within_budget(monkeypatch, tmp_path):

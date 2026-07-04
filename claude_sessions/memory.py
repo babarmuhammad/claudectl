@@ -14,8 +14,15 @@ Inspired by cognee (Apache-2.0); implemented from scratch.
 import os
 import re
 import json
+import threading
 
 from . import config as _c
+
+# background-refresh coordination: a thread sets _tls.silent so its Claude calls
+# run headless (no progress UI / keyboard) and never touch the live TUI.
+_tls = threading.local()
+_bg_lock = threading.Lock()
+_bg_active = set()          # project paths currently refreshing in the background
 
 SCHEMA_VERSION = 2
 MEM_SUBDIR = os.path.join('.claudectl', 'memory')
@@ -96,16 +103,25 @@ def clear_memory(project_path, proj_folder=None):
 def _claude_stdin(prompt, cwd, timeout=EXTRACT_TIMEOUT,
                   crumbs=('CLAUDECTL', 'MEMORY'), label='Working with Claude...'):
     """Run `claude -p` reading the prompt from stdin (avoids the Windows
-    command-line length limit) with a visible progress bar (ESC cancels).
+    command-line length limit). Foreground: visible progress bar (ESC cancels).
+    Background threads (_tls.silent): headless subprocess, no UI/keyboard.
     Returns stdout text or ''."""
     from .config import get_claude_exe
-    from .ui import run_with_progress_stdin
     exe = get_claude_exe()
     if not exe:
         return ''
+    args = [exe, '-p', '--disallowedTools', 'Write,Edit,NotebookEdit,Bash']
+    if getattr(_tls, 'silent', False):
+        import subprocess
+        try:
+            p = subprocess.run(args, input=prompt, capture_output=True, text=True,
+                               encoding='utf-8', errors='ignore', cwd=cwd, timeout=timeout)
+            return p.stdout or ''
+        except Exception:
+            return ''
+    from .ui import run_with_progress_stdin
     out, _cancelled = run_with_progress_stdin(
-        [exe, '-p', '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
-        prompt, crumbs, label, timeout=timeout, cwd=cwd)
+        args, prompt, crumbs, label, timeout=timeout, cwd=cwd)
     return out or ''
 
 
@@ -434,6 +450,36 @@ def _module_graph(project_path, proj_folder, units):
     edges = [{'source': f"{s[0]}/{s[1]}", 'target': f"{t[0]}/{t[1]}", 'weight': w}
              for (s, t), w in sorted(agg.items(), key=lambda kv: kv[1], reverse=True)]
     return edges, rank
+
+
+def start_background_refresh(project_path, proj_folder, project_name, auto_cap=6):
+    """Refresh memory in a daemon thread so the TUI stays responsive — the user
+    works while memory updates. No-op if memory doesn't exist yet, if a refresh
+    for this project is already running, or if disabled. Returns the thread or
+    None."""
+    root = os.path.abspath(project_path or '')
+    if not root:
+        return None
+    with _bg_lock:
+        if root in _bg_active:
+            return None
+        if not load_memory(project_path, proj_folder).get('entities'):
+            return None                      # nothing to incrementally refresh yet
+        _bg_active.add(root)
+
+    def _work():
+        _tls.silent = True                   # headless Claude calls, no TUI
+        try:
+            refresh_memory(project_path, proj_folder, project_name, auto_cap=auto_cap)
+        except Exception:
+            _c.log.exception('memory: background refresh failed')
+        finally:
+            with _bg_lock:
+                _bg_active.discard(root)
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    return t
 
 
 def _iso():

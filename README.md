@@ -144,7 +144,7 @@ Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, 
 - **Extra PATH entries** / **Add directories** — per-project PATH dirs and `--add-dir` context roots
 
 ### Quality of life
-- **Themes (16)** — switch palette in Settings: default, ocean, forest, mono, plus Catppuccin Mocha, Catppuccin Latte, Tokyo Night, Dracula, Nord, Gruvbox, Rosé Pine, Kanagawa, Everforest, Ayu, Monokai Pro, Solarized
+- **Themes (17)** — switch palette in Settings (live preview, cursor stays on the selection): default, ocean, forest, mono, ember (red), plus Catppuccin Mocha, Catppuccin Latte, Tokyo Night, Dracula, Nord, Gruvbox, Rosé Pine, Kanagawa, Everforest, Ayu, Monokai Pro, Solarized
 - **AI session titles** — unnamed sessions show their AI-generated transcript title
 - **Settings screen** (⚙) — editor, claude.exe path, **config dir / account** (`CLAUDE_CONFIG_DIR`), theme, and default launch options (`~/.claude/claudectl.json`)
 - **Confirm dialogs & multi-select** — modern yes/no and checkbox pickers throughout; command keys accent-colored on every screen

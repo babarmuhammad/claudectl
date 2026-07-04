@@ -73,38 +73,56 @@ def _last_session_stamp(project_path):
     return ''
 
 
-def session_diff(project_path, proj_folder):
-    """'Since last session': git commits + changed-file stat since the last
-    session-log stamp. Pure local; empty list if not a git repo."""
-    since = _last_session_stamp(project_path)
-    lines = []
+def _git_repos(project_path, proj_folder):
+    """Every git repo for this project: the root if it's one, plus any nested
+    repos (a workspace often holds several sub-project repos, none at the root)."""
+    repos = []
+    if os.path.isdir(os.path.join(project_path, '.git')):
+        repos.append(project_path)
+    try:
+        from . import connections
+        for r in connections._discover_repos(os.path.abspath(project_path), proj_folder):
+            if os.path.isdir(os.path.join(r, '.git')) and r not in repos:
+                repos.append(r)
+    except Exception:
+        pass
+    return repos
 
-    def _git(args):
+
+def session_diff(project_path, proj_folder):
+    """'Since last session': git commits + changed-file stat per repo since the
+    last session-log stamp. Handles sub-project repos (commits may live in
+    subdirs, not the project root). Pure local."""
+    since = _last_session_stamp(project_path)
+    repos = _git_repos(project_path, proj_folder)
+    if not repos:
+        return ['(no git repo here or in sub-projects — nothing to diff)']
+
+    def _git(cwd, args):
         try:
-            r = subprocess.run(['git', *args], cwd=project_path,
+            r = subprocess.run(['git', *args], cwd=cwd,
                                capture_output=True, text=True, timeout=8)
             return r.stdout.strip() if r.returncode == 0 else ''
         except Exception:
             return ''
 
-    if not os.path.isdir(os.path.join(project_path, '.git')):
-        return ['(not a git repo — nothing to diff)']
-
-    log_args = ['log', '--oneline', '-15']
-    if since:
-        log_args = ['log', '--oneline', f'--since={since}']
-    commits = _git(log_args)
-    if commits:
-        lines.append(f"commits since {since or 'recently'}:")
-        lines += ['  ' + c for c in commits.splitlines()[:12]]
-    stat = _git(['diff', '--stat', 'HEAD~5..HEAD'] if not since else
-                ['diff', '--stat', f'@{{{since}}}..HEAD'])
-    if stat:
+    root = os.path.abspath(project_path)
+    lines = []
+    for repo in repos:
+        label = os.path.basename(repo.rstrip(os.sep)) or repo
+        log_args = ['log', '--oneline', f'--since={since}'] if since else ['log', '--oneline', '-10']
+        commits = _git(repo, log_args)
+        dirty = _git(repo, ['status', '--porcelain'])
+        if not commits and not dirty:
+            continue                                 # quiet repo — skip
+        header = f"▸ {label}" if len(repos) > 1 or repo != root else "commits:"
+        lines.append(header)
+        if commits:
+            for c in commits.splitlines()[:10]:
+                lines.append('  ' + c)
+        if dirty:
+            lines.append(f"  ({len(dirty.splitlines())} uncommitted file(s))")
         lines.append('')
-        lines.append('files changed:')
-        lines += ['  ' + s for s in stat.splitlines()[-8:]]
-    dirty = _git(['status', '--porcelain'])
-    if dirty:
-        lines.append('')
-        lines.append(f"uncommitted: {len(dirty.splitlines())} file(s) with changes")
-    return lines or ['(no changes since last session)']
+    if not lines:
+        return [f"(no changes since {since or 'the last session'})"]
+    return lines

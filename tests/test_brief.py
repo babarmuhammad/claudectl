@@ -37,7 +37,7 @@ def test_session_diff_non_git(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, _ = sb.add_project('alpha')
     out = brief.session_diff(actual, folder)
-    assert out and 'not a git repo' in out[0]
+    assert out and 'nothing to diff' in out[0]
 
 
 def test_session_diff_git(monkeypatch, tmp_path):
@@ -50,3 +50,19 @@ def test_session_diff_git(monkeypatch, tmp_path):
     _g('add', '-A'); _g('commit', '-m', 'first commit here')
     out = brief.session_diff(actual, folder)
     assert any('commit' in l.lower() for l in out)
+
+
+def test_session_diff_subproject_repo(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    # NO git at root — repo lives in a sub-project
+    sub = os.path.join(actual, 'service')
+    os.makedirs(sub)
+    def _g(*a):
+        subprocess.run(['git', *a], cwd=sub, capture_output=True, text=True)
+    _g('init'); _g('config', 'user.email', 't@t'); _g('config', 'user.name', 't')
+    open(os.path.join(sub, 'f.txt'), 'w').write('x')
+    _g('add', '-A'); _g('commit', '-m', 'subproject commit xyz')
+    out = brief.session_diff(actual, folder)
+    joined = '\n'.join(out)
+    assert 'service' in joined and 'subproject commit' in joined

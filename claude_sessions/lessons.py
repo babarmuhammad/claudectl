@@ -156,6 +156,27 @@ def apply_decay(mem, settings=None):
     return before - len(mem['entities'])
 
 
+def start_background_scan(project_path, proj_folder, sids):
+    """Learn lessons from finished sessions in a daemon thread (headless Claude
+    calls) so 'auto' mode never blocks the TUI on project open."""
+    import threading
+    from . import memory as _memory
+    if not sids:
+        return None
+
+    def _work():
+        _memory._tls.silent = True
+        try:
+            scan_sessions(project_path, proj_folder, sids)
+        except Exception:
+            from . import config as _c
+            _c.log.exception('lessons: background scan failed')
+
+    t = threading.Thread(target=_work, daemon=True)
+    t.start()
+    return t
+
+
 def scan_sessions(project_path, proj_folder, sids=None):
     """Extract + merge lessons for the given (or all pending) sids. Saves the
     graph. Returns (n_added, n_scanned)."""

@@ -85,20 +85,17 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
             _mem0 = _memory.load_memory(project_path, proj_folder)
             _pend = _lessons.pending_sids(proj_folder, _mem0)
             if _pend and _lmode == 'auto':
-                _lessons.scan_sessions(project_path, proj_folder, _pend)
-                _pend = []
+                _lessons.start_background_scan(project_path, proj_folder, _pend)
             unlearned = len(_pend)
     except Exception:
         unlearned = 0
-    # memory auto-refresh on open: incremental, capped so a big rebuild never
-    # runs silently; only when memory already exists and a few units changed
+    # memory auto-refresh on open: runs in the BACKGROUND so the TUI stays
+    # responsive — the user works while memory updates. Incremental + capped.
     try:
         from .config import load_settings as _ls3
         if _ls3().get('memory_auto_refresh') == 'open' and project_path and proj_folder:
             from . import memory as _memory
-            _m0 = _memory.load_memory(project_path, proj_folder)
-            if _m0.get('entities'):
-                _memory.refresh_memory(project_path, proj_folder, project_name, auto_cap=6)
+            _memory.start_background_refresh(project_path, proj_folder, project_name)
     except Exception:
         pass
     # agents auto-mode: first open with no explicit selection → apply suggestions
