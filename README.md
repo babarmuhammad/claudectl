@@ -13,6 +13,11 @@
   <img alt="Claude Code" src="https://img.shields.io/badge/for-Claude%20Code-8A5CF6">
 </p>
 
+<p align="center">
+  <img alt="Architecture graph" src="docs/graph.gif" width="720">
+  <br><sub>Interactive architecture graph — rotating dodecahedron nodes, per-project bubbles, live dependency flow (rendered preview).</sub>
+</p>
+
 ---
 
 Claude Code treats your work as a stream of chats. **claudectl treats each project as a persistent workspace** — sessions stay browsable and searchable, project context lives in maintained CLAUDE.md files, a Claude-built **semantic memory** layer feeds the agent real project knowledge, an interactive **architecture graph** shows how the codebase connects, MCP servers are visible at a glance, and every launch is configured per project. Switching projects stops feeling like losing the agent's memory.
@@ -90,6 +95,8 @@ An interactive, **whole-project dependency graph** rendered as a self-contained 
 - **Real dependencies, multi-language** — edges come from actual imports: Python `import` (AST) + C/C++ `#include` + C# `using`→namespace + JS/TS `import`/`require`. Edges **lift to the visible level**: collapsed shows repo↔repo bundles, expanded reveals module- and file-level links.
 - **Reads as architecture** — each project sits in its **own contained bubble** (never overlaps others), nodes sized by importance (file count + dependency degree), colored per project, animated **rotating dodecahedra** with flowing connection particles on a neural-network-style canvas.
 - **Controls** — search (expands the path to matches), filters (dependency / containment / hulls / labels), Fit / Reset / Expand-all / Collapse; zoom-aware labels; hover highlights neighbors. Built graph is **cached** (`.claudectl/connections-cache.json`) so reopening is instant; `r` forces a rebuild.
+
+> The animation at the top of this README previews this view (`docs/graph.gif`, regenerate with `py tools/make_gifs.py`). The real graph is a self-contained interactive HTML you open in the browser.
 
 ### Intelligent project memory (`m`)
 The feature that makes claudectl unique: **task-scoped, token-budgeted memory injection at the launcher**. Claude remembers the whole project while paying the fewest possible tokens — three injection surfaces, zero duplication:
