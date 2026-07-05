@@ -32,6 +32,16 @@ Claude Code treats your work as a stream of chats. **claudectl treats each proje
 - 📦 **Workspace, not chats** — browse, search, tag, fork, resume, and archive every Claude Code session across every project.
 - ⚡ **Zero runtime dependencies** — pure Python standard library, Windows-native, uses your existing Claude Code auth (no extra API key).
 
+### How claudectl saves tokens
+
+Without claudectl, a big project either starves the agent (no context) or floods it (a huge CLAUDE.md loaded every message). claudectl spends the *minimum* tokens for the *maximum* relevant context:
+
+- **Flat always-on cost** — the CLAUDE.md block is a ≤250-token index, not a full dump; it does **not** grow as the codebase grows (consolidation + rollups keep it bounded).
+- **On-demand detail** — per-module knowledge lives in path-scoped `.claude/rules/` (loads only when Claude touches those files) and in `claudectl recall`, so nothing is paid for until it's relevant.
+- **Task-scoped injection** — the optional prompt hook injects only the subgraph your prompt actually needs (budgeted, default ≤600 tok), instead of everything.
+- **No stale weight** — superseded facts are invalidated, not carried; dead entities are evicted; only current, useful knowledge is ever sent.
+- **Cheaper model for the grunt work** — Plan→Execute runs the expensive model once for the plan and a cheap one for execution; the token-burn advisor nudges you off Opus for routine work.
+
 ---
 
 ## Contents
@@ -109,6 +119,8 @@ The feature that makes claudectl unique: **task-scoped, token-budgeted memory in
 
 - **Whole-project extraction** — `claude.exe` summarizes every repo and module (incrementally by file hash), merged with the **real dependency graph** (cross-module edges + importance rank) from the connections engine. Stored in `.claudectl/memory/graph.json`.
 - **Bounded & self-consolidating** — the graph stays lean *as the project grows*: duplicate entities merge across modules, and a global importance cap (`memory_max_entities`, default 500) evicts the least-connected. So the always-on token cost stays flat while accuracy rises — the memory gets *leaner and sharper* the more you build, not heavier.
+- **Temporal facts (Graphiti-style)** — when the code changes and a fact is superseded (you migrated Flask→FastAPI), the old fact is **invalidated with a timestamp, not deleted** — kept as history, never injected. Memory tracks *what's true now* and *what changed*, instead of drifting stale.
+- **Reinforcement + rollups** — entities recalled often gain weight and survive consolidation; dead knowledge fades (access-based, like a forgetting curve). Per-repo **rollup summaries** (GraphRAG-style, built locally — no extra Claude call) give an accurate one-line repo overview and cheap global answers. Plus Obsidian-style **unlinked-mention** edges enrich retrieval for free.
 - **Recall engine** — local scoring (IDF keyword + path match + dependency rank + graph expansion), no embeddings, deterministic, <0.5s on 500 entities. On-demand CLI: `claudectl recall "<topic>"` — Claude itself can call it mid-session via Bash.
 - **Session learning** — after each session claudectl distills durable *lessons* (error→fix pairs, decisions, preferences) from the transcript. High-confidence lessons **auto-approve** (`memory_lessons_autoapprove`); the rest wait in the `⇧L` review screen. Approved lessons boost recall and decay if unused. The project literally gets smarter the more you use it.
 - **Cross-project conventions** — preferences/corrections that recur across your repos (or you pin) are promoted to a small block in your user-level `~/.claude/CLAUDE.md`, so a convention learned once ("this machine uses PowerShell 5.1", "prefer pytest") is remembered in *every* project. No competitor spans projects.

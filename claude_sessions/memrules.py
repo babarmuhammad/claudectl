@@ -71,7 +71,7 @@ def sync_rules(project_path, proj_folder, mem):
     rules_dir = os.path.join(project_path, '.claude', 'rules')
     by_unit = {}
     for e in mem.get('entities', []):
-        if e.get('type') == 'lesson':
+        if e.get('type') == 'lesson' or not e.get('valid', True):
             continue
         by_unit.setdefault((e.get('repo', ''), e.get('module', '')), []).append(e)
 

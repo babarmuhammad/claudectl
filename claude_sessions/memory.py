@@ -24,13 +24,14 @@ _tls = threading.local()
 _bg_lock = threading.Lock()
 _bg_active = set()          # project paths currently refreshing in the background
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MEM_SUBDIR = os.path.join('.claudectl', 'memory')
 GRAPH_NAME = 'graph.json'
 PER_FILE_CHARS = 4000    # cap content per file
 PER_BATCH_CHARS = 40000  # cap corpus per repo/module Claude call
 MODULE_MAX_FILES = 24    # representative files per module
 EXTRACT_TIMEOUT = 300
+_INVALID_CAP = 150       # max invalidated (superseded) facts kept as history
 
 
 # ── persistence ──────────────────────────────────────────────
@@ -48,13 +49,17 @@ def _empty():
     return {'schema_version': SCHEMA_VERSION, 'generated_at': '',
             'entities': [], 'relations': [], 'summaries': {}, 'provenance': {},
             'module_edges': [], 'lessons_scanned': {}, 'session_counter': 0,
-            'pending_units': 0}
+            'pending_units': 0, 'repo_summaries': {}}
 
 
 def _migrate(m):
     base = _empty()
     for k, v in base.items():
         m.setdefault(k, v)
+    if m.get('schema_version', 1) < 3:
+        for e in m.get('entities', []):          # temporal fields on existing facts
+            e.setdefault('valid', True)
+            e.setdefault('hits', 0)
     m['schema_version'] = SCHEMA_VERSION
     return m
 
@@ -314,17 +319,35 @@ def refresh_memory(project_path, proj_folder, project_name, auto_cap=None):
     touched_units = {(r, m) for r, m, _ in todo}
     current_units = {(r, m) for r, m, _ in units}          # units that still exist
     current_strs = {f"{r}/{m}" for r, m in current_units}
-    # keep entities only for still-existing, un-retouched units
-    kept = [e for e in mem.get('entities', [])
-            if (e.get('repo'), e.get('module')) in current_units
-            and (e.get('repo'), e.get('module')) not in touched_units]
+    now = _iso()
+
+    prev = mem.get('entities', [])
+    # entities of untouched units: carry as-is, but INVALIDATE (not delete) any
+    # whose unit no longer exists — temporal history is preserved
+    kept = []
+    for e in prev:
+        if (e.get('repo'), e.get('module')) in touched_units:
+            continue                                       # reconciled below
+        if (e.get('type') != 'lesson'
+                and (e.get('repo'), e.get('module')) not in current_units
+                and e.get('valid', True)):
+            e['valid'] = False
+            e['invalidated_at'] = now
+        kept.append(e)
+
+    # index prior entities of touched units so re-extraction UPDATES them in
+    # place (keeping hits/created_at) and DISAPPEARED ones get invalidated
+    prev_touched = {}
+    for e in prev:
+        if (e.get('repo'), e.get('module')) in touched_units:
+            prev_touched[(f"{e.get('repo')}/{e.get('module')}", e.get('name'))] = e
+
     summaries = {u: s for u, s in mem.get('summaries', {}).items() if u in current_strs}
     relations = [r for r in mem.get('relations', []) if r.get('unit') in current_strs]
 
     n = len(todo)
     for i, (repo, module, fs) in enumerate(todo):
         unit = f"{repo}/{module}"
-        # remove stale summary/relations of this unit
         summaries.pop(unit, None)
         relations = [r for r in relations if r.get('unit') != unit]
         corpus = _unit_corpus(root, _representative(fs))
@@ -334,14 +357,33 @@ def refresh_memory(project_path, proj_folder, project_name, auto_cap=None):
         if ex.get('summary'):
             summaries[unit] = ex['summary']
         rel0 = _rel(root, fs[0])
+        fresh_names = set()
         for e in ex['entities']:
             name = e.get('name')
             if not name:
                 continue
-            kept.append({'id': f"entity:{repo}:{module}:{name}", 'name': name,
-                         'type': e.get('type', 'concept'), 'summary': e.get('summary', ''),
-                         'repo': repo, 'module': module, 'source_files': [rel0]})
-        names = {e.get('name') for e in ex['entities']}
+            fresh_names.add(name)
+            old = prev_touched.pop((unit, name), None)
+            if old is not None:                            # fact still true → update
+                old.update({'type': e.get('type', old.get('type', 'concept')),
+                            'summary': e.get('summary', old.get('summary', '')),
+                            'source_files': [rel0], 'valid': True})
+                old.pop('invalidated_at', None)
+                kept.append(old)
+            else:
+                kept.append({'id': f"entity:{repo}:{module}:{name}", 'name': name,
+                             'type': e.get('type', 'concept'), 'summary': e.get('summary', ''),
+                             'repo': repo, 'module': module, 'source_files': [rel0],
+                             'valid': True, 'created_at': now, 'hits': 0})
+        # prior entities of this unit not re-emitted → invalidated (kept as history)
+        for (u, _nm), old in list(prev_touched.items()):
+            if u == unit:
+                if old.get('valid', True):
+                    old['valid'] = False
+                    old['invalidated_at'] = now
+                kept.append(old)
+                prev_touched.pop((u, _nm), None)
+        names = fresh_names
         for r in ex['relations']:
             if r.get('source') in names and r.get('target') in names:
                 relations.append({'source': r['source'], 'target': r['target'],
@@ -355,6 +397,7 @@ def refresh_memory(project_path, proj_folder, project_name, auto_cap=None):
                 'provenance': {rel: {'hash': h} for rel, h in cur_hashes.items()},
                 'module_edges': module_edges,
                 'pending_units': skipped_units,
+                'repo_summaries': _rollup_summaries(units, summaries, unit_rank),
                 'generated_at': _iso()})
     _consolidate(mem)
     save_memory(project_path, proj_folder, mem)
@@ -383,7 +426,11 @@ def _consolidate(mem):
     cap = load_settings().get('memory_max_entities', 500) or 500
     ents = mem.get('entities', [])
     lessons = [e for e in ents if e.get('type') == 'lesson']
-    reg = [e for e in ents if e.get('type') != 'lesson']
+    # invalidated facts: kept as temporal history but bounded + never injected
+    invalid = [e for e in ents if e.get('type') != 'lesson' and not e.get('valid', True)]
+    invalid.sort(key=lambda e: e.get('invalidated_at', ''), reverse=True)
+    invalid = invalid[:_INVALID_CAP]
+    reg = [e for e in ents if e.get('type') != 'lesson' and e.get('valid', True)]
 
     # 1. cross-module merge by normalized name
     merged = {}
@@ -407,19 +454,72 @@ def _consolidate(mem):
             cur['summary'] = e['summary']            # keep the richer summary
     reg = list(merged.values())
 
-    # 2. importance cap
+    # 2. importance cap — score = dependency rank + access reinforcement (hits).
+    #    Useful, frequently-recalled knowledge stays; dead knowledge is evicted.
     dropped = 0
     if len(reg) > cap:
-        reg.sort(key=lambda e: (e.get('rank', 0), len(e.get('summary', ''))), reverse=True)
+        reg.sort(key=lambda e: (e.get('rank', 0) + e.get('hits', 0) * 2,
+                                len(e.get('summary', ''))), reverse=True)
         dropped = len(reg) - cap
         reg = reg[:cap]
 
-    mem['entities'] = reg + lessons
+    mem['entities'] = reg + lessons + invalid
     kept_names = {e.get('name') for e in reg}
     mem['relations'] = [r for r in mem.get('relations', [])
                         if r.get('source') in kept_names and r.get('target') in kept_names]
+    _add_unlinked_mentions(mem, reg)
     mem['evicted_entities'] = dropped
     return mem
+
+
+def _add_unlinked_mentions(mem, reg, cap=120):
+    """Obsidian-style: if entity A's name appears in entity B's summary but no
+    relation links them, add a weak 'mentions' edge. Enriches recall's graph
+    expansion at zero Claude cost. Bounded + deduped against existing edges."""
+    existing = {(r.get('source'), r.get('target')) for r in mem.get('relations', [])}
+    existing |= {(t, s) for s, t in existing}
+    names = [e.get('name') for e in reg if e.get('name')]
+    lower = [(n, n.lower()) for n in names if len(n) >= 4]
+    added = 0
+    for e in reg:
+        summ = (e.get('summary') or '').lower()
+        if not summ:
+            continue
+        src = e.get('name')
+        for n, nl in lower:
+            if n == src or (src, n) in existing:
+                continue
+            if re.search(r'\b' + re.escape(nl) + r'\b', summ):
+                mem['relations'].append({'source': src, 'target': n,
+                                         'rel': 'mentions',
+                                         'unit': f"{e.get('repo')}/{e.get('module')}"})
+                existing.add((src, n))
+                existing.add((n, src))
+                added += 1
+                if added >= cap:
+                    return
+
+
+def _rollup_summaries(units, summaries, unit_rank, per_repo=3):
+    """GraphRAG-style community rollup: one summary per repo built LOCALLY from
+    its top module summaries (by dep rank) — no extra Claude call. Gives the
+    digest an accurate repo one-liner and cheap global-question context that
+    stays flat as the project grows."""
+    by_repo = {}
+    for repo, module, _fs in units:
+        by_repo.setdefault(repo, []).append(module)
+    out = {}
+    for repo, mods in by_repo.items():
+        mods.sort(key=lambda m: unit_rank.get((repo, m), 0), reverse=True)
+        parts = []
+        for m in mods[:per_repo]:
+            s = (summaries.get(f"{repo}/{m}", '') or '').strip().rstrip('.')
+            if s:
+                parts.append(s)
+        if parts:
+            roll = '; '.join(parts)
+            out[repo] = (roll[:220] + '…') if len(roll) > 220 else roll
+    return out
 
 
 def _module_graph(project_path, proj_folder, units):
@@ -502,9 +602,10 @@ def build_digest_micro(mem, max_tokens=250):
     if not ents and not summaries:
         return "_(no semantic memory yet — press m in the project menu to build it)_"
 
+    rollups = mem.get('repo_summaries', {})
     by_repo = {}
     for e in ents:
-        if e.get('type') == 'lesson':
+        if e.get('type') == 'lesson' or not e.get('valid', True):
             continue
         by_repo.setdefault(e.get('repo', '?'), {}).setdefault(e.get('module', '(root)'), []).append(e)
     repos = sorted(by_repo, key=lambda r: sum(len(v) for v in by_repo[r].values()), reverse=True)
@@ -512,9 +613,11 @@ def build_digest_micro(mem, max_tokens=250):
     out = []
     for repo in repos:
         mods = by_repo[repo]
-        # repo one-liner = summary of its largest module unit
-        biggest = max(mods, key=lambda m: len(mods[m]))
-        summ = (summaries.get(f"{repo}/{biggest}", '') or '').strip()
+        # repo one-liner = rollup summary (summary-of-modules), else largest module
+        summ = (rollups.get(repo, '') or '').strip()
+        if not summ:
+            biggest = max(mods, key=lambda m: len(mods[m]))
+            summ = (summaries.get(f"{repo}/{biggest}", '') or '').strip()
         out.append(f"- **{repo}**" + (f" — {summ}" if summ else ''))
         names = sorted(mods, key=lambda m: len(mods[m]), reverse=True)
         shown = names[:6]
@@ -543,9 +646,11 @@ def build_digest(mem, per_module=10):
     if not ents and not summaries:
         return "_(no semantic memory yet — open the project, press n → m to build it)_"
 
-    # group entities by repo → module
+    # group entities by repo → module (valid facts only)
     by_repo = {}
     for e in ents:
+        if e.get('type') != 'lesson' and not e.get('valid', True):
+            continue
         by_repo.setdefault(e.get('repo', '?'), {}).setdefault(e.get('module', '(root)'), []).append(e)
     # repos ordered by total entity count (most significant first)
     repos = sorted(by_repo, key=lambda r: sum(len(v) for v in by_repo[r].values()), reverse=True)

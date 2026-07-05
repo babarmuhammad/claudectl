@@ -69,18 +69,22 @@ def test_incremental_only_changed_unit(monkeypatch, tmp_path):
     assert calls == ['mod1/(root)']
 
 
-def test_deleted_unit_entities_dropped(monkeypatch, tmp_path):
+def test_deleted_unit_entities_invalidated(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, _ = sb.add_project('alpha')
     _mkfile(actual, 'mod1/a.py')
     _mkfile(actual, 'mod2/b.py')
     _stub(monkeypatch)
     memory.refresh_memory(actual, folder, 'alpha')
-    assert any(e['repo'] == 'mod2' for e in memory.load_memory(actual, folder)['entities'])
+    assert any(e['repo'] == 'mod2' and e.get('valid', True)
+               for e in memory.load_memory(actual, folder)['entities'])
     import shutil
     shutil.rmtree(os.path.join(actual, 'mod2'))
     mem = memory.refresh_memory(actual, folder, 'alpha')
-    assert not any(e['repo'] == 'mod2' for e in mem['entities'])
+    # temporal: deleted-unit facts are INVALIDATED (history), not deleted, and
+    # never surface as valid
+    assert not any(e['repo'] == 'mod2' and e.get('valid', True) for e in mem['entities'])
+    assert any(e['repo'] == 'mod2' and not e.get('valid', True) for e in mem['entities'])
 
 
 # ── module granularity (v2) ──────────────────────────────────
@@ -115,7 +119,12 @@ def test_key_drift_forces_reextract(monkeypatch, tmp_path):
     calls.clear()
     mem2 = memory.refresh_memory(actual, folder, 'alpha')   # hashes unchanged
     assert calls == ['mod1/(root)']                          # drift → re-extract
-    assert all(e['module'] != 'legacy-key' for e in mem2['entities'])
+    # the current module is re-covered; the legacy-key fact survives only as
+    # invalidated history, never as a valid entity
+    assert any(e['module'] == 'mod1/(root)'.split('/')[0] or e['module'] == '(root)'
+               for e in mem2['entities'] if e.get('valid', True))
+    assert all(e['module'] != 'legacy-key'
+               for e in mem2['entities'] if e.get('valid', True))
 
 
 def test_module_edges_and_rank(monkeypatch, tmp_path):
@@ -143,6 +152,80 @@ def test_pending_units_recorded(monkeypatch, tmp_path):
     _stub(monkeypatch)
     mem = memory.refresh_memory(actual, folder, 'alpha')
     assert mem['pending_units'] == 2                         # coverage notice data
+
+
+# ── temporal / rollup / reinforcement (v3) ───────────────────
+
+def test_disappeared_entity_invalidated_on_reextract(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'mod1/a.py')
+    # first extraction yields entity "Flask"
+    monkeypatch.setattr(memory, '_extract', lambda *a, **k: {
+        'summary': 's', 'entities': [{'name': 'Flask', 'type': 'component', 'summary': 'web'}],
+        'relations': []})
+    memory.refresh_memory(actual, folder, 'alpha')
+    # file changes; new extraction replaces Flask with FastAPI (contradiction)
+    _mkfile(actual, 'mod1/a.py', 'migrated = 1\n')
+    monkeypatch.setattr(memory, '_extract', lambda *a, **k: {
+        'summary': 's2', 'entities': [{'name': 'FastAPI', 'type': 'component', 'summary': 'web'}],
+        'relations': []})
+    mem = memory.refresh_memory(actual, folder, 'alpha')
+    valid = {e['name'] for e in mem['entities'] if e.get('valid', True)}
+    invalid = {e['name'] for e in mem['entities'] if not e.get('valid', True)}
+    assert 'FastAPI' in valid and 'Flask' not in valid   # superseded
+    assert 'Flask' in invalid and any(e.get('invalidated_at')
+                                      for e in mem['entities'] if e['name'] == 'Flask')
+
+
+def test_invalidated_not_injected(monkeypatch, tmp_path):
+    from claude_sessions import recall
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    mem = memory._empty()
+    mem['entities'] = [
+        {'name': 'Flask', 'type': 'component', 'summary': 'old web framework flask',
+         'repo': 'app', 'module': 'web', 'source_files': ['app/w.py'], 'valid': False,
+         'invalidated_at': '2026-01-01'},
+        {'name': 'FastAPI', 'type': 'component', 'summary': 'current web framework',
+         'repo': 'app', 'module': 'web', 'source_files': ['app/w.py'], 'valid': True}]
+    memory.save_memory(actual, folder, mem)
+    r = recall.retrieve(actual, folder, 'web framework', budget_tokens=600)
+    assert 'FastAPI' in r['text'] and 'Flask' not in r['text']
+
+
+def test_rollup_summaries_built(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'svc/api/a.py')
+    _mkfile(actual, 'svc/db/b.py')
+    _stub(monkeypatch)                                   # summary = "summary of <unit>"
+    mem = memory.refresh_memory(actual, folder, 'alpha')
+    roll = mem.get('repo_summaries', {})
+    assert 'svc' in roll and 'summary of' in roll['svc']
+
+
+def test_hits_reinforced_on_recall(monkeypatch, tmp_path):
+    from claude_sessions import recall
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    mem = memory._empty()
+    mem['entities'] = [{'name': 'Parser', 'type': 'component', 'summary': 'parses usage',
+                        'repo': 'app', 'module': 'x', 'source_files': ['app/x.py'],
+                        'valid': True, 'hits': 0}]
+    memory.save_memory(actual, folder, mem)
+    recall.retrieve(actual, folder, 'usage parser', budget_tokens=600)
+    m2 = memory.load_memory(actual, folder)
+    assert m2['entities'][0]['hits'] == 1               # reinforced
+
+
+def test_migrate_v2_adds_valid(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    m = memory._migrate({'schema_version': 2,
+                         'entities': [{'name': 'X', 'type': 'component'}]})
+    assert m['schema_version'] == 3
+    assert m['entities'][0]['valid'] is True and m['entities'][0]['hits'] == 0
+    assert 'repo_summaries' in m
 
 
 # ── background refresh ───────────────────────────────────────

@@ -86,6 +86,8 @@ def score_entities(mem, index, query, path_hints=()):
     idf = index['idf']
     out = []
     for e, etok in zip(mem.get('entities', []), index['ent_tokens']):
+        if not e.get('valid', True):
+            continue                                  # superseded fact — history only
         if e.get('type') == 'lesson' and e.get('status') not in ('approved', 'pinned'):
             continue                                  # pending never leaves the TUI
         ntok = _tokenize(e.get('name', ''))
@@ -218,13 +220,17 @@ def retrieve(project_path, proj_folder, query, budget_tokens=600):
             best[k] = (s, e)
     ranked = sorted(best.values(), key=lambda x: (-x[0], x[1].get('name', '')))
     text, toks = render_context(ranked, mem, budget_tokens)
-    # bump last_used on injected lessons (decay signal) — best-effort
+    # reinforcement: bump hits on injected entities (kept during consolidation)
+    # and last_used on injected lessons (decay signal) — best-effort
     injected = {e.get('name') for _s, e in ranked}
     touched = False
-    for e in mem.get('entities', []):
-        if e.get('type') == 'lesson' and e.get('name') in injected and text:
-            e['last_used'] = mem.get('session_counter', 0)
-            touched = True
+    if text:
+        for e in mem.get('entities', []):
+            if e.get('name') in injected:
+                e['hits'] = e.get('hits', 0) + 1
+                if e.get('type') == 'lesson':
+                    e['last_used'] = mem.get('session_counter', 0)
+                touched = True
     if touched:
         try:
             memory.save_memory(project_path, proj_folder, mem)
