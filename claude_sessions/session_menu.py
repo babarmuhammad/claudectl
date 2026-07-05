@@ -2,7 +2,7 @@ import os
 import shutil
 from datetime import datetime
 
-from .config import W, C_RESET, C_TITLE, C_SEL, C_DIM, C_SRCH, C_BOLD, C_NAME, C_WARN
+from .config import W, C_RESET, C_TITLE, C_SEL, C_DIM, C_SRCH, C_BOLD, C_NAME, C_WARN, C_OK
 from .sessions import (load_name, save_name, format_age, get_session_title,
                        scan_sessions, load_tags, save_tags)
 from .ui import (text_input, paths_menu, _cls, wait_event, help_screen,
@@ -197,6 +197,14 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path):
 
         crumb = 'ARCHIVED' if show_archived else 'SESSIONS'
         frame = [render.header('CLAUDECTL', project_name, crumb), '']
+        if not show_archived:
+            try:
+                from . import memory as _mem_mod
+                if os.path.abspath(project_path or '') in _mem_mod._bg_active:
+                    frame.append(f"  {C_OK}● memory updating in the background…{C_RESET}"
+                                 f"  {C_DIM}you can keep working{C_RESET}")
+            except Exception:
+                pass
         if unlearned and not show_archived:
             frame.append(f"  {C_WARN}● {unlearned} session{'s' if unlearned > 1 else ''} "
                          f"unlearned{C_RESET}  {C_DIM}press L to review/learn{C_RESET}")

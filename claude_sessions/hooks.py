@@ -20,113 +20,112 @@ settings_path = os.path.join(config_dir, 'settings.json')
 EVENTS = {'PreToolUse', 'PostToolUse', 'UserPromptSubmit', 'Stop', 'SubagentStop',
           'SessionStart', 'SessionEnd', 'Notification', 'PreCompact'}
 
-# A PreToolUse hook that exits with code 2 BLOCKS the tool and shows its stderr
-# to Claude. PowerShell one-liners parse the hook JSON on stdin (tool_input).
-_PS = 'powershell -NoProfile -Command'
+def _py_hook(script):
+    """Absolute `"<python>" "<claude_sessions/script>"` — runs regardless of the
+    hook shell (bash/cmd/pwsh) and doesn't depend on $-expansion."""
+    import sys
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), script)
+    return f'"{sys.executable}" "{p}"'
 
 
-def _block_bash(pattern, msg):
-    return (f"{_PS} \"$j=$input|Out-String|ConvertFrom-Json; "
-            f"if($j.tool_input.command -match '{pattern}'){{"
-            f"[Console]::Error.WriteLine('claudectl: {msg}'); exit 2}}\"")
+def _guard(field, pattern, msg):
+    """A PreToolUse guard: block (exit 2) when tool_input[field] matches pattern.
+    Runs guard_hook.py via Python (shell-agnostic; no PowerShell/bash quirks)."""
+    return f'{_py_hook("guard_hook.py")} {field} "{pattern}" "{msg}"'
 
 
-def _block_path(field, pattern, msg):
-    return (f"{_PS} \"$j=$input|Out-String|ConvertFrom-Json; "
-            f"if($j.tool_input.{field} -match '{pattern}'){{"
-            f"[Console]::Error.WriteLine('claudectl: {msg}'); exit 2}}\"")
+def _fmt(bin_name, cmd):
+    """Formatter guarded so a MISSING binary is a silent no-op, not an error
+    (POSIX shell — the hook shell on this setup). Edit for cmd-only shells."""
+    return f'command -v {bin_name} >/dev/null 2>&1 && {cmd} || true'
 
 
-# Ready-made hooks the user can drop in. Windows-friendly (PowerShell for
-# JSON parsing / beeps; plain executables for formatters/git).
+# Ready-made hooks the user can drop in. Blocks use a bundled Python guard
+# (shell-agnostic); formatters are guarded so a missing tool won't error.
 TEMPLATES = {
     # ── formatting / quality ──────────────────────────────────
     'prettier-on-edit': {
         'event': 'PostToolUse',
         'entry': {'matcher': 'Edit|Write|MultiEdit',
-                  'hooks': [{'type': 'command', 'command': 'prettier --write .'}]},
+                  'hooks': [{'type': 'command', 'command': _fmt('prettier', 'prettier --write .')}]},
         'desc': 'Prettier-format the project after every edit',
     },
     'ruff-format-python': {
         'event': 'PostToolUse',
         'entry': {'matcher': 'Edit|Write|MultiEdit',
-                  'hooks': [{'type': 'command', 'command': 'ruff format . && ruff check --fix .'}]},
+                  'hooks': [{'type': 'command',
+                             'command': _fmt('ruff', 'ruff format . && ruff check --fix .')}]},
         'desc': 'Ruff format + autofix Python after edits',
     },
     'eslint-fix-on-edit': {
         'event': 'PostToolUse',
         'entry': {'matcher': 'Edit|Write|MultiEdit',
-                  'hooks': [{'type': 'command', 'command': 'eslint --fix .'}]},
+                  'hooks': [{'type': 'command', 'command': _fmt('eslint', 'eslint --fix .')}]},
         'desc': 'ESLint --fix after every edit',
     },
     'gofmt-on-edit': {
         'event': 'PostToolUse',
         'entry': {'matcher': 'Edit|Write|MultiEdit',
-                  'hooks': [{'type': 'command', 'command': 'gofmt -w .'}]},
+                  'hooks': [{'type': 'command', 'command': _fmt('gofmt', 'gofmt -w .')}]},
         'desc': 'gofmt the project after edits',
     },
     'run-tests-on-stop': {
         'event': 'Stop',
-        'entry': {'hooks': [{'type': 'command', 'command': 'pytest -q'}]},
+        'entry': {'hooks': [{'type': 'command', 'command': _fmt('pytest', 'pytest -q')}]},
         'desc': 'Run pytest when Claude finishes a turn',
     },
     # ── safety / guardrails (exit 2 blocks the tool) ──────────
     'block-rm-rf': {
         'event': 'PreToolUse',
         'entry': {'matcher': 'Bash',
-                  'hooks': [{'type': 'command',
-                             'command': _block_bash('rm\\s+-rf', 'rm -rf blocked')}]},
+                  'hooks': [{'type': 'command', 'command': _guard('command', 'rm\\s+-rf', 'rm -rf blocked')}]},
         'desc': 'Block rm -rf commands',
     },
     'block-git-reset-hard': {
         'event': 'PreToolUse',
         'entry': {'matcher': 'Bash',
                   'hooks': [{'type': 'command',
-                             'command': _block_bash('git\\s+reset\\s+--hard', 'git reset --hard blocked')}]},
+                             'command': _guard('command', 'git\\s+reset\\s+--hard', 'git reset --hard blocked')}]},
         'desc': 'Block git reset --hard',
     },
     'block-force-push': {
         'event': 'PreToolUse',
         'entry': {'matcher': 'Bash',
                   'hooks': [{'type': 'command',
-                             'command': _block_bash('push.*--force', 'force push blocked')}]},
+                             'command': _guard('command', 'push.*--force', 'force push blocked')}]},
         'desc': 'Block git push --force',
     },
     'block-sudo': {
         'event': 'PreToolUse',
-        'entry': {'matcher': 'Bash(sudo:*)',
-                  'hooks': [{'type': 'command', 'command': 'echo "sudo blocked" 1>&2 && exit 2'}]},
+        'entry': {'matcher': 'Bash',
+                  'hooks': [{'type': 'command', 'command': _guard('command', '\\bsudo\\b', 'sudo blocked')}]},
         'desc': 'Block sudo commands',
     },
     'block-curl': {
         'event': 'PreToolUse',
-        'entry': {'matcher': 'Bash(curl:*)',
-                  'hooks': [{'type': 'command', 'command': 'echo "curl blocked" 1>&2 && exit 2'}]},
+        'entry': {'matcher': 'Bash',
+                  'hooks': [{'type': 'command', 'command': _guard('command', '\\bcurl\\b', 'curl blocked')}]},
         'desc': 'Block bash curl commands',
     },
     'protect-env-read': {
         'event': 'PreToolUse',
         'entry': {'matcher': 'Read',
-                  'hooks': [{'type': 'command',
-                             'command': _block_path('file_path', '\\.env', 'refusing to read .env')}]},
+                  'hooks': [{'type': 'command', 'command': _guard('file_path', '\\.env', 'refusing to read .env')}]},
         'desc': 'Block reading .env files (secrets)',
     },
     'protect-secret-write': {
         'event': 'PreToolUse',
         'entry': {'matcher': 'Write|Edit|MultiEdit',
                   'hooks': [{'type': 'command',
-                             'command': _block_path('file_path', '\\.env|credentials|id_rsa|\\.pem',
-                                                    'refusing to write to a secret file')}]},
+                             'command': _guard('file_path', '\\.env|credentials|id_rsa|\\.pem',
+                                               'refusing to write to a secret file')}]},
         'desc': 'Block writing to .env / credential files',
     },
     # ── audit / notifications / context ───────────────────────
     'log-bash-commands': {
         'event': 'PostToolUse',
         'entry': {'matcher': 'Bash',
-                  'hooks': [{'type': 'command',
-                             'command': (f"{_PS} \"$j=$input|Out-String|ConvertFrom-Json; "
-                                         "Add-Content -Path .claudectl\\bash-log.txt "
-                                         "-Value $j.tool_input.command\"")}]},
+                  'hooks': [{'type': 'command', 'command': _py_hook('logbash_hook.py')}]},
         'desc': 'Append every Bash command to .claudectl/bash-log.txt',
     },
     'notify-on-stop': {
@@ -249,6 +248,7 @@ def hooks_menu(scope=None):
         items += [(f"{'─' * W}", None),
                   ('＋  Add from template', '__tpl__'),
                   ('✨  AI-generate a hook (Claude)', '__ai__'),
+                  ('🧹  Remove broken/legacy hooks', '__purge__'),
                   ('📝  Edit settings.json', '__edit__')]
 
         sel = menu(items, f"HOOKS  /  {os.path.basename(config_dir)}")
@@ -263,6 +263,8 @@ def hooks_menu(scope=None):
             _add_template()
         elif sel == '__ai__':
             _ai_hook()
+        elif sel == '__purge__':
+            _purge_legacy()
         elif sel.startswith(('on:', 'off:')):
             _toggle_or_remove(sel)
 
@@ -279,6 +281,51 @@ def _add_template():
         flash(f"Added {pick}")
     else:
         flash("Write failed", ok=False, secs=1.4)
+
+
+def _is_broken(cmd):
+    """A hook command that errors under a bash hook shell: the old PowerShell
+    $-parsing blocks, or an unguarded formatter that fails when the tool is
+    absent."""
+    c = str(cmd or '')
+    if 'ConvertFrom-Json' in c:                      # legacy powershell block/log
+        return True
+    bins = ('prettier', 'eslint', 'gofmt', 'ruff', 'pytest')
+    stripped = c.strip()
+    if any(stripped.startswith(b) for b in bins) and 'command -v' not in c:
+        return True                                  # unguarded formatter
+    return False
+
+
+def _purge_legacy():
+    """Remove hook entries whose commands are known to error (old PowerShell
+    blocks / unguarded formatters). Re-add the fixed templates afterwards."""
+    s = _load()
+    removed = 0
+    for key in ('hooks', 'hooks_disabled'):
+        block = s.get(key, {})
+        for event in list(block):
+            kept = []
+            for entry in block[event]:
+                hs = [h for h in (entry.get('hooks') or []) if not _is_broken(h.get('command'))]
+                if not hs:
+                    removed += 1
+                    continue
+                if len(hs) != len(entry.get('hooks') or []):
+                    removed += 1
+                    entry['hooks'] = hs
+                kept.append(entry)
+            if kept:
+                block[event] = kept
+            else:
+                block.pop(event, None)
+    if not removed:
+        flash("No broken hooks found", secs=1.4)
+        return
+    if not confirm(f"Remove {removed} broken/legacy hook(s)?", danger=True):
+        return
+    flash(f"Removed {removed} broken hook(s) — re-add from templates" if _save(s)
+          else "Write failed", ok=bool(removed), secs=2)
 
 
 def _ai_hook():
