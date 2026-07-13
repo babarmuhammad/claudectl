@@ -158,8 +158,9 @@ Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, 
 - **Change diffs** — when AI-regenerating CLAUDE.md (`a`) or a system prompt (`s`), the approval step shows a **git-style colored diff** (old → new) so you decide *before* writing (`f` toggles to the full proposed text; ENTER approve, ESC reject). The previous version is snapshotted under `.claudectl/snapshots/`, so the workspace screen (`w`) lists recent changes with `+/−` counts and re-opens the last diff on `c` (CLAUDE.md) / `s` (system prompt).
 
 ### Hooks
-- **16 ready-made templates** — one-key install, toggle, or remove (edits `settings.json` safely). Formatting (Prettier, Ruff, ESLint, gofmt), safety guardrails that **block** dangerous tools (`rm -rf`, `git reset --hard`, force-push, sudo, curl; reading `.env`; writing secrets — exit-code-2 blocks), audit/notify (log Bash commands, beep on finish / when input is needed), and context injection (git status at session start).
+- **17 ready-made templates** — one-key install, toggle, or remove (edits `settings.json` safely). Formatting (Prettier, Ruff, ESLint, gofmt), safety guardrails that **block** dangerous tools (`rm -rf`, `git reset --hard`, force-push, sudo, curl; reading `.env`; writing secrets — exit-code-2 blocks), audit/notify (log Bash commands, beep on finish / when input is needed), and context injection (git status at session start; a compact **code-minimization** rule that curbs over-engineering, saving generated tokens — inspired by [Ponytail](https://github.com/DietrichGebert/ponytail)). Guards/blocks run as bundled Python (shell-agnostic); formatters no-op when the tool is absent.
 - **AI-generate a hook** — describe what you want in plain language; Claude returns a validated hook spec (event + matcher + command) you preview and confirm before it's saved.
+- **Remove broken/legacy hooks** — one action purges hook commands that error under a bash hook shell.
 
 ### Usage analytics
 - **Usage stats dashboard** — tokens (in/out/cache) and estimated cost per project and per session, parsed from local transcripts; cached for instant reopening

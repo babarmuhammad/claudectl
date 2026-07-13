@@ -145,6 +145,11 @@ TEMPLATES = {
         'entry': {'hooks': [{'type': 'command', 'command': 'git status -sb'}]},
         'desc': 'Inject git branch + status at session start',
     },
+    'minimal-code': {
+        'event': 'SessionStart',
+        'entry': {'hooks': [{'type': 'command', 'command': _py_hook('minimalcode_hook.py')}]},
+        'desc': 'Inject a compact code-minimization rule each session (anti over-engineering)',
+    },
 }
 
 

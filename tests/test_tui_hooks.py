@@ -127,6 +127,19 @@ def test_purge_removes_broken_hooks(monkeypatch, tmp_path):
     assert 'Stop' in d['hooks']                              # git status kept
 
 
+def test_minimalcode_hook_emits_context(tmp_path):
+    import subprocess
+    h = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                     'claude_sessions', 'minimalcode_hook.py')
+    r = subprocess.run([sys.executable, h], input='{"hook_event_name":"SessionStart"}',
+                       capture_output=True, text=True, timeout=15)
+    assert r.returncode == 0
+    out = json.loads(r.stdout)
+    hso = out['hookSpecificOutput']
+    assert hso['hookEventName'] == 'SessionStart'
+    assert 'YAGNI' in hso['additionalContext']
+
+
 def test_logbash_hook_appends(tmp_path):
     import subprocess
     lb = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
