@@ -240,6 +240,52 @@ def _extract_windows(data):
     return out
 
 
+def _account_grid(accts):
+    """Aligned multi-account table. Columns = limit windows (session, weekly,
+    then per-model) present with any usage; rows = accounts. Reset times are
+    dropped here for alignment (see them in the daily-usage screen)."""
+    from . import render
+    rows = []                       # (label, {col: (pct, reset)})
+    seen_cols, cols = set(), []
+    for name, email, adata in accts:
+        w = _extract_windows(adata)
+        if not w:
+            continue
+        d = {}
+        for lbl, pct, reset in w:
+            d[lbl] = (pct, reset)
+            if lbl not in seen_cols:
+                seen_cols.add(lbl)
+                cols.append(lbl)
+        rows.append((email or name or '?', d))
+    if not rows:
+        return ''
+    # drop columns that are 0/absent for every account (e.g. an unused model)
+    cols = [c for c in cols if any(r[1].get(c, (0,))[0] for r in rows)]
+    if not cols:
+        cols = list(seen_cols)[:1]
+    order = {'session': 0, 'weekly': 1}
+    cols.sort(key=lambda c: (order.get(c, 5), c))
+
+    name_w = min(22, max(len(r[0]) for r in rows))
+    cell_w = 8                      # meter width
+    hdr = '  ' + ' ' * name_w + '  ' + '  '.join(f"{_c.C_DIM}{c[:cell_w + 5]:<{cell_w + 5}}{_c.C_RESET}"
+                                                 for c in cols)
+    out = [hdr]
+    for label, d in rows:
+        cells = []
+        for c in cols:
+            if c in d:
+                pct, _r = d[c]
+                col = _pct_color(pct)
+                cells.append(f"{render.meter(pct, width=cell_w, color=col)}{col}{pct:>4.0f}%{_c.C_RESET}")
+            else:
+                cells.append(' ' * (cell_w + 5))
+        out.append(f"  {_c.C_TITLE}{render.trunc(label, name_w):<{name_w}}{_c.C_RESET}  "
+                   + '  '.join(cells))
+    return '\n'.join(out)
+
+
 def _one_account_line(windows, prefix=''):
     from . import render
     parts = []
@@ -268,17 +314,12 @@ def usage_status_line():
     if not ready:
         return f'  {_c.C_DIM}Plan usage: checking...{_c.C_RESET}'
 
-    # 2+ accounts with data → a labeled bar each (dynamic)
+    # 2+ accounts → an ALIGNED grid: one row per account, one column per limit
+    # window, so session/weekly/per-model line up vertically across accounts.
     if len(accts) >= 2:
-        lines = []
-        for name, email, adata in accts:
-            w = _extract_windows(adata)
-            if not w:
-                continue
-            label = email or name or '?'
-            lines.append(_one_account_line(w, prefix=f"{_c.C_TITLE}{label:<20}{_c.C_RESET} "))
-        if lines:
-            return '\n'.join(lines)
+        grid = _account_grid(accts)
+        if grid:
+            return grid
 
     # single account (back-compat)
     windows = _extract_windows(data)

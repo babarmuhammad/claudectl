@@ -54,9 +54,10 @@ def test_multi_account_bars(monkeypatch):
         r'C:\.claude': {'name': 'default', 'email': 'me@a.com', 'data': win},
         r'C:\.claude-work': {'name': 'work', 'email': 'work@b.com', 'data': win}})
     line = u.usage_status_line()
-    assert '\n' in line                              # one bar per account
+    assert '\n' in line                              # header + one row per account
     assert 'me@a.com' in line and 'work@b.com' in line
-    assert line.count('session') == 2
+    assert 'session' in line                         # column header
+    assert len(line.split('\n')) == 3                # header + 2 account rows
 
 
 def test_single_account_no_label(monkeypatch):
