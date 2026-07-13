@@ -946,7 +946,7 @@ def paths_menu(proj_folder, project_name, filename='extra-paths.txt', title='EXT
 
 
 def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
-                        selected_session_agents=None, memory_status=''):
+                        selected_session_agents=None, memory_status='', account_opts=None):
     """Launch configuration screen.
     Returns None on ESC, else dict {'effort','model','perm','name','worktree','agent'}.
     'worktree': '' = off, '*' = auto-named, other = custom name (new sessions only).
@@ -961,11 +961,15 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
     name_val   = ''
     agent_opts = [''] + list(agents or [])
     agent_idx  = 0
+    acct_opts  = list(account_opts or [])       # [(label, cfgdir), ...]
+    acct_idx   = 0
 
     base_fields = 3
     new_extra   = 2 if is_new else 0
     agent_field = base_fields + new_extra if len(agent_opts) > 1 else -1
-    n_fields    = base_fields + new_extra + (1 if agent_field >= 0 else 0)
+    after_agent = base_fields + new_extra + (1 if agent_field >= 0 else 0)
+    acct_field  = after_agent if len(acct_opts) > 1 else -1
+    n_fields    = after_agent + (1 if acct_field >= 0 else 0)
     field = 0
 
     def _wt_label():
@@ -996,6 +1000,9 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
             al = agent_opts[agent_idx] or '(none)'
             frame.append(
                 f"  {sel_c(agent_field)}{'▸' if field == agent_field else ' '}  Lead agent  :  [ {render.trunc(al, 18):<18} ]{C_RESET}   {C_DIM}← → primary --agent (~/.claude/agents){C_RESET}")
+        if acct_field >= 0:
+            frame.append(
+                f"  {sel_c(acct_field)}{'▸' if field == acct_field else ' '}  Account     :  [ {render.trunc(acct_opts[acct_idx][0], 18):<18} ]{C_RESET}   {C_DIM}← → account for THIS launch{C_RESET}")
         frame.append(render.hline())
         if selected_session_agents:
             frame.append(f"  {_c.C_OK}project agents ({len(selected_session_agents)}){C_RESET}"
@@ -1034,7 +1041,7 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 model_idx = (model_idx + step) % len(MODELS)
             elif field == 2:
                 perm_idx = (perm_idx + step) % len(PERMS)
-            elif field == 3:
+            elif field == 3 and is_new:
                 # cycle off -> auto -> custom… -> off
                 if not wt_state:
                     if step > 0:
@@ -1056,6 +1063,8 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                     name_val = v
             elif field == agent_field:
                 agent_idx = (agent_idx + step) % len(agent_opts)
+            elif field == acct_field:
+                acct_idx = (acct_idx + step) % len(acct_opts)
         elif ev[0] == 'enter':
             return {
                 'effort': EFFORTS[effort_idx],
@@ -1064,6 +1073,7 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 'name':   name_val if is_new else '',
                 'worktree': wt_state if is_new else '',
                 'agent':  agent_opts[agent_idx],
+                'cfgdir': acct_opts[acct_idx][1] if acct_opts else '',
             }
         elif ev[0] == 'esc':
             return None

@@ -25,13 +25,14 @@ _MAX_FAILS   = 3     # give up (blank line) only after this many failures with n
 _lock       = threading.Lock()
 _started    = False
 _ready      = False
-_data       = None
+_data       = None   # active account's usage (back-compat: single-account + stats)
+_acct_state = {}     # cfgdir -> {'name','email','data'} for every configured account
 _retry_after = 0     # seconds requested by a 429 Retry-After header (0 = none)
 
 
-def _read_token():
+def _read_token(cfgdir=None):
     try:
-        p = os.path.join(_c.config_dir, '.credentials.json')
+        p = os.path.join(cfgdir or _c.config_dir, '.credentials.json')
         with open(p, 'r', encoding='utf-8') as f:
             d = json.load(f)
         return (d.get('claudeAiOauth') or {}).get('accessToken')
@@ -39,9 +40,45 @@ def _read_token():
         return None
 
 
-def fetch_usage():
-    """GET the OAuth usage endpoint. Returns parsed dict or None."""
-    token = _read_token()
+def _account_email(cfgdir=None):
+    """Best-effort account email/label from the account's stored credentials."""
+    for fn in ('.credentials.json',):
+        try:
+            with open(os.path.join(cfgdir or _c.config_dir, fn), encoding='utf-8') as f:
+                d = json.load(f)
+            oauth = d.get('claudeAiOauth') or {}
+            acc = oauth.get('account') or {}
+            for k in ('email_address', 'emailAddress', 'email'):
+                if oauth.get(k):
+                    return oauth[k]
+                if acc.get(k):
+                    return acc[k]
+        except Exception:
+            continue
+    return ''
+
+
+def _targets():
+    """[(name, abs cfgdir)] to poll — the default account plus configured ones,
+    deduped, default first."""
+    s = _c.load_settings()
+    out = [('default', os.path.join(_c._USERPROFILE, '.claude'))]
+    for a in s.get('accounts', []):
+        d = a.get('dir') if isinstance(a, dict) else None
+        if d:
+            out.append((a.get('name') or d, os.path.expanduser(os.path.expandvars(d))))
+    seen, uniq = set(), []
+    for n, d in out:
+        rd = os.path.normcase(os.path.abspath(d))
+        if rd not in seen:
+            seen.add(rd)
+            uniq.append((n, d))
+    return uniq
+
+
+def fetch_usage(cfgdir=None):
+    """GET the OAuth usage endpoint for an account. Returns parsed dict or None."""
+    token = _read_token(cfgdir)
     if not token:
         return None
     req = urllib.request.Request(USAGE_URL, headers={
@@ -67,30 +104,41 @@ def fetch_usage():
 
 
 def _background():
-    """Poll forever: refresh live values, retry transient failures, and never
-    clobber the last good data with a None (a flaky fetch used to blank the
-    banner permanently)."""
+    """Poll every configured account forever: refresh live values, retry
+    transient failures, never clobber good data with a None. Updates per-account
+    state + the active account's `_data` (back-compat)."""
     global _data, _ready
     fails = 0
     while True:
-        try:
-            d = fetch_usage()
-        except Exception:
-            _c.log.exception('usage fetch failed')
-            d = None
-        with _lock:
-            if d is not None:
-                _data = d
+        targets = _targets()
+        active = os.path.normcase(os.path.abspath(_c.config_dir))
+        any_ok = False
+        for name, d in targets:
+            try:
+                data = fetch_usage(d)
+            except Exception:
+                _c.log.exception('usage fetch failed')
+                data = None
+            with _lock:
+                st = _acct_state.setdefault(d, {})
+                st['name'] = name
+                if data is not None:
+                    st['data'] = data
+                    if not st.get('email'):
+                        st['email'] = _account_email(d)
+                    any_ok = True
+                    if os.path.normcase(os.path.abspath(d)) == active:
+                        _data = data
                 _ready = True
-                fails = 0
-            else:
+            time.sleep(1)            # small gap between accounts (avoid a burst)
+        with _lock:
+            if not any_ok:
                 fails += 1
-                if _data is None and fails >= _MAX_FAILS:
-                    _ready = True   # no creds / persistent failure → stop "checking", show nothing
-        if d is not None:
+        if any_ok:
+            fails = 0
             sleep = _REFRESH_SEC
         else:                        # exponential backoff, never faster than a 429 Retry-After
-            sleep = min(_RETRY_BASE * (2 ** (fails - 1)), _RETRY_MAX)
+            sleep = min(_RETRY_BASE * (2 ** max(0, fails - 1)), _RETRY_MAX)
             sleep = max(sleep, _retry_after)
         time.sleep(sleep)
 
@@ -192,18 +240,8 @@ def _extract_windows(data):
     return out
 
 
-def usage_status_line():
-    """Footer line: '  Plan: 5h 32% → 14:30 · week 61% → Tue 09:00'.
-    Empty string until data is in (or when unavailable)."""
-    _ensure_started()
-    with _lock:
-        ready, data = _ready, _data
-    if not ready:
-        return f'  {_c.C_DIM}Plan usage: checking...{_c.C_RESET}'
+def _one_account_line(windows, prefix=''):
     from . import render
-    windows = _extract_windows(data)
-    if not windows:
-        return ''
     parts = []
     for label, pct, resets in windows[:4]:
         col = _pct_color(pct)
@@ -213,7 +251,40 @@ def usage_status_line():
         if resets:
             seg += f" {_c.C_DIM}→ {_fmt_reset(resets)}{_c.C_RESET}"
         parts.append(seg)
-    line = '  ' + f'  {_c.C_DIM}·{_c.C_RESET}  '.join(parts)
+    body = f'  {_c.C_DIM}·{_c.C_RESET}  '.join(parts)
+    return (f"  {prefix}{body}" if prefix else f"  {body}")
+
+
+def usage_status_line():
+    """Plan-usage banner. One bar per configured account (labeled by email/name)
+    when 2+ accounts exist; a single unlabeled bar otherwise. Empty until data
+    is in (or unavailable)."""
+    _ensure_started()
+    with _lock:
+        ready = _ready
+        data = _data
+        accts = [(v.get('name', ''), v.get('email', ''), v.get('data'))
+                 for v in _acct_state.values() if v.get('data')]
+    if not ready:
+        return f'  {_c.C_DIM}Plan usage: checking...{_c.C_RESET}'
+
+    # 2+ accounts with data → a labeled bar each (dynamic)
+    if len(accts) >= 2:
+        lines = []
+        for name, email, adata in accts:
+            w = _extract_windows(adata)
+            if not w:
+                continue
+            label = email or name or '?'
+            lines.append(_one_account_line(w, prefix=f"{_c.C_TITLE}{label:<20}{_c.C_RESET} "))
+        if lines:
+            return '\n'.join(lines)
+
+    # single account (back-compat)
+    windows = _extract_windows(data)
+    if not windows:
+        return ''
+    line = _one_account_line(windows)
     # optional daily-token alert badge (cache-only, cheap)
     try:
         alert = _c.load_settings().get('daily_token_alert', 0) or 0

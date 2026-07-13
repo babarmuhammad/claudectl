@@ -60,6 +60,7 @@ _DEFAULT_SETTINGS = {
     'conventions_to_global': True,  # promote cross-project conventions to ~/.claude/CLAUDE.md
     'plan_model': 'claude-opus-4-8',   # Plan→Execute: model that writes the plan
     'exec_model': 'claude-sonnet-5',   # Plan→Execute: model that executes it
+    'accounts': [],                    # named Claude accounts: [{'name','dir'}]
 }
 
 

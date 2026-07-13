@@ -136,6 +136,13 @@ Launcher-side mitigations for the most common Claude Code problems (2026 field r
 - **Context-loss insurance** — after every session a 5-line summary (goal + files touched) is appended to `.claudectl/session-log.md`, so the next session can recall what happened even after `/compact` wiped the context. Local, free.
 - **Permission fatigue killer** — `P` in the workspace screen scans your history for repeatedly-used Bash commands and proposes `permissions.allow` rules for the project settings.json (diff-previewed, you approve).
 
+### Multiple Claude accounts (⚙ Accounts)
+Run two (or more) accounts with almost no friction — claudectl owns the config dir (`CLAUDE_CONFIG_DIR`), which is what decides the account:
+
+- **Named accounts** — add an account (name + config dir; claudectl creates it and can open `/login` right away), switch the active one, or **open it in a new terminal with one key** so both accounts run **at the same time**.
+- **Per-launch account** — the launch-options screen has an **Account** field: pick which account this specific session starts under, without changing your default.
+- **All accounts in the usage bar** — the plan-usage banner shows **one bar per account** (labeled by email/name) and updates dynamically, so you see every account's session/weekly limits at a glance. A single account stays a single compact bar.
+
 ### Plan→Execute — two models, one task (`⇧X`)
 Plan with an accurate model, execute with a cheaper/faster one — big token savings for the same result. claudectl plans the task headlessly with `plan_model` (default Opus 4.8), shows you the plan to approve/reject, saves it to `.claudectl/plan-latest.md`, then launches an interactive session on `exec_model` (default Sonnet 5) seeded to read and execute that plan. Expensive reasoning happens once; the build runs on the cheap tier. Nobody else orchestrates this from the launcher.
 

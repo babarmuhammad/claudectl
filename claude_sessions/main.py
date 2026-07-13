@@ -137,6 +137,7 @@ def run():
         ('⚙  Agents', '__agents__'),
         ('⚙  Hooks', '__hooks__'),
         ('⚙  Global CLAUDE.md  /  MCP Analysis', '__global_claude_md__'),
+        ('⚙  Accounts (switch / run 2 at once)', '__accounts__'),
         ('⚙  Settings', '__settings__'),
         ('?  Help', '__help__'),
     ]
@@ -204,6 +205,11 @@ def run():
             global_claude_md_menu()
             continue
 
+        elif sel == '__accounts__':
+            from .accounts import accounts_menu
+            accounts_menu()
+            continue
+
         elif sel == '__settings__':
             settings_menu()
             continue
@@ -245,6 +251,19 @@ def run():
             mem_line = recall.memory_status_line(path, proj_folder, settings)
         except Exception:
             mem_line = ''
+        # per-launch account choice (active first) — only when extra accounts exist
+        acct_opts = []
+        try:
+            from .accounts import _accounts
+            accs = _accounts(settings)
+            if len(accs) > 1:
+                def _abs(dd):
+                    return (os.path.expanduser(os.path.expandvars(dd)) if dd
+                            else os.path.expanduser('~/.claude'))
+                acct_opts = ([(n, _abs(dd)) for n, dd, a in accs if a]
+                             + [(n, _abs(dd)) for n, dd, a in accs if not a])
+        except Exception:
+            acct_opts = []
         opts = launch_options_menu(
             os.path.basename(path) or path,
             defaults={
@@ -256,6 +275,7 @@ def run():
             agents=list_all_agent_names(path),
             selected_session_agents=chosen_refs,
             memory_status=mem_line,
+            account_opts=acct_opts,
         )
         if opts is None:
             choice = None

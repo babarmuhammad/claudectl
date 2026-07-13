@@ -43,6 +43,41 @@ def test_fallback_dict_windows_0_to_100():
     assert _as_dict(_extract_windows(data)) == {'session': 30.0, 'weekly': 55.0}
 
 
+def test_multi_account_bars(monkeypatch):
+    import claude_sessions.usage as u
+    win = {'limits': [{'kind': 'session', 'group': 'session', 'percent': 11,
+                       'resets_at': None}]}
+    monkeypatch.setattr(u, '_started', True)
+    monkeypatch.setattr(u, '_ready', True)
+    monkeypatch.setattr(u, '_data', win)
+    monkeypatch.setattr(u, '_acct_state', {
+        r'C:\.claude': {'name': 'default', 'email': 'me@a.com', 'data': win},
+        r'C:\.claude-work': {'name': 'work', 'email': 'work@b.com', 'data': win}})
+    line = u.usage_status_line()
+    assert '\n' in line                              # one bar per account
+    assert 'me@a.com' in line and 'work@b.com' in line
+    assert line.count('session') == 2
+
+
+def test_single_account_no_label(monkeypatch):
+    import claude_sessions.usage as u
+    win = {'limits': [{'kind': 'session', 'group': 'session', 'percent': 5, 'resets_at': None}]}
+    monkeypatch.setattr(u, '_started', True)
+    monkeypatch.setattr(u, '_ready', True)
+    monkeypatch.setattr(u, '_data', win)
+    monkeypatch.setattr(u, '_acct_state', {})        # only default, no extras
+    line = u.usage_status_line()
+    assert '\n' not in line and 'session' in line    # single compact bar
+
+
+def test_targets_include_configured_accounts(monkeypatch, tmp_path):
+    import claude_sessions.usage as u
+    monkeypatch.setattr('claude_sessions.config.load_settings',
+                        lambda: {'accounts': [{'name': 'work', 'dir': r'C:\work'}]})
+    names = [n for n, _d in u._targets()]
+    assert 'default' in names and 'work' in names
+
+
 def test_regression_fractionlike_value_not_multiplied():
     # The old `0 < pct <= 1.0: pct *= 100` heuristic turned 1% into 100%.
     data = {'seven_day': {'utilization': 1.0}}

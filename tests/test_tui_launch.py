@@ -25,7 +25,16 @@ def test_enter_returns_defaults(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     result, _ = run_menu(monkeypatch, flat(ENTER))
     assert result == {'effort': '', 'model': '', 'perm': '', 'name': '',
-                      'worktree': '', 'agent': ''}
+                      'worktree': '', 'agent': '', 'cfgdir': ''}
+
+
+def test_account_field_selects_cfgdir(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    accts = [('default', r'C:\def'), ('work', r'C:\work')]
+    # Account is the last field → UP from top wraps to it, RIGHT → 'work'
+    keys = flat(UP, RIGHT, ENTER)
+    result, _ = run_menu(monkeypatch, keys, account_opts=accts)
+    assert result['cfgdir'] == r'C:\work'
 
 
 def test_esc_returns_none(monkeypatch, tmp_path):
@@ -63,7 +72,7 @@ def test_defaults_preselected(monkeypatch, tmp_path):
                          defaults={'effort': 'high', 'model': 'claude-fable-5',
                                    'permission': 'plan'})
     assert result == {'effort': 'high', 'model': 'claude-fable-5',
-                      'perm': 'plan', 'name': '', 'worktree': '', 'agent': ''}
+                      'perm': 'plan', 'name': '', 'worktree': '', 'agent': '', 'cfgdir': ''}
 
 
 def test_new_session_has_five_fields(monkeypatch, tmp_path):

@@ -53,7 +53,7 @@ def test_pipe_in_name_stripped(monkeypatch, tmp_path):
     captured = {}
 
     def fake_launch_opts(name, defaults=None, is_new=False, agents=None,
-                         selected_session_agents=None, memory_status=''):
+                         selected_session_agents=None, memory_status='', account_opts=None):
         return {'effort': '', 'model': '', 'perm': '',
                 'name': 'a|b|c', 'worktree': 'w|t', 'agent': 'x|y'}
     monkeypatch.setattr(main_mod, 'launch_options_menu', fake_launch_opts)
