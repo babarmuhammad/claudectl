@@ -240,10 +240,15 @@ def _extract_windows(data):
     return out
 
 
+_METER_W = 8                        # bar width; visible = _METER_W + 2 borders
+_RESET_W = 9                        # 'Sat 08:59'
+_CELL_W = (_METER_W + 2) + 1 + 5 + 1 + _RESET_W   # meter ' ' pct% ' ' reset
+
+
 def _account_grid(accts):
     """Aligned multi-account table. Columns = limit windows (session, weekly,
-    then per-model) present with any usage; rows = accounts. Reset times are
-    dropped here for alignment (see them in the daily-usage screen)."""
+    then per-model) present with any usage; rows = accounts. Each cell shows
+    the bar, %, and reset time, padded to a fixed width so columns line up."""
     from . import render
     rows = []                       # (label, {col: (pct, reset)})
     seen_cols, cols = set(), []
@@ -260,7 +265,6 @@ def _account_grid(accts):
         rows.append((email or name or '?', d))
     if not rows:
         return ''
-    # drop columns that are 0/absent for every account (e.g. an unused model)
     cols = [c for c in cols if any(r[1].get(c, (0,))[0] for r in rows)]
     if not cols:
         cols = list(seen_cols)[:1]
@@ -268,19 +272,20 @@ def _account_grid(accts):
     cols.sort(key=lambda c: (order.get(c, 5), c))
 
     name_w = min(22, max(len(r[0]) for r in rows))
-    cell_w = 8                      # meter width
-    hdr = '  ' + ' ' * name_w + '  ' + '  '.join(f"{_c.C_DIM}{c[:cell_w + 5]:<{cell_w + 5}}{_c.C_RESET}"
-                                                 for c in cols)
+    hdr = '  ' + ' ' * name_w + '  ' + '  '.join(
+        f"{_c.C_DIM}{c[:_CELL_W]:<{_CELL_W}}{_c.C_RESET}" for c in cols)
     out = [hdr]
     for label, d in rows:
         cells = []
         for c in cols:
             if c in d:
-                pct, _r = d[c]
+                pct, reset = d[c]
                 col = _pct_color(pct)
-                cells.append(f"{render.meter(pct, width=cell_w, color=col)}{col}{pct:>4.0f}%{_c.C_RESET}")
+                r = _fmt_reset(reset) if reset else ''
+                cells.append(f"{render.meter(pct, width=_METER_W, color=col)} "
+                             f"{col}{pct:>4.0f}%{_c.C_RESET} {_c.C_DIM}{r:<{_RESET_W}}{_c.C_RESET}")
             else:
-                cells.append(' ' * (cell_w + 5))
+                cells.append(' ' * _CELL_W)
         out.append(f"  {_c.C_TITLE}{render.trunc(label, name_w):<{name_w}}{_c.C_RESET}  "
                    + '  '.join(cells))
     return '\n'.join(out)
