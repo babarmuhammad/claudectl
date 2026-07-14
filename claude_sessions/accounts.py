@@ -90,6 +90,7 @@ def _account_actions(s, name):
             ('Open in NEW terminal (run in parallel)', 'parallel'),
             ('Log in / re-login here', 'login')]
     if name != 'default':
+        acts.append(('Rename', 'rename'))
         acts.append(('Remove from list', 'remove'))
     acts.append(('Cancel', 'cancel'))
     act = menu(acts, f"ACCOUNT  /  {name}")
@@ -101,6 +102,17 @@ def _account_actions(s, name):
         _open_terminal(d, name)
     elif act == 'login':
         _login(d)
+    elif act == 'rename':
+        new = text_input("New account name:", default=name)
+        if new and new != name:
+            if any(a.get('name') == new for a in s.get('accounts', [])) or new == 'default':
+                flash(f"Name '{new}' already in use", ok=False, secs=1.8)
+            else:
+                for a in s.get('accounts', []):
+                    if a.get('name') == name:
+                        a['name'] = new
+                save_settings(s)
+                flash(f"Renamed '{name}' → '{new}' (config dir unchanged)", secs=1.8)
     elif act == 'remove':
         s['accounts'] = [a for a in s.get('accounts', []) if a.get('name') != name]
         if os.path.expanduser(s.get('claude_config_dir', '')) == os.path.expanduser(d):

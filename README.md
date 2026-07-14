@@ -124,7 +124,7 @@ The feature that makes claudectl unique: **task-scoped, token-budgeted memory in
 - **Recall engine** — local scoring (IDF keyword + path match + dependency rank + graph expansion), no embeddings, deterministic, <0.5s on 500 entities. On-demand CLI: `claudectl recall "<topic>"` — Claude itself can call it mid-session via Bash.
 - **Session learning** — after each session claudectl distills durable *lessons* (error→fix pairs, decisions, preferences) from the transcript. High-confidence lessons **auto-approve** (`memory_lessons_autoapprove`); the rest wait in the `⇧L` review screen. Approved lessons boost recall and decay if unused. The project literally gets smarter the more you use it.
 - **Cross-project conventions** — preferences/corrections that recur across your repos (or you pin) are promoted to a small block in your user-level `~/.claude/CLAUDE.md`, so a convention learned once ("this machine uses PowerShell 5.1", "prefer pytest") is remembered in *every* project. No competitor spans projects.
-- **Auto-refresh** — memory refreshes incrementally on project open (`memory_auto_refresh`, capped so a big rebuild never runs silently). Zero user action.
+- **Auto-refresh** — memory refreshes incrementally on project open (`memory_auto_refresh`, capped so a big rebuild never runs silently). Zero user action. The update runs in a **detached background worker** that survives launching a session, saves after every step (an interruption never loses progress), and shows live progress in the sessions menu — so you can open a chat immediately instead of waiting for the scan to finish.
 - **Memory hub** (`m` in the sessions menu) — one screen for everything: status, build, ask, injection preview with live "what would my prompt inject?" probe, lessons, **work suggestions** (`s` — next-steps from lessons + graph + health, local), **since-last-session diff** (`d` — git + session-log), per-surface toggles.
 - **Ask the project** — grounded Q&A over the graph, answered by Claude with only the relevant subgraph as context.
 - *(Graph memory inspired by [cognee](https://github.com/topoteretes/cognee); retrieval budgeting inspired by [Aider's repo-map](https://aider.chat/docs/repomap.html); both reimplemented from scratch — pure stdlib.)*
@@ -139,17 +139,29 @@ Launcher-side mitigations for the most common Claude Code problems (2026 field r
 ### Multiple Claude accounts (⚙ Accounts)
 Run two (or more) accounts with almost no friction — claudectl owns the config dir (`CLAUDE_CONFIG_DIR`), which is what decides the account:
 
-- **Named accounts** — add an account (name + config dir; claudectl creates it and can open `/login` right away), switch the active one, or **open it in a new terminal with one key** so both accounts run **at the same time**.
+- **Named accounts** — add an account (name + config dir; claudectl creates it and can open `/login` right away), rename it, switch the active one, or **open it in a new terminal with one key** so both accounts run **at the same time**.
 - **Per-launch account** — the launch-options screen has an **Account** field: pick which account this specific session starts under, without changing your default.
 - **All accounts in the usage bar** — the plan-usage banner shows **one bar per account** (labeled by email/name) and updates dynamically, so you see every account's session/weekly limits at a glance. A single account stays a single compact bar.
 - **One row per project, not per account** — if the same folder has sessions under two accounts, the project list shows a single row (default account primary, tagged `[+other-account]`) instead of a duplicate. Opening it merges every account's sessions into one list, foreign-account sessions marked inline (`[account-name]`); rename/archive/delete/fork/view all act on that session's own account, and resuming one launches under the right account automatically.
 - **Inject context across accounts** (`⇧K` in the sessions menu) — start a new session seeded with the transcript of any prior session for this project, including ones from a different account.
+- **Account-accurate memory** — the memory graph lives under the project's real path (shared by every account), and the features that feed it now read **every** account's sessions: lesson extraction, the CLAUDE.md session-topics block, per-project usage stats, workspace freshness counts, and the recent-sessions quick-resume list. A project used under two accounts is one merged row in the usage dashboard, not two.
 
 ### Plan→Execute — two models, one task (`⇧X`)
 Plan with an accurate model, execute with a cheaper/faster one — big token savings for the same result. claudectl plans the task headlessly with `plan_model` (default Opus 4.8), shows you the plan to approve/reject, saves it to `.claudectl/plan-latest.md`, then launches an interactive session on `exec_model` (default Sonnet 5) seeded to read and execute that plan. Expensive reasoning happens once; the build runs on the cheap tier. Nobody else orchestrates this from the launcher.
 
 ### Adaptive agent selection (`g`)
 The agents screen opens with a **"Suggested for this project"** section — library agents ranked against the project's languages (from the dependency graph), memory entities, and name. Local scoring, instant, free. Setting `agents_auto: 'auto'` applies suggestions automatically on first open (your manual picks are never touched).
+
+### Token economy — shrink the per-turn cost
+CLAUDE.md and memory files ride in the model's context on **every** message, so their size is a permanent per-turn tax. claudectl makes that cost visible and cuts it:
+
+- **Context weight audit (`⇧W`)** — one screen estimating the tokens auto-loaded on every turn for this project: CLAUDE.md broken into its blocks (manual / autogen / session topics / memory digest), the global `~/.claude/CLAUDE.md`, `.claude/rules/*` (marked *lazy* when glob-scoped, so they cost nothing until a matching file is touched), `system-prompt.txt`, SessionStart hook injections, and MCP servers — with a running always-on total and inline warnings (CLAUDE.md over 200 lines, an unbounded session-topics block, a global CLAUDE.md that loads in every project).
+- **Prune the unbounded bits (`p` in the audit)** — the CLAUDE.md session-topics log used to grow forever; it's now capped to the most recent N entries (`claude_md_sessions_cap`, default 10) and the autogen commit list is configurable (`claude_md_commits`). Prune rebuilds them in place without touching your manual prose or the memory block.
+- **Compress CLAUDE.md with AI (`⇧C`)** — rewrites the hand-written part into a lean lookup-table style (targets under 500 tokens), shows a before→after token count and a git-style diff to approve, keeps a `CLAUDE.md.bak`, and preserves the machine-maintained blocks verbatim.
+- **Launch economy controls** — the launch-options screen adds a **Think cap** (`MAX_THINKING_TOKENS`) and **Subagents** model (`CLAUDE_CODE_SUBAGENT_MODEL`) field, plus an **`e` economy preset** (Sonnet · 8k thinking cap · Haiku subagents) in one key. Set defaults in Settings or per project.
+- **Deny heavy reads (`d` in the audit)** — scans the project and writes `permissions.deny` rules (`node_modules/**`, `dist/**`, lockfiles, …) into the project's `.claude/settings.json` so a stray read can't pull thousands of tokens of generated content into context. Merges without clobbering existing settings.
+- **Token-saver hooks** — `concise-output` (a SessionStart rule: no narration, no re-printed code) and `filter-test-output` (rewrites `pytest`/`npm test`/`go test` commands to pipe through a failures-only filter before the output hits context) join the hooks manager alongside the existing code-minimization hook.
+- **Compact instructions** — scaffolded/AI-generated CLAUDE.md now includes a `# Compact instructions` section that steers Claude Code's auto-compaction toward what matters; the audit offers to add one (`i`) if it's missing.
 
 ### Daily token tracking (⚙ Usage stats → `d`)
 Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, bar chart, today highlighted, live plan-window % alongside. Optional `daily_token_alert` badge on the main screen when today's tokens cross your threshold.
@@ -160,7 +172,7 @@ Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, 
 - **Change diffs** — when AI-regenerating CLAUDE.md (`a`) or a system prompt (`s`), the approval step shows a **git-style colored diff** (old → new) so you decide *before* writing (`f` toggles to the full proposed text; ENTER approve, ESC reject). The previous version is snapshotted under `.claudectl/snapshots/`, so the workspace screen (`w`) lists recent changes with `+/−` counts and re-opens the last diff on `c` (CLAUDE.md) / `s` (system prompt).
 
 ### Hooks
-- **17 ready-made templates** — one-key install, toggle, or remove (edits `settings.json` safely). Formatting (Prettier, Ruff, ESLint, gofmt), safety guardrails that **block** dangerous tools (`rm -rf`, `git reset --hard`, force-push, sudo, curl; reading `.env`; writing secrets — exit-code-2 blocks), audit/notify (log Bash commands, beep on finish / when input is needed), and context injection (git status at session start; a compact **code-minimization** rule that curbs over-engineering, saving generated tokens — inspired by [Ponytail](https://github.com/DietrichGebert/ponytail)). Guards/blocks run as bundled Python (shell-agnostic); formatters no-op when the tool is absent.
+- **19 ready-made templates** — one-key install, toggle, or remove (edits `settings.json` safely). Formatting (Prettier, Ruff, ESLint, gofmt), safety guardrails that **block** dangerous tools (`rm -rf`, `git reset --hard`, force-push, sudo, curl; reading `.env`; writing secrets — exit-code-2 blocks), audit/notify (log Bash commands, beep on finish / when input is needed), context injection (git status at session start; a compact **code-minimization** rule that curbs over-engineering — inspired by [Ponytail](https://github.com/DietrichGebert/ponytail)), and **token savers** (`concise-output` trims narration and re-printed code; `filter-test-output` pipes test runs through a failures-only filter before the output enters context). Guards/blocks run as bundled Python (shell-agnostic); formatters no-op when the tool is absent.
 - **AI-generate a hook** — describe what you want in plain language; Claude returns a validated hook spec (event + matcher + command) you preview and confirm before it's saved.
 - **Remove broken/legacy hooks** — one action purges hook commands that error under a bash hook shell.
 
@@ -343,6 +355,8 @@ On launch, claudectl shows all projects Claude Code has ever opened, sorted by m
 | n | Architecture graph + project memory screen (then `o` open graph · `m` build memory · `a` ask · `r` rebuild) |
 | w | Workspace status (provenance & freshness) |
 | ⇧K | New chat seeded with context from another session (any account) |
+| ⇧W | Context weight audit — token cost of everything auto-loaded per turn |
+| ⇧C | Compress CLAUDE.md with AI (cut per-turn tokens) |
 | p | Manage extra PATH entries |
 | x | Manage --add-dir directories |
 | ? | Help / keyboard reference |
@@ -367,12 +381,13 @@ The footer shows your position as `msg N/M` — counting conversation messages, 
 
 | Key | Action |
 |-----|--------|
-| ↑ / ↓ | Switch fields (Effort / Model / Permissions / Lead agent / Worktree / Name) |
+| ↑ / ↓ | Switch fields (Effort / Model / Permissions / Lead agent / Account / Think cap / Subagents / Worktree / Name) |
 | ← / → | Cycle values; edit Name/Worktree |
+| e | Economy preset (Sonnet · 8k thinking cap · Haiku subagents) |
 | ENTER | Launch with selected options |
 | ESC | Back to main menu (no launch) |
 
-Worktree & Name appear only for new sessions; Lead agent appears when `~/.claude/agents/` has agents. Project agents picked with `g` are shown read-only here.
+Worktree & Name appear only for new sessions; Lead agent appears when `~/.claude/agents/` has agents; Account appears when you've added extra accounts. **Think cap** sets `MAX_THINKING_TOKENS` and **Subagents** sets `CLAUDE_CODE_SUBAGENT_MODEL` for the launched session. Project agents picked with `g` are shown read-only here.
 
 **Multi-select / confirm**
 

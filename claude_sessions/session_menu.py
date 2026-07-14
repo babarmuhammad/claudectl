@@ -120,30 +120,31 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
                         for (m, sid, prev, cnt) in scan_sessions(folder))
     sessions.sort(key=lambda r: r[0], reverse=True)
     archived_dir   = os.path.join(proj_folder, 'archived') if proj_folder else None
-    # session-learning badge (cheap local scan; 'auto' mode extracts on entry)
+    # session-learning badge + background memory update. The update (lessons
+    # scan and/or auto-refresh) runs in a DETACHED worker process, not a
+    # daemon thread — it must survive claudectl exiting to launch claude.exe
+    # (.bat path), which used to kill the scan mid-flight.
     unlearned = 0
     try:
         from .config import load_settings as _ls
         from . import lessons as _lessons
         from . import memory as _memory
-        _lmode = _ls().get('memory_lessons', 'prompt')
+        _st = _ls()
+        _spawn_bg = False
+        _mem0 = _memory.load_memory(project_path, proj_folder)
+        _lmode = _st.get('memory_lessons', 'prompt')
         if _lmode != 'off':
-            _mem0 = _memory.load_memory(project_path, proj_folder)
             _pend = _lessons.pending_sids(proj_folder, _mem0)
-            if _pend and _lmode == 'auto':
-                _lessons.start_background_scan(project_path, proj_folder, _pend)
             unlearned = len(_pend)
+            if _pend and _lmode == 'auto':
+                _spawn_bg = True
+        if (_st.get('memory_auto_refresh') == 'open' and project_path
+                and proj_folder and _mem0.get('entities')):
+            _spawn_bg = True
+        if _spawn_bg and project_path:
+            _memory.spawn_background_worker(project_path, proj_folder)
     except Exception:
         unlearned = 0
-    # memory auto-refresh on open: runs in the BACKGROUND so the TUI stays
-    # responsive — the user works while memory updates. Incremental + capped.
-    try:
-        from .config import load_settings as _ls3
-        if _ls3().get('memory_auto_refresh') == 'open' and project_path and proj_folder:
-            from . import memory as _memory
-            _memory.start_background_refresh(project_path, proj_folder, project_name)
-    except Exception:
-        pass
     # agents auto-mode: first open with no explicit selection → apply suggestions
     try:
         from .config import load_settings as _ls2
@@ -259,9 +260,13 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
         if not show_archived:
             try:
                 from . import memory as _mem_mod
-                if os.path.abspath(project_path or '') in _mem_mod._bg_active:
-                    frame.append(f"  {C_OK}● memory updating in the background…{C_RESET}"
-                                 f"  {C_DIM}you can keep working{C_RESET}")
+                _prog = _mem_mod.scan_lock_status(project_path)
+                if _prog is None and os.path.abspath(project_path or '') in _mem_mod._bg_active:
+                    _prog = ''                       # in-process thread fallback
+                if _prog is not None:
+                    _detail = f"({_prog}) " if _prog else ''
+                    frame.append(f"  {C_OK}● memory updating {_detail}in the background…{C_RESET}"
+                                 f"  {C_DIM}safe to launch or close{C_RESET}")
             except Exception:
                 pass
         if unlearned and not show_archived:
@@ -319,7 +324,8 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
             frame.append(render.hint_keys([
                 ('m', 'memory'), ('g', 'agents'), ('n', 'graph'), ('⇧X', 'plan→exec'),
                 ('a', 'ai-analyze'), ('c', 'claude.md'), ('s', 'sys-prompt'),
-                ('u', 'usage'), ('w', 'status'), ('⇧K', 'inject context')], prefix='project:'))
+                ('u', 'usage'), ('w', 'status'), ('⇧K', 'inject context'),
+                ('⇧W', 'ctx audit')], prefix='project:'))
             frame.append(render.hint_bar(
                 f"{C_DIM}/ all actions · ? help · ⇧ = Shift (capital){C_RESET}"))
         render.render_frame(frame)
@@ -548,6 +554,13 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
             from . import context_inject
             context_inject.run(project_path, proj_folder, project_name)
 
+        elif ev[0] == 'char' and ev[1] == 'W' and not show_archived:
+            from . import ctxaudit
+            ctxaudit.audit_screen(project_path, proj_folder, project_name)
+
+        elif ev[0] == 'char' and ev[1] == 'C' and not show_archived:
+            from .claude_md import ai_compress_claude_md
+            ai_compress_claude_md(project_path, proj_folder)
 
         elif ev[0] == 'char' and ev[1] == '!' and not show_archived and not_set_up:
             # one-key project setup: CLAUDE.md scaffold → memory (rules sync inside)
@@ -575,6 +588,8 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
                 ('Plan with one model, execute with another', 'X'),
                 ('Architecture graph', 'n'), ('Project agents', 'g'),
                 ('AI-analyze CLAUDE.md', 'a'), ('Scaffold CLAUDE.md', 'c'),
+                ('Context weight audit (token cost)', 'W'),
+                ('Compress CLAUDE.md with AI (save tokens)', 'C'),
                 ('System prompt', 's'), ('Memory files map', 'M'),
                 ('Project usage stats', 'u'), ('Workspace status', 'w'),
                 ('New chat with context from another session/account', 'K'),

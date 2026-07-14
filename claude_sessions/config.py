@@ -61,6 +61,10 @@ _DEFAULT_SETTINGS = {
     'plan_model': 'claude-opus-4-8',   # Plan→Execute: model that writes the plan
     'exec_model': 'claude-sonnet-5',   # Plan→Execute: model that executes it
     'accounts': [],                    # named Claude accounts: [{'name','dir'}]
+    'claude_md_sessions_cap': 10,  # SESSIONS block: keep most recent N (0 = unlimited)
+    'claude_md_commits': 7,        # AUTOGEN block: git log -N per repo
+    'default_max_thinking': '',    # MAX_THINKING_TOKENS env for launches ('' = unset)
+    'default_subagent_model': '',  # CLAUDE_CODE_SUBAGENT_MODEL env ('' = unset)
 }
 
 
@@ -312,6 +316,10 @@ MODEL_LABELS  = ['default', 'haiku-4-5', 'sonnet-5', 'opus-4-8', 'fable-5']
 PERMS         = ['',        'plan', 'acceptEdits', 'bypassPermissions', 'dontAsk']
 PERM_LABELS   = ['default', 'plan', 'acceptEdits', 'bypassPermissions', 'dontAsk']
 PERM_RISKY    = {'bypassPermissions', 'dontAsk'}   # shown with warning tint
+# launch-economy: cap thinking tokens (MAX_THINKING_TOKENS env) to cut cost on
+# routine work; '' = leave the model's default budget alone.
+THINKING_CAPS   = ['',        '4000', '8000', '16000', '32000']
+THINKING_LABELS = ['default', '4k', '8k', '16k', '32k']
 
 # ── cost estimation ($ per MTok; substring-matched on message.model) ──
 COST_PER_MTOK = {

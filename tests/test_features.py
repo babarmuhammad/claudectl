@@ -18,7 +18,7 @@ OPTS = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': ''}
 
 def test_choice_line_v5_sentinels():
     line = build_choice_line(r'D:\proj', 'D--proj', 'new', dict(OPTS))
-    assert line == rf'v5|D:\proj|D--proj|new|-|-|-|-|-|{config_dir}|-|-'
+    assert line == rf'v6|D:\proj|D--proj|new|-|-|-|-|-|{config_dir}|-|-|-|-'
 
 
 def test_choice_line_empty_effort_set_model():
@@ -34,7 +34,7 @@ def test_choice_line_full():
     o = dict(OPTS, effort='high', model='fable-5', perm='plan',
              name='My Sess', worktree='*', agent='reviewer', agents_json='')
     line = build_choice_line(r'D:\p', 'D--p', 'new', o)
-    assert line == rf'v5|D:\p|D--p|new|high|fable-5|plan|My Sess|*|{config_dir}|reviewer|-'
+    assert line == rf'v6|D:\p|D--p|new|high|fable-5|plan|My Sess|*|{config_dir}|reviewer|-|-|-'
 
 
 def test_choice_line_per_launch_account():

@@ -43,6 +43,34 @@ def _recall_cli(query):
     print(r['text'] if not r['empty'] else '(no relevant project memory)')
 
 
+def _bg_scan_cli(project_path, proj_folder):
+    """`claudectl --bg-scan <path> <folder>` — detached memory worker: lessons
+    scan, then (if enabled) incremental memory refresh — SEQUENTIALLY, so the
+    two graph writers never clobber each other. Spawned headless by
+    memory.spawn_background_worker; survives the TUI exiting to launch claude.
+    Status/progress via the scan.lock marker."""
+    from . import memory, lessons
+    from .config import log
+    proj_folder = proj_folder or None
+    memory._tls.silent = True                # headless Claude calls, no UI
+    if not memory.acquire_scan_lock(project_path):
+        return                               # another worker beat us to it
+    try:
+        st = load_settings()
+        mem = memory.load_memory(project_path, proj_folder)
+        if st.get('memory_lessons', 'prompt') == 'auto':
+            sids = lessons.pending_sids(proj_folder, mem)
+            if sids:
+                lessons.scan_sessions(project_path, proj_folder, sids)
+        if st.get('memory_auto_refresh') == 'open' and mem.get('entities'):
+            name = os.path.basename(project_path.rstrip('\\/')) or project_path
+            memory.refresh_memory(project_path, proj_folder, name, auto_cap=6)
+    except Exception:
+        log.exception('bg-scan worker failed')
+    finally:
+        memory.clear_scan_lock(project_path)
+
+
 def run():
     # `claudectl workspace status` — scriptable, no TUI
     if sys.argv[1:3] == ['workspace', 'status']:
@@ -51,6 +79,10 @@ def run():
     # `claudectl recall "<query>"` — scriptable, no TUI
     if len(sys.argv) >= 3 and sys.argv[1] == 'recall':
         _recall_cli(' '.join(sys.argv[2:]))
+        return
+    # detached background memory worker (spawned, not user-facing)
+    if len(sys.argv) >= 3 and sys.argv[1] == '--bg-scan':
+        _bg_scan_cli(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else '')
         return
 
     # ── UTF-8 console ─────────────────────────────────────────────
@@ -315,6 +347,8 @@ def run():
                 'effort':     proj_def.get('effort', settings.get('default_effort', '')),
                 'model':      proj_def.get('model', settings.get('default_model', '')),
                 'permission': proj_def.get('permission', settings.get('default_permission', '')),
+                'max_thinking':   proj_def.get('max_thinking', settings.get('default_max_thinking', '')),
+                'subagent_model': proj_def.get('subagent_model', settings.get('default_subagent_model', '')),
             },
             is_new=(choice == 'new'),
             agents=list_all_agent_names(path),
@@ -340,6 +374,8 @@ def run():
             settings.setdefault('project_defaults', {})[encoded_name] = {
                 'effort': opts['effort'], 'model': opts['model'],
                 'permission': opts['perm'],
+                'max_thinking': opts.get('max_thinking', ''),
+                'subagent_model': opts.get('subagent_model', ''),
             }
             save_settings(settings)
         break
@@ -348,6 +384,8 @@ def run():
         opts = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': '', 'agent': ''}
     opts.setdefault('agent', '')
     opts.setdefault('agents_json', '')
+    opts.setdefault('max_thinking', '')
+    opts.setdefault('subagent_model', '')
 
     # Persist last session for quick-resume (resume/fork only)
     if choice and choice not in ('terminal', 'new', 'continue'):
@@ -399,29 +437,39 @@ def run():
 
 
 def build_choice_line(path, encoded_name, choice, opts):
-    """v5 choice-file line. Sentinel '-' for empty fields: cmd's for /f
+    """v6 choice-file line. Sentinel '-' for empty fields: cmd's for /f
     collapses consecutive delimiters, which silently shifted fields in the
     old 5-field format. v3 added config_dir; v4 the --agent name; v5 a path
-    to a temp JSON file of selected subagents (--agents, built per session)."""
+    to a temp JSON file of selected subagents (--agents); v6 the launch-economy
+    env values (MAX_THINKING_TOKENS, CLAUDE_CODE_SUBAGENT_MODEL)."""
     def sv(x):
-        return x if x else '-'
-    return '|'.join(['v5', path, encoded_name or '-', choice,
+        return str(x).replace('|', '') if x else '-'
+    return '|'.join(['v6', path, encoded_name or '-', choice,
                      sv(opts['effort']), sv(opts['model']), sv(opts['perm']),
                      sv(opts['name']), sv(opts['worktree']),
                      sv(opts.get('cfgdir') or config_dir),
-                     sv(opts.get('agent', '')), sv(opts.get('agents_json', ''))])
+                     sv(opts.get('agent', '')), sv(opts.get('agents_json', '')),
+                     sv(opts.get('max_thinking', '')),
+                     sv(opts.get('subagent_model', ''))])
 
 
 def parse_choice_line(line):
     """Parse any choice-file version → (path, encoded_name, choice, opts).
-    opts always has effort/model/perm/name/worktree/agent/agents_json + cfgdir."""
+    opts always has effort/model/perm/name/worktree/agent/agents_json/cfgdir
+    + max_thinking/subagent_model."""
     t = line.rstrip('\r\n').split('|')
     def g(i):
         v = t[i] if i < len(t) else ''
         return '' if v == '-' else v
     opts = {'effort': '', 'model': '', 'perm': '', 'name': '',
-            'worktree': '', 'agent': '', 'agents_json': '', 'cfgdir': ''}
-    if t and t[0] == 'v5':
+            'worktree': '', 'agent': '', 'agents_json': '', 'cfgdir': '',
+            'max_thinking': '', 'subagent_model': ''}
+    if t and t[0] == 'v6':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
+                    worktree=g(8), cfgdir=g(9), agent=g(10), agents_json=g(11),
+                    max_thinking=g(12), subagent_model=g(13))
+    elif t and t[0] == 'v5':
         path, enc, choice = g(1), g(2), g(3)
         opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
                     worktree=g(8), cfgdir=g(9), agent=g(10), agents_json=g(11))
@@ -472,6 +520,11 @@ def _direct_launch(path, encoded_name, choice, opts):
     # Pin the account/config dir explicitly — overrides any ambient
     # CLAUDE_CONFIG_DIR claudectl itself may have been launched under.
     env['CLAUDE_CONFIG_DIR'] = cfgdir
+    # launch-economy env: cap thinking tokens / route subagents to a cheap model
+    if opts.get('max_thinking'):
+        env['MAX_THINKING_TOKENS'] = str(opts['max_thinking'])
+    if opts.get('subagent_model'):
+        env['CLAUDE_CODE_SUBAGENT_MODEL'] = opts['subagent_model']
     extra = read_extra_paths(proj_folder)
     if extra:
         env['PATH'] = ';'.join(extra) + ';' + env.get('PATH', '')

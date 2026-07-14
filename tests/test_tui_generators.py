@@ -140,3 +140,71 @@ def test_system_prompt_generate_cancel(monkeypatch, tmp_path):
     keys = flat(ENTER, ENTER)
     run_flow(monkeypatch, keys, system_prompt.edit_system_prompt, folder, 'alpha', proj)
     assert not os.path.exists(sp)
+
+
+# ── F2: AI compression ───────────────────────────────────────
+
+def _seed_compress_md(proj, folder):
+    from claude_sessions.config import _MEMORY_START, _MEMORY_END
+    md_path = os.path.join(proj, 'CLAUDE.md')
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write("# alpha\n\n## Long prose\n" + "wordy explanation sentence. " * 80
+                + f"\n\n{_AUTOGEN_START}\nold autogen\n{_AUTOGEN_END}\n"
+                + f"{_SESSIONS_START}\n## Session topics\n- **s** (2 msgs): t\n{_SESSIONS_END}\n"
+                + f"{_MEMORY_START}\nverbatim digest\n{_MEMORY_END}\n")
+    return md_path
+
+
+def test_ai_compress_writes_backup_and_preserves_memory(monkeypatch, tmp_path):
+    from claude_sessions import memory, diffview
+    from claude_sessions.config import _MEMORY_START, _MEMORY_END
+    sb = Sandbox(monkeypatch, tmp_path)
+    _, enc, folder, _ = sb.add_project('alpha', n_sessions=1)
+    proj = str(sb.root / 'work' / 'alpha')
+    md_path = _seed_compress_md(proj, folder)
+    old = open(md_path, encoding='utf-8').read()
+
+    monkeypatch.setattr(memory, '_claude_stdin',
+                        lambda *a, **k: ("# alpha\n\n- run: pytest -q\n- style: terse\n"
+                                         "- package manager: uv\n- never touch dist/\n"))
+    monkeypatch.setattr(diffview, 'confirm', lambda *a, **k: True)
+    monkeypatch.setattr(ui, 'flash', lambda *a, **k: None)
+    assert claude_md.ai_compress_claude_md(proj, folder) is True
+
+    out = open(md_path, encoding='utf-8').read()
+    assert '- run: pytest -q' in out                       # compressed manual
+    assert 'wordy explanation sentence.' not in out        # prose replaced
+    assert f"{_MEMORY_START}\nverbatim digest\n{_MEMORY_END}" in out.replace('\r', '')
+    assert _AUTOGEN_START in out and _SESSIONS_START in out
+    assert open(md_path + '.bak', encoding='utf-8').read() == old
+
+
+def test_ai_compress_refusal_leaves_file_untouched(monkeypatch, tmp_path):
+    from claude_sessions import memory
+    sb = Sandbox(monkeypatch, tmp_path)
+    _, enc, folder, _ = sb.add_project('alpha', n_sessions=1)
+    proj = str(sb.root / 'work' / 'alpha')
+    md_path = _seed_compress_md(proj, folder)
+    old = open(md_path, encoding='utf-8').read()
+    monkeypatch.setattr(memory, '_claude_stdin',
+                        lambda *a, **k: "I'll help you compress this file...")
+    monkeypatch.setattr(ui, 'flash', lambda *a, **k: None)
+    assert claude_md.ai_compress_claude_md(proj, folder) is False
+    assert open(md_path, encoding='utf-8').read() == old
+    assert not os.path.exists(md_path + '.bak')
+
+
+def test_ai_compress_rejected_diff_no_write(monkeypatch, tmp_path):
+    from claude_sessions import memory, diffview
+    sb = Sandbox(monkeypatch, tmp_path)
+    _, enc, folder, _ = sb.add_project('alpha', n_sessions=1)
+    proj = str(sb.root / 'work' / 'alpha')
+    md_path = _seed_compress_md(proj, folder)
+    old = open(md_path, encoding='utf-8').read()
+    monkeypatch.setattr(memory, '_claude_stdin',
+                        lambda *a, **k: ("# alpha\n\n- terse fact one two three\n"
+                                         "- another durable terse fact to keep\n"))
+    monkeypatch.setattr(diffview, 'confirm', lambda *a, **k: False)
+    monkeypatch.setattr(ui, 'flash', lambda *a, **k: None)
+    assert claude_md.ai_compress_claude_md(proj, folder) is False
+    assert open(md_path, encoding='utf-8').read() == old

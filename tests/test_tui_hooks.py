@@ -178,3 +178,69 @@ def test_ai_hook_rejects_invalid_event(monkeypatch, tmp_path):
     run_flow(monkeypatch, keys, hooks.hooks_menu)
     d = json.load(open(sp, encoding='utf-8')) if os.path.isfile(sp) else {}
     assert not d.get('hooks')                       # nothing saved
+
+
+# ── token-saver hooks (F4b + F6) ─────────────────────────────
+
+def _hook_script(name):
+    return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                        'claude_sessions', name)
+
+
+def test_concise_hook_emits_context(tmp_path):
+    import subprocess
+    r = subprocess.run([sys.executable, _hook_script('concise_hook.py')],
+                       input='{"hook_event_name":"SessionStart"}',
+                       capture_output=True, text=True, timeout=15)
+    assert r.returncode == 0
+    hso = json.loads(r.stdout)['hookSpecificOutput']
+    assert hso['hookEventName'] == 'SessionStart'
+    assert 'no preamble' in hso['additionalContext']
+
+
+def test_token_saver_templates_present():
+    assert 'concise-output' in hooks.TEMPLATES
+    assert 'filter-test-output' in hooks.TEMPLATES
+    t = hooks.TEMPLATES['filter-test-output']
+    assert t['event'] == 'PreToolUse' and t['entry']['matcher'] == 'Bash'
+
+
+def test_testfilter_hook_rewrites_test_commands(tmp_path):
+    import subprocess
+
+    def run(cmd):
+        r = subprocess.run([sys.executable, _hook_script('testfilter_hook.py')],
+                           input=json.dumps({'tool_input': {'command': cmd}}),
+                           capture_output=True, text=True, timeout=15)
+        assert r.returncode == 0
+        return r.stdout.strip()
+
+    out = run('pytest -q')
+    upd = json.loads(out)['hookSpecificOutput']['updatedInput']['command']
+    assert 'pytest -q' in upd and 'testfilter_filter.py' in upd
+    assert 'pipefail' in upd and 'claudectl-testfilter' in upd
+    assert run('git status') == ''                       # non-test → untouched
+    assert run('pytest -q | tee out.txt') == ''          # already piped → hands off
+    assert run(upd) == ''                                # marker → no double-wrap
+    assert run('npm test') != '' and run('cargo test') != ''
+
+
+def test_testfilter_filter_keeps_failures_drops_passes(tmp_path):
+    import subprocess
+    transcript = '\n'.join(
+        [f'tests/test_x.py::test_ok_{i} PASSED' for i in range(50)]
+        + ['tests/test_y.py::test_bad FAILED',
+           '=================================== FAILURES ===================================',
+           '____________________________________ test_bad _________________________________',
+           '    assert 1 == 2',
+           'E   AssertionError']
+        + [f'tests/test_z.py::test_ok_{i} PASSED' for i in range(50)]
+        + ['========================= 1 failed, 100 passed in 2.11s ======================='])
+    r = subprocess.run([sys.executable, _hook_script('testfilter_filter.py')],
+                       input=transcript, capture_output=True, text=True, timeout=15)
+    assert r.returncode == 0
+    assert 'test_bad FAILED' in r.stdout
+    assert 'AssertionError' in r.stdout
+    assert '1 failed, 100 passed' in r.stdout            # summary kept
+    assert 'lines suppressed' in r.stdout
+    assert r.stdout.count('PASSED') < 15                 # bulk of pass noise gone

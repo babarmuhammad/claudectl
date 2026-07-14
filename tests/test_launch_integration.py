@@ -129,14 +129,62 @@ def test_choice_line_matrix(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)          # pins main_mod.config_dir
     cfg = str(sb.cfg)
     cases = [
-        ('new', dict(OPTS0), f'v5|P|E|new|-|-|-|-|-|{cfg}|-|-'),
+        ('new', dict(OPTS0), f'v6|P|E|new|-|-|-|-|-|{cfg}|-|-|-|-'),
         ('continue', dict(OPTS0, effort='low'),
-         f'v5|P|E|continue|low|-|-|-|-|{cfg}|-|-'),
+         f'v6|P|E|continue|low|-|-|-|-|{cfg}|-|-|-|-'),
         ('resume:abc', dict(OPTS0, model='claude-fable-5', perm='dontAsk'),
-         f'v5|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}|-|-'),
+         f'v6|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}|-|-|-|-'),
         ('new', dict(OPTS0, name='N N', worktree='wt', agent='rev'),
-         f'v5|P|E|new|-|-|-|N N|wt|{cfg}|rev|-'),
+         f'v6|P|E|new|-|-|-|N N|wt|{cfg}|rev|-|-|-'),
+        ('new', dict(OPTS0, max_thinking='8000', subagent_model='claude-haiku-4-5'),
+         f'v6|P|E|new|-|-|-|-|-|{cfg}|-|-|8000|claude-haiku-4-5'),
     ]
     for choice, opts, expected in cases:
         line = main_mod.build_choice_line('P', 'E', choice, opts)
         assert line == expected, (choice, line)
+
+
+# ── F3: launch economy env + choice-line v6 ──────────────────
+
+def env_of(call):
+    return call[1].get('env', {})
+
+
+def test_economy_env_injected(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    call = captured_launch(monkeypatch, sb, 'new',
+                           {'max_thinking': '8000', 'subagent_model': 'claude-haiku-4-5'})
+    env = env_of(call)
+    assert env['MAX_THINKING_TOKENS'] == '8000'
+    assert env['CLAUDE_CODE_SUBAGENT_MODEL'] == 'claude-haiku-4-5'
+
+
+def test_economy_env_absent_when_unset(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    call = captured_launch(monkeypatch, sb, 'new', {})
+    env = env_of(call)
+    assert 'MAX_THINKING_TOKENS' not in env
+    assert 'CLAUDE_CODE_SUBAGENT_MODEL' not in env
+
+
+def test_choice_line_v6_round_trip(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    opts = dict(OPTS0, effort='high', model='claude-sonnet-5', cfgdir='C:/cfg',
+                max_thinking='16000', subagent_model='claude-haiku-4-5',
+                agent='', agents_json='')
+    line = main_mod.build_choice_line('C:/proj', 'ENC', 'new', opts)
+    assert line.startswith('v6|')
+    p, enc, choice, got = main_mod.parse_choice_line(line)
+    assert (p, enc, choice) == ('C:/proj', 'ENC', 'new')
+    assert got['max_thinking'] == '16000'
+    assert got['subagent_model'] == 'claude-haiku-4-5'
+    assert got['effort'] == 'high'
+
+
+def test_v5_line_parses_without_economy(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    v5 = 'v5|C:/proj|ENC|new|high|claude-sonnet-5|-|-|-|C:/cfg|-|-'
+    p, enc, choice, got = main_mod.parse_choice_line(v5)
+    assert (p, enc, choice) == ('C:/proj', 'ENC', 'new')
+    assert got['max_thinking'] == '' and got['subagent_model'] == ''
+    assert got['effort'] == 'high'

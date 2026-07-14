@@ -5,7 +5,7 @@ import time
 import ctypes
 
 from .config import W, EFFORTS, EFFORT_LABELS, MODELS, MODEL_LABELS
-from .config import PERMS, PERM_LABELS, PERM_RISKY
+from .config import PERMS, PERM_LABELS, PERM_RISKY, THINKING_CAPS, THINKING_LABELS
 from .config import C_RESET, C_TITLE, C_SEL, C_DIM, C_SRCH, C_BOLD, C_GREEN
 from .config import load_settings, save_settings, find_editor, get_claude_exe, settings_file
 from .config import use_16color_fallback
@@ -677,6 +677,8 @@ def help_screen():
         f"    g  project agents         w  workspace status (provenance/freshness)",
         f"    n  connections graph + Claude project memory (plexus, ask)",
         f"    s  system prompt          A  archived view    ?  help",
+        f"    W  context weight audit (token cost of what Claude auto-loads)",
+        f"    C  compress CLAUDE.md with AI (cut per-turn tokens)",
         f"    {C_DIM}AI updates preview a git-style diff before approve — re-view from w{C_RESET}",
         '',
         f"  {C_BOLD}Launch options{C_RESET}",
@@ -710,6 +712,9 @@ def settings_menu():
         eff = s['default_effort'] or 'default'
         mod = s['default_model'] or 'default'
         perm = s['default_permission'] or 'default'
+        think = s.get('default_max_thinking') or 'default'
+        submod = next((l for v, l in zip(MODELS, MODEL_LABELS)
+                       if v == s.get('default_subagent_model', '')), 'default')
         theme = s.get('theme', 'default')
         items = [
             (f"Editor      :  {editor_now}", 'editor'),
@@ -718,6 +723,8 @@ def settings_menu():
             (f"Effort      :  {eff}   {C_DIM}(preselected in launch options){C_RESET}", 'effort'),
             (f"Model       :  {mod}   {C_DIM}(preselected in launch options){C_RESET}", 'model'),
             (f"Permissions :  {perm}   {C_DIM}(--permission-mode){C_RESET}", 'permission'),
+            (f"Think cap   :  {think}   {C_DIM}(MAX_THINKING_TOKENS — save tokens){C_RESET}", 'max_thinking'),
+            (f"Subagent mdl:  {submod}   {C_DIM}(CLAUDE_CODE_SUBAGENT_MODEL){C_RESET}", 'subagent_model'),
             (f"Theme       :  {theme}", 'theme'),
             (f"{'─' * W}", None),
             (f"Back", 'back'),
@@ -757,11 +764,13 @@ def settings_menu():
                     flash("Saved — restart claudectl to apply", secs=1.6)
         elif sel == 'theme':
             _theme_picker(s)
-        elif sel in ('effort', 'model', 'permission'):
+        elif sel in ('effort', 'model', 'permission', 'max_thinking', 'subagent_model'):
             values, labels = {
                 'effort':     (EFFORTS, EFFORT_LABELS),
                 'model':      (MODELS, MODEL_LABELS),
                 'permission': (PERMS, PERM_LABELS),
+                'max_thinking':   (THINKING_CAPS, THINKING_LABELS),
+                'subagent_model': (MODELS, MODEL_LABELS),
             }[sel]
             pick = menu([(l, v if v else '__default__') for l, v in zip(labels, values)],
                         f"DEFAULT {sel.upper()}")
@@ -957,6 +966,8 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
     effort_idx = EFFORTS.index(d.get('effort', '')) if d.get('effort', '') in EFFORTS else 0
     model_idx  = MODELS.index(d.get('model', ''))   if d.get('model', '')  in MODELS  else 0
     perm_idx   = PERMS.index(d.get('permission', '')) if d.get('permission', '') in PERMS else 0
+    think_idx  = THINKING_CAPS.index(d.get('max_thinking', '')) if d.get('max_thinking', '') in THINKING_CAPS else 0
+    sub_idx    = MODELS.index(d.get('subagent_model', '')) if d.get('subagent_model', '') in MODELS else 0
     wt_state   = ''      # '' off | '*' auto | custom name
     name_val   = ''
     agent_opts = [''] + list(agents or [])
@@ -969,7 +980,12 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
     agent_field = base_fields + new_extra if len(agent_opts) > 1 else -1
     after_agent = base_fields + new_extra + (1 if agent_field >= 0 else 0)
     acct_field  = after_agent if len(acct_opts) > 1 else -1
-    n_fields    = after_agent + (1 if acct_field >= 0 else 0)
+    after_acct  = after_agent + (1 if acct_field >= 0 else 0)
+    # launch-economy fields are always present, appended last so the positional
+    # arithmetic above stays intact
+    think_field = after_acct
+    sub_field   = after_acct + 1
+    n_fields    = after_acct + 2
     field = 0
 
     def _wt_label():
@@ -1003,6 +1019,10 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
         if acct_field >= 0:
             frame.append(
                 f"  {sel_c(acct_field)}{'▸' if field == acct_field else ' '}  Account     :  [ {render.trunc(acct_opts[acct_idx][0], 18):<18} ]{C_RESET}   {C_DIM}← → account for THIS launch{C_RESET}")
+        frame.append(
+            f"  {sel_c(think_field)}{'▸' if field == think_field else ' '}  Think cap   :  [ {THINKING_LABELS[think_idx]:<18} ]{C_RESET}   {C_DIM}← → MAX_THINKING_TOKENS{C_RESET}")
+        frame.append(
+            f"  {sel_c(sub_field)}{'▸' if field == sub_field else ' '}  Subagents   :  [ {MODEL_LABELS[sub_idx]:<18} ]{C_RESET}   {C_DIM}← → CLAUDE_CODE_SUBAGENT_MODEL{C_RESET}")
         frame.append(render.hline())
         if selected_session_agents:
             frame.append(f"  {_c.C_OK}project agents ({len(selected_session_agents)}){C_RESET}"
@@ -1023,7 +1043,7 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
             frame.append(f"  {C_DIM}{memory_status}{C_RESET}")
         frame += [
             '',
-            render.hint_keys([('↑↓', 'field'), ('← →', 'change'),
+            render.hint_keys([('↑↓', 'field'), ('← →', 'change'), ('e', 'economy preset'),
                               ('ENTER', 'launch'), ('ESC', 'back')]),
         ]
         render.render_frame(frame)
@@ -1033,6 +1053,12 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
             field = (field - 1) % n_fields
         elif ev[0] == 'down':
             field = (field + 1) % n_fields
+        elif ev[0] == 'char' and ev[1] == 'e':
+            # economy preset: sonnet + 8k thinking cap + haiku subagents
+            model_idx = MODELS.index('claude-sonnet-5') if 'claude-sonnet-5' in MODELS else model_idx
+            think_idx = THINKING_CAPS.index('8000') if '8000' in THINKING_CAPS else think_idx
+            sub_idx   = MODELS.index('claude-haiku-4-5') if 'claude-haiku-4-5' in MODELS else sub_idx
+            flash("Economy preset: sonnet · 8k think cap · haiku subagents", secs=1.2)
         elif ev[0] in ('left', 'right'):
             step = -1 if ev[0] == 'left' else 1
             if field == 0:
@@ -1065,6 +1091,10 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 agent_idx = (agent_idx + step) % len(agent_opts)
             elif field == acct_field:
                 acct_idx = (acct_idx + step) % len(acct_opts)
+            elif field == think_field:
+                think_idx = (think_idx + step) % len(THINKING_CAPS)
+            elif field == sub_field:
+                sub_idx = (sub_idx + step) % len(MODELS)
         elif ev[0] == 'enter':
             return {
                 'effort': EFFORTS[effort_idx],
@@ -1074,6 +1104,8 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 'worktree': wt_state if is_new else '',
                 'agent':  agent_opts[agent_idx],
                 'cfgdir': acct_opts[acct_idx][1] if acct_opts else '',
+                'max_thinking':   THINKING_CAPS[think_idx],
+                'subagent_model': MODELS[sub_idx],
             }
         elif ev[0] == 'esc':
             return None

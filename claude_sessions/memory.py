@@ -85,8 +85,14 @@ def save_memory(project_path, proj_folder, m):
     for d in _mem_dirs(project_path, proj_folder):
         try:
             os.makedirs(d, exist_ok=True)
-            with open(os.path.join(d, GRAPH_NAME), 'w', encoding='utf-8') as f:
+            # temp file + atomic replace: a killed process (e.g. the detached
+            # bg worker, or claudectl exiting to launch claude) can never leave
+            # torn JSON — which load_memory would silently reset to _empty().
+            path = os.path.join(d, GRAPH_NAME)
+            tmp = path + '.tmp'
+            with open(tmp, 'w', encoding='utf-8') as f:
                 json.dump(m, f, indent=2)
+            os.replace(tmp, path)
             ok = True
         except Exception:
             continue
@@ -101,6 +107,162 @@ def clear_memory(project_path, proj_folder=None):
                 os.remove(p)
             except Exception:
                 pass
+
+
+# ── cross-process scan lock ──────────────────────────────────
+# The background memory update runs in a DETACHED worker process (see
+# spawn_background_worker) so it survives the TUI exiting to launch claude.
+# A marker file makes its status visible to any claudectl process: dedup
+# guard for spawners, live progress for the sessions-menu badge.
+
+SCAN_LOCK = 'scan.lock'
+SCAN_LOCK_STALE_SEC = 900
+_scan_lock_root = None      # set while THIS process holds the lock
+
+
+def _scan_lock_path(project_path):
+    if not project_path:
+        return None
+    return os.path.join(os.path.abspath(project_path), MEM_SUBDIR, SCAN_LOCK)
+
+
+def _pid_alive(pid):
+    try:
+        pid = int(pid)
+    except Exception:
+        return False
+    if pid <= 0:
+        return False
+    if os.name == 'nt':
+        # NEVER os.kill(pid, 0) on Windows — it TERMINATES the process.
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            try:
+                code = ctypes.c_ulong()
+                if k32.GetExitCodeProcess(h, ctypes.byref(code)):
+                    return code.value == 259         # STILL_ACTIVE
+                return False
+            finally:
+                k32.CloseHandle(h)
+        except Exception:
+            return None                              # unknown → age decides
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _read_scan_lock(project_path):
+    """Live lock dict, or None (missing / unreadable / stale — stale removed)."""
+    import time
+    p = _scan_lock_path(project_path)
+    if not p or not os.path.isfile(p):
+        return None
+    try:
+        with open(p, encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception:
+        data = None
+    stale = True
+    if isinstance(data, dict):
+        alive = _pid_alive(data.get('pid'))
+        fresh = time.time() - data.get('updated', 0) < SCAN_LOCK_STALE_SEC
+        stale = (alive is False) or not fresh
+    if stale:
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+        return None
+    return data
+
+
+def scan_lock_status(project_path):
+    """None if no live worker, else its progress string (may be '')."""
+    data = _read_scan_lock(project_path)
+    return None if data is None else str(data.get('progress', ''))
+
+
+def acquire_scan_lock(project_path):
+    """Claim the scan lock for THIS process. False if a live worker holds it."""
+    global _scan_lock_root
+    import time
+    p = _scan_lock_path(project_path)
+    if not p:
+        return False
+    if _read_scan_lock(project_path) is not None:
+        return False
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump({'pid': os.getpid(), 'started': _iso(),
+                       'updated': time.time(), 'progress': ''}, f)
+        _scan_lock_root = os.path.abspath(project_path)
+        return True
+    except Exception:
+        return False
+
+
+def clear_scan_lock(project_path):
+    global _scan_lock_root
+    p = _scan_lock_path(project_path)
+    if p and os.path.isfile(p):
+        try:
+            os.remove(p)
+        except Exception:
+            pass
+    if _scan_lock_root == os.path.abspath(project_path or ''):
+        _scan_lock_root = None
+
+
+def _report_progress(text):
+    """Update the scan-lock progress line — no-op unless this process holds a
+    lock (foreground refresh/scan calls this too; it must stay silent there)."""
+    import time
+    if not _scan_lock_root:
+        return
+    p = _scan_lock_path(_scan_lock_root)
+    try:
+        with open(p, 'w', encoding='utf-8') as f:
+            json.dump({'pid': os.getpid(), 'started': _iso(),
+                       'updated': time.time(), 'progress': str(text)}, f)
+    except Exception:
+        pass
+
+
+def spawn_background_worker(project_path, proj_folder):
+    """Run the memory update (lessons scan, then refresh) in a DETACHED child
+    process so it survives claudectl exiting to launch claude.exe — on the .bat
+    path the TUI process dies the moment a session is picked, which used to
+    kill the daemon-thread scan mid-flight. Dedup via scan.lock. Returns the
+    Popen or None."""
+    import sys
+    import subprocess
+    root = os.path.abspath(project_path or '')
+    if not root or not os.path.isdir(root):
+        return None
+    if scan_lock_status(project_path) is not None or root in _bg_active:
+        return None
+    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = os.environ.copy()
+    env['PYTHONPATH'] = pkg_parent + (
+        os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
+    flags = (getattr(subprocess, 'DETACHED_PROCESS', 0)
+             | getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+    try:
+        return subprocess.Popen(
+            [sys.executable, '-m', 'claude_sessions', '--bg-scan',
+             root, proj_folder or ''],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, creationflags=flags, cwd=root, env=env)
+    except Exception:
+        _c.log.exception('memory: bg worker spawn failed')
+        return None
 
 
 # ── Claude calls (monkeypatched in tests) ────────────────────
@@ -346,6 +508,7 @@ def refresh_memory(project_path, proj_folder, project_name, auto_cap=None):
     relations = [r for r in mem.get('relations', []) if r.get('unit') in current_strs]
 
     n = len(todo)
+    done_hashes = {}
     for i, (repo, module, fs) in enumerate(todo):
         unit = f"{repo}/{module}"
         summaries.pop(unit, None)
@@ -388,6 +551,24 @@ def refresh_memory(project_path, proj_folder, project_name, auto_cap=None):
             if r.get('source') in names and r.get('target') in names:
                 relations.append({'source': r['source'], 'target': r['target'],
                                   'rel': r.get('rel', 'relates'), 'unit': unit})
+
+        # checkpoint: persist after EVERY unit (each one cost a Claude call),
+        # so an interruption keeps completed work. Entities of touched units
+        # not yet re-extracted ride along unchanged, and provenance advances
+        # only for processed units so the rest re-extract on the next run.
+        for f in fs:
+            rel = _rel(root, f)
+            done_hashes[rel] = cur_hashes.get(rel)
+        if i < n - 1:                        # last unit → the full save below
+            snap = dict(mem)
+            snap['entities'] = kept + list(prev_touched.values())
+            snap['relations'] = relations
+            snap['summaries'] = summaries
+            snap['provenance'] = {**prov,
+                                  **{r: {'hash': h} for r, h in done_hashes.items()}}
+            snap['generated_at'] = _iso()
+            save_memory(project_path, proj_folder, snap)
+        _report_progress(f"memory {i + 1}/{n}")
 
     module_edges, unit_rank = _module_graph(project_path, proj_folder, units)
     for e in kept:
@@ -560,6 +741,8 @@ def start_background_refresh(project_path, proj_folder, project_name, auto_cap=6
     root = os.path.abspath(project_path or '')
     if not root:
         return None
+    if scan_lock_status(project_path) is not None:
+        return None                          # a detached worker is already on it
     with _bg_lock:
         if root in _bg_active:
             return None

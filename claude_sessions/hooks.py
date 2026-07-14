@@ -150,6 +150,18 @@ TEMPLATES = {
         'entry': {'hooks': [{'type': 'command', 'command': _py_hook('minimalcode_hook.py')}]},
         'desc': 'Inject a compact code-minimization rule each session (anti over-engineering)',
     },
+    # ── token savers ──────────────────────────────────────────
+    'concise-output': {
+        'event': 'SessionStart',
+        'entry': {'hooks': [{'type': 'command', 'command': _py_hook('concise_hook.py')}]},
+        'desc': 'Cut output tokens: no narration, no re-printed code (saves tokens)',
+    },
+    'filter-test-output': {
+        'event': 'PreToolUse',
+        'entry': {'matcher': 'Bash',
+                  'hooks': [{'type': 'command', 'command': _py_hook('testfilter_hook.py')}]},
+        'desc': 'Pipe pytest/npm test/go test output through a failures-only filter (saves tokens)',
+    },
 }
 
 

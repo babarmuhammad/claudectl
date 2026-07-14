@@ -389,24 +389,73 @@ def read_extra_paths(proj_folder):
     return paths
 
 
-def load_recent_sessions(n=5):
-    """Load up to n recent sessions, validate each still exists."""
-    try:
-        with open(last_session_file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
+def account_folders_for(encoded_name):
+    """[(acct_name, folder)] — this project's session folder under EVERY known
+    account that actually has one. encode_component is account-independent, so
+    the same encoded name locates the project everywhere."""
+    from .config import all_config_dirs
+    out = []
+    for name, d in all_config_dirs():
+        folder = os.path.join(d, 'projects', encoded_name)
+        if os.path.isdir(folder):
+            out.append((name, folder))
+    return out
+
+
+def project_session_folders(proj_folder):
+    """proj_folder first, then this same project's session folder under every
+    OTHER account that has one. The union of session sources for features that
+    must see the whole project (lessons, CLAUDE.md session topics, usage,
+    workspace stats)."""
+    if not proj_folder:
         return []
-    # support old single-entry format
-    if isinstance(data, dict):
-        data = [data]
+    folders = [proj_folder]
+    seen = {os.path.normcase(os.path.abspath(proj_folder))}
+    try:
+        enc = os.path.basename(os.path.normpath(proj_folder))
+        for _name, f in account_folders_for(enc):
+            key = os.path.normcase(os.path.abspath(f))
+            if key not in seen:
+                seen.add(key)
+                folders.append(f)
+    except Exception:
+        pass
+    return folders
+
+
+def load_recent_sessions(n=5):
+    """Load up to n recent sessions across EVERY account's last-session store,
+    merged by recency and deduped by sid — so switching the active account
+    doesn't hide what you worked on under the others."""
+    from .config import all_config_dirs
+    stores = [last_session_file]
+    for _name, d in all_config_dirs():
+        p = os.path.join(d, 'projects', 'last-session.json')
+        if os.path.normcase(os.path.abspath(p)) != \
+           os.path.normcase(os.path.abspath(last_session_file)):
+            stores.append(p)
+    data = []
+    for store in stores:
+        try:
+            with open(store, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+        except Exception:
+            continue
+        data.extend([d] if isinstance(d, dict) else d)   # old single-entry format
+    data.sort(key=lambda e: e.get('timestamp', 0) if isinstance(e, dict) else 0,
+              reverse=True)
+    seen = set()
     valid = []
     for entry in data:
+        if not isinstance(entry, dict):
+            continue
         p   = entry.get('project_path', '')
         enc = entry.get('encoded_name', '')
         sid = entry.get('session_id', '')
         cfgdir = entry.get('cfgdir') or config_dir   # old entries predate this field
-        if not (p and enc and sid):
+        if not (p and enc and sid) or sid in seen:
             continue
+        seen.add(sid)
         if not os.path.exists(p):
             continue
         if not os.path.exists(os.path.join(cfgdir, 'projects', enc, f"{sid}.jsonl")):

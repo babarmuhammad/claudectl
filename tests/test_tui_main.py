@@ -56,7 +56,7 @@ def test_select_project_then_session_writes_choice(monkeypatch, tmp_path):
     line = sb.choice_line()
     assert line is not None
     parts = line.split('|')
-    assert parts[0] == 'v5'
+    assert parts[0] == 'v6'
     assert parts[3] == 'new'
 
 

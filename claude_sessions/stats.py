@@ -301,9 +301,11 @@ def usage_dashboard(entries):
             partial = True
             break
         mtime, ppath, enc, sid, stats, cfgdir = item
-        key = (cfgdir, enc)
+        # key by encoded name (== real project path) so the SAME project under
+        # several accounts collapses into ONE row instead of one per account
+        key = enc
         p = per_project.setdefault(key, {
-            'path': ppath, 'sessions': 0, 'msgs': 0, 'cfgdir': cfgdir,
+            'path': ppath, 'sessions': 0, 'msgs': 0, 'cfgdir': cfgdir, 'enc': enc,
             'usage': {'in': 0, 'out': 0, 'cache_read': 0, 'cache_create': 0},
             'usage_by_model': {},
         })
@@ -358,8 +360,8 @@ def usage_dashboard(entries):
         elif ev[0] == 'down' and proj_rows:
             nav = (nav + 1) % len(proj_rows)
         elif ev[0] == 'enter' and proj_rows:
-            _, (cfgdir, enc), p, _ = proj_rows[nav]
-            project_usage_screen(os.path.join(cfgdir, 'projects', enc),
+            _, enc, p, _ = proj_rows[nav]
+            project_usage_screen(os.path.join(p['cfgdir'], 'projects', enc),
                                  os.path.basename(p['path']) or p['path'])
         elif ev[0] == 'char' and ev[1] == 'd':
             daily_usage_screen(entries)
@@ -368,16 +370,35 @@ def usage_dashboard(entries):
 
 
 def project_usage_screen(proj_folder, project_name):
-    """Per-session usage rows for one project."""
+    """Per-session usage rows for one project — across EVERY account that has
+    sessions for it; foreign-account rows are tagged inline with the account."""
     from . import ui
+    from .sessions import project_session_folders
+    from .config import all_config_dirs
+
+    acct_by_dir = {os.path.normcase(os.path.abspath(os.path.join(d, 'projects'))): n
+                   for n, d in all_config_dirs()}
+
+    def _acct_of(folder):
+        parent = os.path.normcase(os.path.abspath(os.path.dirname(folder)))
+        return acct_by_dir.get(parent, '')
 
     sess_rows = []
-    for (mtime, sid, preview, count) in scan_sessions(proj_folder):
-        stats = get_session_stats_cached(os.path.join(proj_folder, f"{sid}.jsonl"))
-        cost, exact = estimate_cost(stats.get('usage_by_model'))
-        u = _sum_usage(stats)
-        name = load_name(proj_folder, sid) or stats.get('title') or preview or sid[:8]
-        sess_rows.append((mtime, name, count, u, cost, exact))
+    seen_sids = set()
+    for folder in project_session_folders(proj_folder):
+        acct = _acct_of(folder)
+        for (mtime, sid, preview, count) in scan_sessions(folder):
+            if sid in seen_sids:
+                continue
+            seen_sids.add(sid)
+            stats = get_session_stats_cached(os.path.join(folder, f"{sid}.jsonl"))
+            cost, exact = estimate_cost(stats.get('usage_by_model'))
+            u = _sum_usage(stats)
+            name = load_name(folder, sid) or stats.get('title') or preview or sid[:8]
+            if acct and acct != 'default':
+                name = f"{name}  [{acct}]"
+            sess_rows.append((mtime, name, count, u, cost, exact))
+    sess_rows.sort(key=lambda r: r[0], reverse=True)
     save_disk_cache()
 
     nav = 0

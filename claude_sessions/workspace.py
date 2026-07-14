@@ -194,7 +194,16 @@ def _gather_live(project_path, proj_folder):
             })
 
     sess = {'analyzed_count': 0, 'first_ts': 0, 'last_ts': 0, 'range_days': 0}
-    rows = scan_sessions(proj_folder) if proj_folder else []
+    rows = []
+    if proj_folder:
+        from .sessions import project_session_folders
+        seen_sids = set()
+        for folder in project_session_folders(proj_folder):
+            for r in scan_sessions(folder):
+                if r[1] not in seen_sids:          # dedup by sid across accounts
+                    seen_sids.add(r[1])
+                    rows.append(r)
+        rows.sort(key=lambda r: r[0], reverse=True)
     if rows:
         last_ts, first_ts = rows[0][0], rows[-1][0]
         sess = {'analyzed_count': len(rows), 'first_ts': first_ts, 'last_ts': last_ts,

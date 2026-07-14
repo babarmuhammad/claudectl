@@ -168,29 +168,48 @@ def _parse_existing_sessions(text):
     return entries
 
 
-def _build_sessions_block(proj_folder, existing_entries):
-    """Merge fresh session scan with existing entries. Returns full sessions block text."""
+def _build_sessions_block(proj_folder, existing_entries, cap=None):
+    """Merge fresh session scan with existing entries. Returns full sessions
+    block text. Kept to the most recent `cap` entries (claude_md_sessions_cap,
+    0 = unlimited) — CLAUDE.md is loaded on EVERY turn of every session, so an
+    unbounded session log is a permanent per-message token tax."""
+    if cap is None:
+        try:
+            from .config import load_settings
+            cap = load_settings().get('claude_md_sessions_cap', 10)
+        except Exception:
+            cap = 10
     if not proj_folder or not os.path.isdir(proj_folder):
         if existing_entries:
-            return "## Session topics\n" + '\n'.join(existing_entries.values()) + "\n\n"
+            kept = list(existing_entries.values())
+            kept = kept[:cap] if cap else kept
+            return "## Session topics\n" + '\n'.join(kept) + "\n\n"
         return ''
 
     merged = dict(existing_entries)  # key -> line, preserves all old entries
 
+    # every account's sessions for this project, newest first (same encoded
+    # folder name under each account's projects dir)
+    from .sessions import project_session_folders
+    jsonl_paths, _seen_sids = [], set()
+    for folder in project_session_folders(proj_folder):
+        try:
+            for f in os.listdir(folder):
+                if f.endswith('.jsonl') and f[:-6] not in _seen_sids:
+                    _seen_sids.add(f[:-6])
+                    jsonl_paths.append(os.path.join(folder, f))
+        except Exception:
+            continue
     try:
-        jsonl_files = sorted(
-            [f for f in os.listdir(proj_folder) if f.endswith('.jsonl')],
-            key=lambda f: os.path.getmtime(os.path.join(proj_folder, f)),
-            reverse=True
-        )
+        jsonl_paths.sort(key=os.path.getmtime, reverse=True)
     except Exception:
-        jsonl_files = []
+        pass
 
     new_keys = []
-    for jf in jsonl_files:
-        jpath = os.path.join(proj_folder, jf)
+    for jpath in jsonl_paths:
+        jf = os.path.basename(jpath)
         sid = jf[:-6]
-        name_file = os.path.join(proj_folder, sid + '.name')
+        name_file = os.path.join(os.path.dirname(jpath), sid + '.name')
         sess_name = ''
         if os.path.exists(name_file):
             try:
@@ -216,12 +235,21 @@ def _build_sessions_block(proj_folder, existing_entries):
     for k in merged:
         if k not in ordered:
             ordered.append(k)
+    if cap:
+        ordered = ordered[:cap]              # newest survive, oldest drop
 
     return "## Session topics\n" + '\n'.join(merged[k] for k in ordered) + "\n\n"
 
 
-def _build_autogen_block(project_path, proj_folder):
+def _build_autogen_block(project_path, proj_folder, commits=None):
     """Build repos/commits/READMEs block (always refreshed)."""
+    if commits is None:
+        try:
+            from .config import load_settings
+            commits = load_settings().get('claude_md_commits', 7)
+        except Exception:
+            commits = 7
+    commits = int(commits or 7)
     block = ''
 
     extra_paths = read_extra_paths(proj_folder)
@@ -255,7 +283,7 @@ def _build_autogen_block(project_path, proj_folder):
             origin = ''
         block += f"## Repo: {label}" + (f"  ({origin})" if origin else "") + "\n"
         try:
-            r = subprocess.run(['git', '-C', repo, 'log', '--oneline', '-7'],
+            r = subprocess.run(['git', '-C', repo, 'log', '--oneline', f'-{commits}'],
                                capture_output=True, text=True, timeout=5)
             if r.returncode == 0 and r.stdout.strip():
                 block += f"```\n{r.stdout.strip()}\n```\n"
@@ -281,6 +309,160 @@ def _build_autogen_block(project_path, proj_folder):
             pass
 
     return block
+
+
+def replace_machine_blocks(existing, new_autogen, new_sessions):
+    """Swap the AUTOGEN + SESSIONS sentinel blocks inside `existing`, appending
+    any that are missing. `new_autogen`/`new_sessions` are full blocks INCLUDING
+    sentinels ('' skips sessions). Returns the new full text."""
+    if _AUTOGEN_START in existing and _AUTOGEN_END in existing:
+        pre  = existing[:existing.index(_AUTOGEN_START)]
+        post = existing[existing.index(_AUTOGEN_END) + len(_AUTOGEN_END):]
+    else:
+        pre  = existing.rstrip('\n') + '\n\n'
+        post = ''
+    if _SESSIONS_START in post and _SESSIONS_END in post:
+        post = (post[:post.index(_SESSIONS_START)]
+                + (new_sessions or '')
+                + post[post.index(_SESSIONS_END) + len(_SESSIONS_END):])
+    elif new_sessions:
+        post = (post.rstrip('\n') + '\n\n' + new_sessions) if post.strip() else new_sessions
+    return pre + new_autogen + post
+
+
+def prune_claude_md(project_path, proj_folder=None):
+    """Rebuild the AUTOGEN + SESSIONS blocks with the configured caps, WITHOUT
+    opening an editor — the audit screen's one-key fix for a CLAUDE.md whose
+    session log grew unbounded. Returns (old_tokens, new_tokens) or None if
+    there is no CLAUDE.md."""
+    from .memory import tokens_estimate
+    md_path = os.path.join(project_path, 'CLAUDE.md')
+    if not os.path.isfile(md_path):
+        return None
+    try:
+        existing = open(md_path, 'r', encoding='utf-8', errors='ignore').read()
+    except Exception:
+        return None
+
+    autogen_content = _build_autogen_block(project_path, proj_folder)
+    new_autogen = f"{_AUTOGEN_START}\n{autogen_content}{_AUTOGEN_END}\n"
+    sessions_content = _build_sessions_block(proj_folder, _parse_existing_sessions(existing))
+    new_sessions = (f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n"
+                    if sessions_content else '')
+    final = replace_machine_blocks(existing, new_autogen, new_sessions)
+    if final == existing:
+        return (tokens_estimate(existing), tokens_estimate(existing))
+    try:
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(final)
+    except Exception:
+        return None
+    try:
+        from . import diffview
+        diffview.record(project_path, proj_folder, 'claude_md', existing, final)
+    except Exception:
+        pass
+    return (tokens_estimate(existing), tokens_estimate(final))
+
+
+def _valid_compressed(text):
+    """Relaxed validator for a COMPRESSED CLAUDE.md — _valid_claude_md's
+    200-char / 2-heading floor would reject a legitimately lean file."""
+    t = (text or '').lstrip()
+    if not t.startswith('#') or len(t) < 80:
+        return False
+    return not re.match(
+        r"(?i)^\W*(i'll|i will|i've|here(?: is|'s)|sure|okay|certainly|edit pending)", t)
+
+
+def ai_compress_claude_md(project_path, proj_folder=None):
+    """Rewrite the MANUAL content of CLAUDE.md into a lean lookup-table style
+    (target < 500 tok) with one Claude call — CLAUDE.md rides in the context on
+    every turn of every session, so this is the single highest-leverage token
+    cut. Machine blocks (AUTOGEN/SESSIONS/MEMORY) are stripped before the call
+    and reassembled verbatim/rebuilt after; the old file is kept as CLAUDE.md.bak.
+    Returns True if written."""
+    from .memory import _claude_stdin, tokens_estimate
+    from .ui import flash
+    md_path = os.path.join(project_path, 'CLAUDE.md')
+    name = os.path.basename(project_path) or project_path
+    try:
+        existing = open(md_path, encoding='utf-8', errors='ignore').read()
+    except Exception:
+        existing = ''
+    if not existing.strip():
+        flash("No CLAUDE.md to compress — scaffold one first (c)", ok=False, secs=1.6)
+        return False
+
+    from .ctxaudit import split_blocks
+    manual = split_blocks(existing)['manual']
+    prompt = (
+        "Compress this CLAUDE.md project-instructions file. It is loaded into the "
+        "model's context on EVERY message, so every token counts.\n\n"
+        "Rewrite it as a lean lookup table targeting UNDER 500 tokens: dense "
+        "one-liners and small tables instead of prose, keep EVERY durable fact, "
+        "command, constraint and preference, drop filler, marketing tone, "
+        "restatements of things obvious from the code, and meeting-notes-style "
+        "history. Keep the # title. Do not invent new facts.\n\n"
+        "Output ONLY the raw markdown of the compressed file — no preamble, no "
+        "code fences, no commentary.\n\n"
+        f"FILE:\n{manual}"
+    )
+    out = _claude_stdin(prompt, os.path.abspath(project_path),
+                        crumbs=('CLAUDECTL', 'COMPRESS', name),
+                        label='Compressing CLAUDE.md...')
+    compressed = (out or '').strip()
+    if compressed.startswith('```'):
+        compressed = re.sub(r'^```[a-z]*\n?|```\s*$', '', compressed).strip()
+    if not _valid_compressed(compressed):
+        flash("Compression failed (empty/invalid output) — CLAUDE.md untouched",
+              ok=False, secs=2)
+        return False
+
+    autogen_content = _build_autogen_block(project_path, proj_folder)
+    new_autogen = f"{_AUTOGEN_START}\n{autogen_content}{_AUTOGEN_END}\n"
+    sessions_content = _build_sessions_block(proj_folder, _parse_existing_sessions(existing))
+    new_sessions = (f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n"
+                    if sessions_content else '')
+    final = replace_machine_blocks(compressed.rstrip('\n') + '\n',
+                                   new_autogen, new_sessions)
+    final = _preserve_block(final, existing)
+    if _AI_MARKER in existing and _AI_MARKER not in final:
+        lines = final.split('\n')
+        insert_at = 1
+        for i, ln in enumerate(lines[:5]):
+            if ln.strip().startswith('# '):
+                insert_at = i + 1
+                break
+        lines.insert(insert_at, _AI_MARKER)
+        final = '\n'.join(lines)
+
+    old_tok, new_tok = tokens_estimate(existing), tokens_estimate(final)
+    from . import diffview
+    if not diffview.confirm(existing, final,
+                            f"COMPRESS {old_tok}→{new_tok} tok  /  {name}"):
+        flash("Rejected — CLAUDE.md not written", ok=False, secs=1.4)
+        return False
+    try:
+        with open(md_path + '.bak', 'w', encoding='utf-8') as f:
+            f.write(existing)                    # backup BEFORE overwriting
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(final)
+    except Exception as e:
+        flash(f"Write failed: {e}", ok=False, secs=2)
+        return False
+    try:
+        diffview.record(project_path, proj_folder, 'claude_md', existing, final)
+    except Exception:
+        pass
+    try:
+        from . import workspace
+        workspace.update_manifest(project_path, proj_folder, 'compress')
+    except Exception:
+        pass
+    flash(f"CLAUDE.md compressed: ~{old_tok} → ~{new_tok} tok (backup: CLAUDE.md.bak)",
+          ok=True, secs=2)
+    return True
 
 
 def _build_ai_context(project_path, proj_folder):
@@ -571,6 +753,10 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
             f"[How to build, run, test, deploy]\n\n"
             f"## Important notes\n"
             f"[Gotchas, special setup, known issues, conventions]\n\n"
+            f"# Compact instructions\n"
+            f"[One short paragraph steering conversation compaction: what to "
+            f"preserve (current task state, recent code changes, test results) "
+            f"and what to drop (exploration dead-ends, old tool output)]\n\n"
             + _EXTRA + _TAIL
         )
 
@@ -768,23 +954,7 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
     new_sessions = (f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n"
                     if sessions_content else f"{_SESSIONS_START}\n{_SESSIONS_END}\n")
 
-    # Replace AUTOGEN block
-    if _AUTOGEN_START in ai_content and _AUTOGEN_END in ai_content:
-        pre  = ai_content[:ai_content.index(_AUTOGEN_START)]
-        post = ai_content[ai_content.index(_AUTOGEN_END) + len(_AUTOGEN_END):]
-    else:
-        pre  = ai_content.rstrip('\n') + '\n\n'
-        post = ''
-
-    # Replace SESSIONS block in remainder
-    if _SESSIONS_START in post and _SESSIONS_END in post:
-        post = (post[:post.index(_SESSIONS_START)]
-                + new_sessions
-                + post[post.index(_SESSIONS_END) + len(_SESSIONS_END):])
-    else:
-        post = (post.rstrip('\n') + '\n\n' + new_sessions) if post.strip() else new_sessions
-
-    final = pre + new_autogen + post
+    final = replace_machine_blocks(ai_content, new_autogen, new_sessions)
 
     # Never drop the semantic-memory block — reinject it verbatim from the old file
     final = _preserve_block(final, existing_for_sessions)
@@ -855,24 +1025,16 @@ def scaffold_claude_md(project_path, proj_folder=None):
     new_sessions = f"{_SESSIONS_START}\n{sessions_content}{_SESSIONS_END}\n" if sessions_content else ''
 
     if existing:
-        # Replace AUTOGEN block in-place
-        if _AUTOGEN_START in existing and _AUTOGEN_END in existing:
-            pre  = existing[:existing.index(_AUTOGEN_START)]
-            post = existing[existing.index(_AUTOGEN_END) + len(_AUTOGEN_END):]
-        else:
-            pre  = existing.rstrip('\n') + '\n\n'
-            post = ''
-        # Replace or append SESSIONS block from post section
-        if _SESSIONS_START in post and _SESSIONS_END in post:
-            post = post[:post.index(_SESSIONS_START)] + (new_sessions or '') + post[post.index(_SESSIONS_END) + len(_SESSIONS_END):]
-        elif new_sessions:
-            post = post.rstrip('\n') + '\n\n' + new_sessions
-        final = pre + new_autogen + post
+        final = replace_machine_blocks(existing, new_autogen, new_sessions)
     else:
         # First time
         final = (f"# {name}\n\n"
                  f"## Project context\n"
                  f"<!-- Edit this section freely — it will never be overwritten -->\n\n"
+                 f"# Compact instructions\n\n"
+                 f"When compacting, preserve: the current task and its state, recent "
+                 f"code changes with file paths, test results, and decisions made. "
+                 f"Drop: exploration dead-ends, old tool output, and resolved errors.\n\n"
                  + new_autogen
                  + ('\n' + new_sessions if new_sessions else ''))
 

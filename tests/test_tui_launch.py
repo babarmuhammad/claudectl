@@ -25,16 +25,36 @@ def test_enter_returns_defaults(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     result, _ = run_menu(monkeypatch, flat(ENTER))
     assert result == {'effort': '', 'model': '', 'perm': '', 'name': '',
-                      'worktree': '', 'agent': '', 'cfgdir': ''}
+                      'worktree': '', 'agent': '', 'cfgdir': '',
+                      'max_thinking': '', 'subagent_model': ''}
 
 
 def test_account_field_selects_cfgdir(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     accts = [('default', r'C:\def'), ('work', r'C:\work')]
-    # Account is the last field → UP from top wraps to it, RIGHT → 'work'
-    keys = flat(UP, RIGHT, ENTER)
+    # fields: effort,model,perm,Account,Think,Subagents → DOWN×3 lands on Account
+    keys = flat(DOWN, DOWN, DOWN, RIGHT, ENTER)
     result, _ = run_menu(monkeypatch, keys, account_opts=accts)
     assert result['cfgdir'] == r'C:\work'
+
+
+def test_economy_fields_cycle(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    # no agents/accounts → fields: effort,model,perm,Think(3),Subagents(4)
+    keys = flat(DOWN, DOWN, DOWN, RIGHT,        # Think cap → 4000 (first non-default)
+                DOWN, RIGHT,                    # Subagents → haiku
+                ENTER)
+    result, _ = run_menu(monkeypatch, keys)
+    assert result['max_thinking'] == '4000'
+    assert result['subagent_model'] == 'claude-haiku-4-5'
+
+
+def test_economy_preset_key(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    result, _ = run_menu(monkeypatch, flat(typed('e'), ENTER))
+    assert result['model'] == 'claude-sonnet-5'
+    assert result['max_thinking'] == '8000'
+    assert result['subagent_model'] == 'claude-haiku-4-5'
 
 
 def test_esc_returns_none(monkeypatch, tmp_path):
@@ -72,7 +92,8 @@ def test_defaults_preselected(monkeypatch, tmp_path):
                          defaults={'effort': 'high', 'model': 'claude-fable-5',
                                    'permission': 'plan'})
     assert result == {'effort': 'high', 'model': 'claude-fable-5',
-                      'perm': 'plan', 'name': '', 'worktree': '', 'agent': '', 'cfgdir': ''}
+                      'perm': 'plan', 'name': '', 'worktree': '', 'agent': '', 'cfgdir': '',
+                      'max_thinking': '', 'subagent_model': ''}
 
 
 def test_new_session_has_five_fields(monkeypatch, tmp_path):
@@ -139,7 +160,8 @@ def test_session_name_input(monkeypatch, tmp_path):
 
 def test_field_nav_wraps(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
-    # UP from field 0 wraps to last (perm in resume mode); RIGHT cycles it
+    # resume-mode fields: effort,model,perm,Think,Subagents → UP from 0 wraps
+    # to the last field (Subagents); RIGHT cycles it to haiku
     keys = flat(UP, RIGHT, ENTER)
     result, _ = run_menu(monkeypatch, keys, is_new=False)
-    assert result['perm'] == 'plan'
+    assert result['subagent_model'] == 'claude-haiku-4-5'

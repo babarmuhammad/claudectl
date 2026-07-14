@@ -25,31 +25,51 @@ JACCARD_MERGE = 0.6
 
 # ── discovery ────────────────────────────────────────────────
 
+def _all_folders(proj_folder):
+    """proj_folder plus this same project's session folder under every OTHER
+    account, so lessons are learned from every account's sessions."""
+    from .sessions import project_session_folders
+    return project_session_folders(proj_folder)
+
+
+def _sid_path(proj_folder, sid):
+    """Resolve a sid to the account folder its transcript actually lives in."""
+    for f in _all_folders(proj_folder):
+        p = os.path.join(f, sid + '.jsonl')
+        if os.path.isfile(p):
+            return p
+    return os.path.join(proj_folder, sid + '.jsonl')
+
+
 def pending_sids(proj_folder, mem):
-    """Transcript sids not yet scanned for lessons, oldest first."""
-    if not proj_folder or not os.path.isdir(proj_folder):
-        return []
+    """Transcript sids not yet scanned for lessons, oldest first — across
+    EVERY account that has sessions for this project."""
     from .sessions import is_internal_session
     scanned = mem.get('lessons_scanned', {})
     now = time.time()
     out = []
-    for nm in os.listdir(proj_folder):
-        if not nm.endswith('.jsonl'):
+    seen_sids = set()
+    for folder in _all_folders(proj_folder):
+        if not os.path.isdir(folder):
             continue
-        sid = nm[:-6]
-        if sid in scanned:
-            continue
-        p = os.path.join(proj_folder, nm)
-        try:
-            if now - os.path.getmtime(p) < MIN_AGE_SEC:
-                continue                      # probably still running
-            if os.path.getsize(p) < 500:
-                continue                      # too small to learn from
-        except OSError:
-            continue
-        if is_internal_session(p):
-            continue                          # claudectl's own claude -p calls
-        out.append((os.path.getmtime(p), sid))
+        for nm in os.listdir(folder):
+            if not nm.endswith('.jsonl'):
+                continue
+            sid = nm[:-6]
+            if sid in scanned or sid in seen_sids:
+                continue
+            p = os.path.join(folder, nm)
+            try:
+                if now - os.path.getmtime(p) < MIN_AGE_SEC:
+                    continue                  # probably still running
+                if os.path.getsize(p) < 500:
+                    continue                  # too small to learn from
+            except OSError:
+                continue
+            if is_internal_session(p):
+                continue                      # claudectl's own claude -p calls
+            seen_sids.add(sid)
+            out.append((os.path.getmtime(p), sid))
     return [sid for _mt, sid in sorted(out)]
 
 
@@ -57,7 +77,7 @@ def pending_sids(proj_folder, mem):
 
 def _transcript_tail(proj_folder, sid):
     from .transcript import iter_transcript
-    msgs = iter_transcript(os.path.join(proj_folder, sid + '.jsonl'))
+    msgs = iter_transcript(_sid_path(proj_folder, sid))
     tail = msgs[-TAIL_MSGS:]
     parts, total = [], 0
     for m in reversed(tail):                  # newest first until char cap
@@ -163,6 +183,8 @@ def start_background_scan(project_path, proj_folder, sids):
     from . import memory as _memory
     if not sids:
         return None
+    if _memory.scan_lock_status(project_path) is not None:
+        return None                          # a detached worker is already on it
 
     def _work():
         _memory._tls.silent = True
@@ -183,11 +205,15 @@ def scan_sessions(project_path, proj_folder, sids=None):
     mem = memory.load_memory(project_path, proj_folder)
     todo = sids if sids is not None else pending_sids(proj_folder, mem)
     added = 0
-    for sid in todo:
+    for i, sid in enumerate(todo):
         lessons = extract_lessons(project_path, proj_folder, sid)
         mem['session_counter'] = mem.get('session_counter', 0) + 1
         added += merge_lessons(mem, lessons, sid)
         mem.setdefault('lessons_scanned', {})[sid] = memory._iso()
+        # persist after EVERY transcript (each cost a Claude call) — an
+        # interrupted scan keeps its completed work and never re-scans it
+        memory.save_memory(project_path, proj_folder, mem)
+        memory._report_progress(f"lessons {i + 1}/{len(todo)}")
     if todo:
         apply_decay(mem)
         memory.save_memory(project_path, proj_folder, mem)
