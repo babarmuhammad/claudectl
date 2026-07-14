@@ -29,13 +29,15 @@ def test_enter_returns_defaults(monkeypatch, tmp_path):
                       'max_thinking': '', 'subagent_model': ''}
 
 
-def test_account_field_selects_cfgdir(monkeypatch, tmp_path):
+def test_account_readonly_not_editable(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     accts = [('default', r'C:\def'), ('work', r'C:\work')]
-    # fields: effort,model,perm,Account,Think,Subagents → DOWN×3 lands on Account
+    # try to reach/cycle it: arrows must never change the account → cfgdir ''
     keys = flat(DOWN, DOWN, DOWN, RIGHT, ENTER)
-    result, _ = run_menu(monkeypatch, keys, account_opts=accts)
-    assert result['cfgdir'] == r'C:\work'
+    result, cap = run_menu(monkeypatch, keys, account_opts=accts)
+    assert result['cfgdir'] == ''                 # always the active account
+    assert 'read-only' in cap.plain               # shown, marked non-editable
+    assert 'default' in cap.plain
 
 
 def test_economy_fields_cycle(monkeypatch, tmp_path):
