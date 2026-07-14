@@ -243,6 +243,40 @@ def _count(block):
     return sum(len(v) if isinstance(v, list) else 0 for v in (block or {}).values())
 
 
+def _entry_commands(entry):
+    """All hook command strings inside one settings entry."""
+    return [str(h.get('command', ''))
+            for h in (entry.get('hooks') or []) if isinstance(h, dict)]
+
+
+# bundled hook scripts → friendly name (matcher/event alone can't tell them apart)
+_SCRIPT_LABELS = {
+    'recall_hook.py': 'recall (project memory)',
+    'minimalcode_hook.py': 'minimal-code',
+    'concise_hook.py': 'concise-output',
+    'testfilter_hook.py': 'filter-test-output',
+    'guard_hook.py': 'guard/block',
+    'logbash_hook.py': 'log-bash-commands',
+}
+
+
+def _hook_label(entry):
+    """Identify what a configured hook actually is: its template name if the
+    command matches a known template/bundled script, else a short command
+    snippet — so several hooks on the same event/matcher are distinguishable."""
+    cmds = _entry_commands(entry)
+    joined = ' '.join(cmds)
+    for script, name in _SCRIPT_LABELS.items():
+        if script in joined:
+            return name
+    for key, tpl in TEMPLATES.items():
+        tpl_cmds = _entry_commands(tpl['entry'])
+        if tpl_cmds and tpl_cmds == cmds:
+            return key
+    snippet = (cmds[0] if cmds else '').strip()
+    return (snippet[:44] + '…') if len(snippet) > 45 else (snippet or '(empty)')
+
+
 def hooks_menu(scope=None):
     """List configured hooks; insert templates; toggle/remove."""
     while True:
@@ -253,12 +287,15 @@ def hooks_menu(scope=None):
         for event, entries in hooks.items():
             for i, e in enumerate(entries if isinstance(entries, list) else []):
                 m = e.get('matcher', '(any)')
-                items.append((f"{_c.C_OK}●{_c.C_RESET} {event}  {_c.C_DIM}{m}{_c.C_RESET}",
+                label = _hook_label(e)
+                items.append((f"{_c.C_OK}●{_c.C_RESET} {event}  {_c.C_DIM}{m}{_c.C_RESET}"
+                              f"  {_c.C_NAME}{label}{_c.C_RESET}",
                               f'on:{event}:{i}'))
         for event, entries in disabled.items():
             for i, e in enumerate(entries if isinstance(entries, list) else []):
                 m = e.get('matcher', '(any)')
-                items.append((f"{_c.C_DIM}○ {event}  {m} (disabled){_c.C_RESET}",
+                label = _hook_label(e)
+                items.append((f"{_c.C_DIM}○ {event}  {m}  {label} (disabled){_c.C_RESET}",
                               f'off:{event}:{i}'))
         if not items:
             items.append((f"{_c.C_DIM}(no hooks configured){_c.C_RESET}", None))

@@ -244,3 +244,33 @@ def test_testfilter_filter_keeps_failures_drops_passes(tmp_path):
     assert '1 failed, 100 passed' in r.stdout            # summary kept
     assert 'lines suppressed' in r.stdout
     assert r.stdout.count('PASSED') < 15                 # bulk of pass noise gone
+
+
+# ── hook list labels (distinguish same-event hooks) ──────────
+
+def test_hook_label_identifies_templates_and_scripts():
+    # bundled script → friendly name
+    concise = hooks.TEMPLATES['concise-output']['entry']
+    assert hooks._hook_label(concise) == 'concise-output'
+    testfilter = hooks.TEMPLATES['filter-test-output']['entry']
+    assert hooks._hook_label(testfilter) == 'filter-test-output'
+    # a plain template command → its template key
+    assert hooks._hook_label(hooks.TEMPLATES['run-tests-on-stop']['entry']) == 'run-tests-on-stop'
+    # unknown command → snippet
+    assert hooks._hook_label({'hooks': [{'command': 'echo hi'}]}) == 'echo hi'
+    assert hooks._hook_label({'hooks': []}) == '(empty)'
+
+
+def test_hooks_menu_shows_distinct_labels_for_same_event(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    sp = _point_settings(monkeypatch, tmp_path)
+    json.dump({'hooks': {'SessionStart': [
+        hooks.TEMPLATES['minimal-code']['entry'],
+        hooks.TEMPLATES['concise-output']['entry'],
+        {'hooks': [{'type': 'command', 'command': 'echo custom-thing'}]},
+    ]}}, open(sp, 'w', encoding='utf-8'))
+    _res, cap, _ex = run_flow(monkeypatch, flat(ESC), hooks.hooks_menu)
+    plain = cap.plain
+    assert 'minimal-code' in plain
+    assert 'concise-output' in plain
+    assert 'echo custom-thing' in plain          # unknown command → snippet
