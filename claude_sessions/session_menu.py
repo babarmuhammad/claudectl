@@ -565,7 +565,6 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
         elif ev[0] == 'char' and ev[1] == '!' and not show_archived and not_set_up:
             # one-key project setup: CLAUDE.md scaffold → memory (rules sync inside)
             if confirm("Set up project now? (scaffold CLAUDE.md + build memory with Claude)"):
-                from .claude_md import scaffold_claude_md
                 from . import memory as memory_mod
                 try:
                     scaffold_claude_md(project_path, proj_folder)

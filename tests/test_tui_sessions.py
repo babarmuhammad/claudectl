@@ -266,3 +266,19 @@ def test_archiving_foreign_session_moves_it_under_its_own_account(monkeypatch, t
     assert os.path.exists(os.path.join(other_folder, 'archived', f'{other_sid}.jsonl'))
     # the primary account's own session must be untouched
     assert os.path.exists(os.path.join(folder, f'{sids[0]}.jsonl'))
+
+
+def test_scaffold_key_c_does_not_crash(monkeypatch, tmp_path):
+    # regression: a function-local `from .claude_md import scaffold_claude_md`
+    # in the '!' handler made scaffold_claude_md a local for the whole
+    # sessions_menu scope, so pressing 'c' raised UnboundLocalError before it.
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = sb.add_project('alpha', n_sessions=1)
+    from claude_sessions import session_menu as sm
+    called = []
+    monkeypatch.setattr(sm, 'scaffold_claude_md',
+                        lambda *a, **k: called.append(a))
+    # ENTER opens the project's session list is already open here; press 'c'
+    _res, _cap, _ex = open_menu(monkeypatch, sb, flat(typed('c'), ESC), folder,
+                                name='alpha', path=actual)
+    assert called, "pressing 'c' must reach scaffold_claude_md without crashing"
