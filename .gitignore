@@ -25,3 +25,6 @@ setup environment.ico
 
 # Auto-generated per-module memory rules (regenerate on every memory refresh)
 .claude/rules/claudectl-mem-*.md
+
+# CLAUDE.md backups (machine-local)
+CLAUDE.md.bak
