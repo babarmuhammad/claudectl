@@ -99,6 +99,37 @@ def test_quickresume_shows_session_name(monkeypatch, tmp_path):
     assert 'Session 0' in cap.plain          # session name shown, not just id
 
 
+def test_new_session_picked_account_reaches_choice_line(monkeypatch, tmp_path):
+    """Creating a NEW session under a chosen (non-active) account must launch
+    under that account's config dir, not the default one."""
+    import json
+    sb = Sandbox(monkeypatch, tmp_path)
+    personal = tmp_path / 'personal-cfg'
+    (personal / 'projects').mkdir(parents=True)
+    sb.settings.write_text(json.dumps(
+        {'accounts': [{'name': 'personal', 'dir': str(personal)}]}),
+        encoding='utf-8')
+    accts = lambda: [('default', str(sb.cfg)), ('personal', str(personal))]
+    monkeypatch.setattr(main_mod, 'all_config_dirs', accts)
+    from claude_sessions import config as config_mod
+    from claude_sessions import agents as agents_mod
+    monkeypatch.setattr(config_mod, 'all_config_dirs', accts)
+    # pin no agents so the Account field sits at a known index (no Lead-agent row)
+    monkeypatch.setattr(agents_mod, 'list_all_agent_names', lambda p: [])
+    sb.add_project('alpha', n_sessions=1)
+    # ENTER project -> ENTER 'new' -> DOWN×5 to Account field -> RIGHT (personal)
+    # -> ENTER launch.  fields: effort,model,perm,worktree,name,Account(5),...
+    keys = flat(ENTER, ENTER,
+                DOWN, DOWN, DOWN, DOWN, DOWN, RIGHT,
+                ENTER)
+    run_main(monkeypatch, sb, keys)
+    line = sb.choice_line()
+    assert line is not None
+    parts = line.split('|')
+    assert parts[3] == 'new'
+    assert parts[9] == str(personal), f"cfgdir was {parts[9]!r}, expected personal"
+
+
 def test_type_to_filter_projects(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     sb.add_project('alpha')

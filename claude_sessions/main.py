@@ -328,9 +328,12 @@ def run():
             mem_line = recall.memory_status_line(path, proj_folder, settings)
         except Exception:
             mem_line = ''
-        # per-launch account choice — defaults to whichever account this
-        # project's session actually lives under, not the active account.
+        # per-launch account choice. For a NEW session pre-select the ACTIVE
+        # account (what the user expects to create under); for resume the field
+        # is read-only and just reflects the account the session lives under, so
+        # pre-select that. Sorting decides the picker's default (index 0).
         project_cfgdir = os.path.abspath(opts.get('cfgdir') or config_dir)
+        preselect = os.path.abspath(config_dir) if choice == 'new' else project_cfgdir
         acct_opts = []
         try:
             from .accounts import _accounts
@@ -340,7 +343,7 @@ def run():
                     return (os.path.expanduser(os.path.expandvars(dd)) if dd
                             else os.path.expanduser('~/.claude'))
                 acct_opts = [(n, _abs(dd)) for n, dd, a in accs]
-                acct_opts.sort(key=lambda t: os.path.abspath(t[1]) != project_cfgdir)
+                acct_opts.sort(key=lambda t: os.path.abspath(t[1]) != preselect)
         except Exception:
             acct_opts = []
         opts = launch_options_menu(

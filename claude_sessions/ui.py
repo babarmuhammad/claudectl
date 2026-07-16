@@ -972,19 +972,24 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
     name_val   = ''
     agent_opts = [''] + list(agents or [])
     agent_idx  = 0
-    # account is read-only here: sessions live under the ACTIVE config dir, so a
-    # per-launch switch can't resume them — change accounts in ⚙ Accounts instead
-    acct_label = account_opts[0][0] if account_opts else ''
+    # Account: editable when CREATING a new session (pick which account it lives
+    # under); read-only when resuming, since an existing session can only be
+    # resumed under the config dir it was recorded in.
+    acct_opts   = list(account_opts or [])
+    acct_label  = acct_opts[0][0] if acct_opts else ''
+    acct_idx    = 0
+    acct_editable = is_new and len(acct_opts) > 1
 
     base_fields = 3
     new_extra   = 2 if is_new else 0
     agent_field = base_fields + new_extra if len(agent_opts) > 1 else -1
     after_agent = base_fields + new_extra + (1 if agent_field >= 0 else 0)
-    # launch-economy fields are always present, appended last so the positional
-    # arithmetic above stays intact
-    think_field = after_agent
-    sub_field   = after_agent + 1
-    n_fields    = after_agent + 2
+    # editable account picker (new sessions, >1 account) sits before the
+    # launch-economy fields; those are appended last so the arithmetic holds
+    acct_field  = after_agent if acct_editable else -1
+    think_field = after_agent + (1 if acct_editable else 0)
+    sub_field   = think_field + 1
+    n_fields    = sub_field + 1
     field = 0
 
     def _wt_label():
@@ -1015,7 +1020,11 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
             al = agent_opts[agent_idx] or '(none)'
             frame.append(
                 f"  {sel_c(agent_field)}{'▸' if field == agent_field else ' '}  Lead agent  :  [ {render.trunc(al, 18):<18} ]{C_RESET}   {C_DIM}← → primary --agent (~/.claude/agents){C_RESET}")
-        if acct_label:
+        if acct_editable:
+            al = acct_opts[acct_idx][0]
+            frame.append(
+                f"  {sel_c(acct_field)}{'▸' if field == acct_field else ' '}  Account     :  [ {render.trunc(al, 18):<18} ]{C_RESET}   {C_DIM}← → account for new session{C_RESET}")
+        elif acct_label:
             frame.append(
                 f"  {C_DIM}   Account     :  [ {render.trunc(acct_label, 18):<18} ]   read-only — switch in ⚙ Accounts{C_RESET}")
         frame.append(
@@ -1088,6 +1097,8 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                     name_val = v
             elif field == agent_field:
                 agent_idx = (agent_idx + step) % len(agent_opts)
+            elif field == acct_field:
+                acct_idx = (acct_idx + step) % len(acct_opts)
             elif field == think_field:
                 think_idx = (think_idx + step) % len(THINKING_CAPS)
             elif field == sub_field:
@@ -1100,7 +1111,9 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 'name':   name_val if is_new else '',
                 'worktree': wt_state if is_new else '',
                 'agent':  agent_opts[agent_idx],
-                'cfgdir': '',                     # always the active account
+                # new session → the account the user picked; resume → '' (active,
+                # i.e. the config dir the session was recorded under)
+                'cfgdir': acct_opts[acct_idx][1] if acct_editable else '',
                 'max_thinking':   THINKING_CAPS[think_idx],
                 'subagent_model': MODELS[sub_idx],
             }

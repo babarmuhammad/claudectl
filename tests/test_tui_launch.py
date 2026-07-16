@@ -40,6 +40,23 @@ def test_account_readonly_not_editable(monkeypatch, tmp_path):
     assert 'default' in cap.plain
 
 
+def test_account_editable_for_new_session(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    accts = [('default', r'C:\def'), ('work', r'C:\work')]
+    # new-session fields: effort,model,perm,worktree,name,Account(5),Think,Subagents
+    keys = flat(DOWN, DOWN, DOWN, DOWN, DOWN,   # -> Account field
+                RIGHT,                          # default -> work
+                ENTER)
+    result, cap = run_menu(monkeypatch, keys, is_new=True, account_opts=accts)
+    assert result['cfgdir'] == r'C:\work'
+    assert 'read-only' not in cap.plain
+
+    # a single account offers no picker → stays read-only, cfgdir ''
+    result, cap = run_menu(monkeypatch, flat(ENTER), is_new=True,
+                           account_opts=[('default', r'C:\def')])
+    assert result['cfgdir'] == ''
+
+
 def test_economy_fields_cycle(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     # no agents/accounts → fields: effort,model,perm,Think(3),Subagents(4)
