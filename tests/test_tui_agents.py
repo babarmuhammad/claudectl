@@ -114,6 +114,8 @@ def test_suggest_agents_matches_language(monkeypatch, tmp_path):
           description='Build type-safe production Python code and APIs')
     _seed(sb, '02-lang', 'golang-pro',
           description='Concurrent Go microservices and cloud-native systems')
+    from claude_sessions import connections
+    connections.build_hierarchy(actual, folder)      # populate the cache suggest reads
     sug = agents.suggest_agents(actual, folder)
     refs = [r for r, _reason, _s in sug]
     assert '02-lang/python-pro' in refs
@@ -134,6 +136,8 @@ def test_select_shows_suggested_and_toggles(monkeypatch, tmp_path):
     open(os.path.join(actual, 'src', 'main.py'), 'w').write('x = 1\n')
     _seed(sb, '02-lang', 'python-pro',
           description='Build type-safe production Python code and APIs')
+    from claude_sessions import connections
+    connections.build_hierarchy(actual, folder)      # populate cache
     # ENTER on the first (suggested) row toggles it, then nav to Done
     keys = flat(ENTER, DOWN, DOWN, ENTER)
     res, cap, _ = run_flow(monkeypatch, keys, agents.select_session_agents,

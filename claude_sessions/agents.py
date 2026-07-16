@@ -361,7 +361,9 @@ def suggest_agents(project_path, proj_folder, top_k=8):
     add(os.path.basename(project_path or ''), 2.0)
     try:
         from . import connections
-        g = connections.build_hierarchy(project_path, proj_folder)   # cached
+        # cache ONLY — never build here (a fresh build parses thousands of
+        # files and would freeze the agents screen)
+        g = connections._load_cache(project_path, proj_folder) or {}
         for lang, _cnt in (g.get('meta', {}).get('languages') or [])[:4]:
             add(lang, 4.0)
             add(_LANG_HINTS.get(lang, ''), 4.0)
