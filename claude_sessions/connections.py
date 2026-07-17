@@ -725,13 +725,13 @@ def write_graph_html(graph, project_path, proj_folder=None):
 
 def open_graph(path):
     if not path:
-        return False
+        return False, 'no graph file to open'
     try:
         os.startfile(path)   # Windows default browser
-        return True
-    except Exception:
+        return True, ''
+    except Exception as e:
         _c.log.exception('connections: open_graph failed')
-        return False
+        return False, str(e)
 
 
 # ── TUI summary screen ───────────────────────────────────────
@@ -772,8 +772,12 @@ def connections_screen(project_path, proj_folder, project_name):
             return
         if ev[0] == 'char' and ev[1] == 'o':
             p = write_graph_html(graph, project_path, proj_folder)
-            flash(f"Opened {p}" if p and open_graph(p) else "Could not open graph",
-                  ok=bool(p), secs=1.2)
+            if not p:
+                flash("Could not write graph HTML (check disk/permissions)", ok=False, secs=2.5)
+            else:
+                ok, err = open_graph(p)
+                flash(f"Opened {p}" if ok else f"Could not open graph: {err}",
+                      ok=ok, secs=1.2 if ok else 2.5)
         elif ev[0] == 'char' and ev[1] == 'r':
             graph = _build(force=True)
             flash("Graph rebuilt")

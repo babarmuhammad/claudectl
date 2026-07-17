@@ -130,8 +130,12 @@ def hub_screen(project_path, proj_folder, project_name):
             from . import connections
             g = connections.build_hierarchy(project_path, proj_folder)
             p = connections.write_graph_html(g, project_path, proj_folder)
-            flash(f"Opened {p}" if p and connections.open_graph(p)
-                  else "Could not open graph", ok=bool(p), secs=1.2)
+            if not p:
+                flash("Could not write graph HTML (check disk/permissions)", ok=False, secs=2.5)
+            else:
+                ok, err = connections.open_graph(p)
+                flash(f"Opened {p}" if ok else f"Could not open graph: {err}",
+                      ok=ok, secs=1.2 if ok else 2.5)
         elif ch == 'M':
             from .claude_md import memory_map_menu
             memory_map_menu(project_path, project_name)

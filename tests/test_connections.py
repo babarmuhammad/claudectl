@@ -138,7 +138,8 @@ def test_write_and_open(monkeypatch, tmp_path):
     assert p and os.path.isfile(p)
     opened = []
     monkeypatch.setattr(os, 'startfile', lambda x: opened.append(x), raising=False)
-    assert connections.open_graph(p) is True and opened == [p]
+    ok, err = connections.open_graph(p)
+    assert ok is True and err == '' and opened == [p]
 
 
 # ── TUI ──────────────────────────────────────────────────────

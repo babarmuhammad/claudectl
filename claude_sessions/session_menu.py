@@ -542,6 +542,9 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
             from . import connections
             connections.connections_screen(project_path, proj_folder, project_name)
 
+        elif ev[0] == 'char' and ev[1] == 'n' and show_archived:
+            flash("Architecture graph isn't available on the Archived tab", ok=False, secs=1.6)
+
         elif ev[0] == 'char' and ev[1] == 'm' and not show_archived:
             from . import memhub
             memhub.hub_screen(project_path, proj_folder, project_name)
