@@ -435,6 +435,38 @@ def test_gui_page_has_no_emoji_and_has_icons(monkeypatch, tmp_path):
     assert not any(ch in PAGE for ch in banned)
 
 
+def test_open_project_by_path(monkeypatch, tmp_path):
+    """Open-project-by-path mirrors the TUI __open_path__ branch: reject a
+    non-directory, and for a real folder return the same encoded name the TUI
+    computes, plus folder auto-completion."""
+    from claude_sessions.paths import encode_component
+    sb = Sandbox(monkeypatch, tmp_path)
+    proj = tmp_path / 'work' / 'newproj'
+    (proj / 'child').mkdir(parents=True)
+    srv, base = _serve()
+    try:
+        # bogus path is rejected (never launches)
+        code, d = _req(base + '/api/open-path', {'path': str(tmp_path / 'nope')})
+        assert code == 200 and d['ok'] is False and d['error']
+        # real folder → same enc the TUI's encode_component produces
+        code, d = _req(base + '/api/open-path', {'path': str(proj)})
+        assert code == 200 and d['ok']
+        assert d['enc'] == encode_component(os.path.abspath(str(proj)))
+        assert d['name'] == 'newproj'
+        # completion surfaces the child directory
+        code, c = _req(f'{base}/api/path-complete?text={proj}' + os.sep)
+        assert code == 200
+        assert any(os.path.basename(p) == 'child' for p in c['dirs'])
+    finally:
+        srv.shutdown()
+
+
+def test_gui_page_has_open_project_wiring(monkeypatch, tmp_path):
+    from claude_sessions.gui_html import PAGE
+    assert 'openProjectByPath' in PAGE and 'bOpenPath' in PAGE
+    assert "/api/open-path" in PAGE and "/api/path-complete" in PAGE
+
+
 def test_hook_template_installed_flag(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     from claude_sessions import hooks as hooks_mod

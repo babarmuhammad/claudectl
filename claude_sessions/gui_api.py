@@ -739,6 +739,33 @@ def api_add_dirs_set(q, body):
     return {'ok': True}
 
 
+# ── open a new project by path (mirror of the TUI's path_input) ──
+
+def api_path_complete(q, body):
+    """Live folder auto-completion for the open-project modal: same pure
+    completion source the TUI's path_input uses. Returns child directories
+    of the typed path (or drive roots for empty text) as full paths."""
+    from .ui import path_completions, _join_path
+    base, partial, names = path_completions(q.get('text', ''))
+    dirs = [(_join_path(base, n) if not n.endswith((os.sep, '/')) else n)
+            for n in names[:12]]
+    return {'dirs': dirs, 'more': max(0, len(names) - 12)}
+
+
+def api_open_path(q, body):
+    """Resolve a typed folder into a launchable project — validate it's an
+    existing directory and encode it, exactly like the TUI's __open_path__
+    branch. Returns {ok, path, enc, name} for the launch modal to use with
+    choice='new'."""
+    from .paths import encode_component
+    raw = (body.get('path') or '').strip()
+    cand = os.path.abspath(os.path.expandvars(os.path.expanduser(raw))) if raw else ''
+    if not cand or not os.path.isdir(cand):
+        return {'ok': False, 'error': 'Not a folder — enter a valid directory path'}
+    return {'ok': True, 'path': cand, 'enc': encode_component(cand),
+            'name': os.path.basename(cand) or cand}
+
+
 # ── inject-context & plan-execute ────────────────────────────
 
 def api_inject_sessions(q, body):
@@ -908,6 +935,7 @@ GET_ROUTES = {
     '/api/system-prompt': api_system_prompt_get,
     '/api/extra-paths': api_extra_paths_get,
     '/api/add-dirs': api_add_dirs_get,
+    '/api/path-complete': api_path_complete,
     '/api/inject/sessions': api_inject_sessions,
 }
 
@@ -936,6 +964,7 @@ POST_ROUTES = {
     '/api/system-prompt': api_system_prompt_set,
     '/api/extra-paths': api_extra_paths_set,
     '/api/add-dirs': api_add_dirs_set,
+    '/api/open-path': api_open_path,
     '/api/inject/launch': api_inject_launch,
     '/api/plan/launch': api_plan_launch,
     '/api/job': api_job_start,

@@ -176,6 +176,14 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .fld textarea{min-height:90px;resize:vertical}
 .fld select:focus,.fld input:focus,.fld textarea:focus{border-color:var(--cyan)}
 .mrow{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.openp{width:calc(100% - 24px);margin:0 12px 6px;justify-content:center;color:var(--dim)}
+.openp:hover{color:var(--txt)}
+.osugg{margin-top:8px;max-height:220px;overflow-y:auto;display:flex;flex-direction:column}
+.osugg .s{padding:6px 10px;border-radius:7px;font-size:13px;cursor:pointer;
+  color:var(--txt);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.osugg .s:hover,.osugg .s.on{background:var(--panel2)}
+.osugg .more{padding:4px 10px;color:var(--dim);font-size:11px}
+.osubmsg{color:var(--err);font-size:12px;min-height:16px;margin-top:6px}
 .drawer{position:fixed;top:0;right:-720px;width:720px;max-width:95vw;height:100vh;
   background:var(--bg2);border-left:1px solid var(--line);z-index:40;
   transition:right .22s;display:flex;flex-direction:column;box-shadow:var(--shadow)}
@@ -233,6 +241,7 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
       <div><b>claudectl</b><small>workspace for Claude Code</small></div>
     </div>
     <div class="search"><input id="q" placeholder="Filter projects…"></div>
+    <button class="btn sm openp" id="bOpenPath">＋ Open project by path…</button>
     <div class="plist" id="plist"></div>
     <div class="nav" id="nav"></div>
     <div class="foot">
@@ -279,6 +288,22 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
     <div class="mrow">
       <button class="btn" id="mCancel">Cancel</button>
       <button class="btn pri" id="mGo">Launch</button>
+    </div>
+  </div>
+</div>
+
+<!-- open-project-by-path modal -->
+<div class="ovl" id="oovl">
+  <div class="modal">
+    <h3>Open project by path</h3>
+    <div class="sub">Start a new session in any folder. Type a path — matching folders suggest as you go.</div>
+    <div class="fld"><label>Folder</label>
+      <input id="oPath" placeholder="e.g. D:\\code\\my-project" autocomplete="off"></div>
+    <div class="osugg" id="oSugg"></div>
+    <div class="osubmsg" id="oErr"></div>
+    <div class="mrow">
+      <button class="btn" id="oCancel">Cancel</button>
+      <button class="btn pri" id="oOk">Open</button>
     </div>
   </div>
 </div>
@@ -1210,16 +1235,60 @@ async function doLaunch(){
   else toast('Launch failed: '+(r.error||'unknown'),'err');
 }
 
+/* ── open a new project by path (mirror of the TUI's __open_path__) ── */
+let OSEL=-1,OROWS=[],_oTimer=null;
+function openProjectByPath(){
+  OSEL=-1;OROWS=[];
+  $('#oPath').value='';$('#oSugg').innerHTML='';$('#oErr').textContent='';
+  $('#oovl').classList.add('show');
+  setTimeout(()=>$('#oPath').focus(),30);
+  suggestPaths('');
+}
+async function suggestPaths(text){
+  const d=await api('/api/path-complete?'+qs({text}));
+  OROWS=d.dirs||[];OSEL=-1;
+  $('#oSugg').innerHTML=OROWS.map((p,i)=>
+    `<div class="s" data-i="${i}">${esc(p)}</div>`).join('')
+    +(d.more?`<div class="more">… ${d.more} more — keep typing to narrow</div>`:'');
+  $('#oSugg').querySelectorAll('.s').forEach(el=>
+    el.onclick=()=>{$('#oPath').value=OROWS[+el.dataset.i]+'\\';
+      $('#oPath').focus();scheduleSuggest();});
+}
+function scheduleSuggest(){clearTimeout(_oTimer);
+  _oTimer=setTimeout(()=>suggestPaths($('#oPath').value),160);}
+function oHighlight(){$('#oSugg').querySelectorAll('.s').forEach((el,i)=>
+  el.classList.toggle('on',i===OSEL));
+  const on=$('#oSugg .s.on');if(on)on.scrollIntoView({block:'nearest'});}
+async function openPathSubmit(){
+  // an active suggestion → drill into it instead of opening (matches TUI ENTER)
+  if(OSEL>=0&&OROWS[OSEL]){$('#oPath').value=OROWS[OSEL]+'\\';
+    OSEL=-1;suggestPaths($('#oPath').value);return;}
+  const r=await post('/api/open-path',{path:$('#oPath').value});
+  if(!r.ok){$('#oErr').textContent=r.error||'Could not open that path';return;}
+  $('#oovl').classList.remove('show');
+  askLaunch({title:'New session',sub:r.path,isNew:true,
+    path:r.path,enc:r.enc,choice:'new'});
+}
+
 /* ── wiring ── */
 $('#q').oninput=drawProjects;
 $('#mCancel').onclick=()=>$('#ovl').classList.remove('show');
 $('#ovl').onclick=e=>{if(e.target.id==='ovl')$('#ovl').classList.remove('show');};
 $('#mGo').onclick=doLaunch;
+$('#bOpenPath').onclick=openProjectByPath;
+$('#oCancel').onclick=()=>$('#oovl').classList.remove('show');
+$('#oovl').onclick=e=>{if(e.target.id==='oovl')$('#oovl').classList.remove('show');};
+$('#oOk').onclick=openPathSubmit;
+$('#oPath').oninput=()=>{OSEL=-1;scheduleSuggest();};
+$('#oPath').onkeydown=e=>{
+  if(e.key==='ArrowDown'){e.preventDefault();if(OROWS.length){OSEL=(OSEL+1)%OROWS.length;oHighlight();}}
+  else if(e.key==='ArrowUp'){e.preventDefault();if(OROWS.length){OSEL=(OSEL-1+OROWS.length)%OROWS.length;oHighlight();}}
+  else if(e.key==='Enter'){e.preventDefault();openPathSubmit();}};
 $('#dClose').onclick=()=>$('#drawer').classList.remove('show');
 document.addEventListener('keydown',e=>{
   if(e.key==='Enter'&&$('#ovl').classList.contains('show')
      &&e.target.tagName!=='INPUT')doLaunch();
-  if(e.key==='Escape'){$('#ovl').classList.remove('show');
+  if(e.key==='Escape'){$('#ovl').classList.remove('show');$('#oovl').classList.remove('show');
     $('#povl').classList.remove('show');$('#drawer').classList.remove('show');}
 });
 $('#bNew').onclick=()=>CUR&&askLaunch({title:'New session',sub:CUR.name,isNew:true,
