@@ -125,17 +125,19 @@ def fmt_tok(n):
 
 # ── incremental scan with progress ───────────────────────────
 
-def iter_all_sessions(entries, title='SCANNING SESSIONS'):
+def iter_all_sessions(entries, title='SCANNING SESSIONS', silent=False):
     """Yield (mtime, project_path, encoded, sid, stats, cfgdir) for every
     session of every project. Shows a progress frame; ESC stops early
     (yields partial). entries: [(mtime, actual_path, encoded_name, cfgdir)]
-    as built by main.run."""
-    from . import ui   # lazy — avoid import cycle
+    as built by main.run. silent=True (GUI server threads): no progress
+    frame, no keyboard peeking — a plain data generator."""
+    if not silent:
+        from . import ui   # lazy — avoid import cycle
 
     total = len(entries)
     stopped = False
-    peeking = True   # stop inspecting input after first non-ESC key, so
-                     # keys queued for the next screen keep their order
+    peeking = not silent   # stop inspecting input after first non-ESC key, so
+                           # keys queued for the next screen keep their order
     try:
         for pi, (_, ppath, enc, cfgdir) in enumerate(entries, 1):
             if stopped:
@@ -161,19 +163,88 @@ def iter_all_sessions(entries, title='SCANNING SESSIONS'):
                     continue
                 stats = get_session_stats_cached(fpath)
                 yield (mtime, ppath, enc, f[:-6], stats, cfgdir)
-            render.render_frame([
-                render.header('CLAUDECTL', title),
-                '',
-                f"  Scanning project {pi}/{total} — {render.trunc(os.path.basename(ppath) or ppath, 40)}",
-                '',
-                render.hint_keys([('ESC', 'stop early (partial results)')]),
-            ])
+            if not silent:
+                render.render_frame([
+                    render.header('CLAUDECTL', title),
+                    '',
+                    f"  Scanning project {pi}/{total} — {render.trunc(os.path.basename(ppath) or ppath, 40)}",
+                    '',
+                    render.hint_keys([('ESC', 'stop early (partial results)')]),
+                ])
         if stopped:
             yield None   # sentinel: partial
     finally:
         # guarantees parsed stats hit the disk cache even if the consumer
         # abandons the generator mid-scan
         save_disk_cache()
+
+
+def assemble_project_usage(entries, silent=True):
+    """Per-project usage rows (dicts), cost-sorted — the pure aggregation
+    behind usage_dashboard, shared with the GUI."""
+    per_project = {}
+    for item in iter_all_sessions(entries, 'USAGE STATS', silent=silent):
+        if item is None:
+            break
+        mtime, ppath, enc, sid, stats, cfgdir = item
+        p = per_project.setdefault(enc, {
+            'path': ppath, 'name': os.path.basename(ppath) or ppath,
+            'sessions': 0, 'msgs': 0, 'cfgdir': cfgdir, 'enc': enc,
+            'usage': {'in': 0, 'out': 0, 'cache_read': 0, 'cache_create': 0},
+            'usage_by_model': {},
+        })
+        p['sessions'] += 1
+        p['msgs'] += stats.get('count', 0)
+        u = _sum_usage(stats)
+        for k in p['usage']:
+            p['usage'][k] += u[k]
+        for m, mu in (stats.get('usage_by_model') or {}).items():
+            agg = p['usage_by_model'].setdefault(
+                m, {'in': 0, 'out': 0, 'cache_read': 0, 'cache_create': 0})
+            for k in agg:
+                agg[k] += mu.get(k, 0)
+    rows = []
+    for enc, p in per_project.items():
+        cost, exact = estimate_cost(p['usage_by_model'])
+        p['cost'] = round(cost, 2)
+        p['exact'] = exact
+        rows.append(p)
+    rows.sort(key=lambda p: p['cost'], reverse=True)
+    return rows
+
+
+def assemble_session_usage(proj_folder):
+    """Per-session usage rows for one project across every account — the
+    pure aggregation behind project_usage_screen, shared with the GUI."""
+    from .sessions import project_session_folders
+    from .config import all_config_dirs
+
+    acct_by_dir = {os.path.normcase(os.path.abspath(os.path.join(d, 'projects'))): n
+                   for n, d in all_config_dirs()}
+
+    def _acct_of(folder):
+        parent = os.path.normcase(os.path.abspath(os.path.dirname(folder)))
+        return acct_by_dir.get(parent, '')
+
+    rows = []
+    seen_sids = set()
+    for folder in project_session_folders(proj_folder):
+        acct = _acct_of(folder)
+        for (mtime, sid, preview, count) in scan_sessions(folder):
+            if sid in seen_sids:
+                continue
+            seen_sids.add(sid)
+            stats = get_session_stats_cached(os.path.join(folder, f"{sid}.jsonl"))
+            cost, exact = estimate_cost(stats.get('usage_by_model'))
+            u = _sum_usage(stats)
+            name = load_name(folder, sid) or stats.get('title') or preview or sid[:8]
+            rows.append({'mtime': mtime, 'sid': sid, 'name': name,
+                         'account': acct, 'age': format_age(mtime).strip(),
+                         'msgs': count, 'usage': u,
+                         'cost': round(cost, 2), 'exact': exact})
+    rows.sort(key=lambda r: r['mtime'], reverse=True)
+    save_disk_cache()
+    return rows
 
 
 # ── per-day aggregation ──────────────────────────────────────
@@ -187,13 +258,13 @@ def _day_of(stats, mtime):
         return ''
 
 
-def usage_by_day(entries, days=14):
+def usage_by_day(entries, days=14, silent=False):
     """[(date_str, usage_dict, cost_usd, n_sessions)] newest-first, last `days`
     calendar days. A session is bucketed by its last activity day."""
     from datetime import datetime, timedelta
     cutoff = (datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d')
     buckets = {}
-    for item in iter_all_sessions(entries, 'DAILY USAGE'):
+    for item in iter_all_sessions(entries, 'DAILY USAGE', silent=silent):
         if item is None:
             break
         mtime, _ppath, _enc, _sid, stats, _cfgdir = item
@@ -373,33 +444,14 @@ def project_usage_screen(proj_folder, project_name):
     """Per-session usage rows for one project — across EVERY account that has
     sessions for it; foreign-account rows are tagged inline with the account."""
     from . import ui
-    from .sessions import project_session_folders
-    from .config import all_config_dirs
-
-    acct_by_dir = {os.path.normcase(os.path.abspath(os.path.join(d, 'projects'))): n
-                   for n, d in all_config_dirs()}
-
-    def _acct_of(folder):
-        parent = os.path.normcase(os.path.abspath(os.path.dirname(folder)))
-        return acct_by_dir.get(parent, '')
 
     sess_rows = []
-    seen_sids = set()
-    for folder in project_session_folders(proj_folder):
-        acct = _acct_of(folder)
-        for (mtime, sid, preview, count) in scan_sessions(folder):
-            if sid in seen_sids:
-                continue
-            seen_sids.add(sid)
-            stats = get_session_stats_cached(os.path.join(folder, f"{sid}.jsonl"))
-            cost, exact = estimate_cost(stats.get('usage_by_model'))
-            u = _sum_usage(stats)
-            name = load_name(folder, sid) or stats.get('title') or preview or sid[:8]
-            if acct and acct != 'default':
-                name = f"{name}  [{acct}]"
-            sess_rows.append((mtime, name, count, u, cost, exact))
-    sess_rows.sort(key=lambda r: r[0], reverse=True)
-    save_disk_cache()
+    for r in assemble_session_usage(proj_folder):
+        name = r['name']
+        if r['account'] and r['account'] != 'default':
+            name = f"{name}  [{r['account']}]"
+        sess_rows.append((r['mtime'], name, r['msgs'], r['usage'],
+                          r['cost'], r['exact']))
 
     nav = 0
     while True:

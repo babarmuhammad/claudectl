@@ -65,6 +65,8 @@ _DEFAULT_SETTINGS = {
     'claude_md_commits': 7,        # AUTOGEN block: git log -N per repo
     'default_max_thinking': '',    # MAX_THINKING_TOKENS env for launches ('' = unset)
     'default_subagent_model': '',  # CLAUDE_CODE_SUBAGENT_MODEL env ('' = unset)
+    'ui_mode': 'tui',              # default interface: 'tui' | 'gui' (desktop app)
+    'gui_shell': 'auto',           # GUI window: 'auto' | 'qt' | 'edge' | 'browser'
 }
 
 

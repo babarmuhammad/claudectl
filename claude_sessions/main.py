@@ -85,6 +85,14 @@ def run():
         _bg_scan_cli(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else '')
         return
 
+    # ── interface pick: --gui / --tui flags beat the ui_mode setting ──
+    if '--gui' in sys.argv[1:] or (
+            '--tui' not in sys.argv[1:]
+            and load_settings().get('ui_mode') == 'gui'):
+        from .gui import run_gui
+        run_gui()
+        return
+
     # ── UTF-8 console ─────────────────────────────────────────────
     os.system('chcp 65001 >nul 2>&1')
     try:
@@ -510,12 +518,13 @@ def launch_from_choice():
     _direct_launch(path, enc, choice, opts)
 
 
-def _direct_launch(path, encoded_name, choice, opts):
-    """Launch claude.exe (or a terminal) directly. Single launch path for
-    both the bat (--launch) and pipx/standalone flows."""
+def build_launch_command(path, encoded_name, choice, opts):
+    """Pure launch assembly shared by the TUI and GUI paths. Returns
+    (args, env, proj_folder): the claude.exe argv, the child environment,
+    and the account project folder. args is None when choice == 'terminal'
+    (caller opens a plain shell) — and raises RuntimeError if claude.exe
+    can't be found."""
     from .sessions import read_extra_paths, load_add_dirs
-
-    render.screen_restore()   # idempotent — console must be clean for claude
 
     # config dir: from the choice line (bat path) else the module default
     cfgdir = opts.get('cfgdir') or config_dir
@@ -535,15 +544,11 @@ def _direct_launch(path, encoded_name, choice, opts):
         env['PATH'] = ';'.join(extra) + ';' + env.get('PATH', '')
 
     if choice == 'terminal':
-        subprocess.call('cmd /k', cwd=path, env=env, shell=True)
-        return
+        return None, env, proj_folder
 
     claude = get_claude_exe()
     if not claude:
-        _cls()
-        print(f"\n  ✘ claude.exe not found — cannot launch.")
-        pause("\n  Press Enter to exit...")
-        sys.exit(1)
+        raise RuntimeError('claude.exe not found')
 
     args = [claude]
     if choice == 'continue':
@@ -580,6 +585,25 @@ def _direct_launch(path, encoded_name, choice, opts):
     add_dirs = [d for d in load_add_dirs(proj_folder) if os.path.isdir(d)]
     if add_dirs:
         args += ['--add-dir', *add_dirs]
+    return args, env, proj_folder
+
+
+def _direct_launch(path, encoded_name, choice, opts):
+    """Launch claude.exe (or a terminal) directly. Single launch path for
+    both the bat (--launch) and pipx/standalone flows."""
+    render.screen_restore()   # idempotent — console must be clean for claude
+
+    try:
+        args, env, proj_folder = build_launch_command(path, encoded_name, choice, opts)
+    except RuntimeError:
+        _cls()
+        print(f"\n  ✘ claude.exe not found — cannot launch.")
+        pause("\n  Press Enter to exit...")
+        sys.exit(1)
+
+    if args is None:   # choice == 'terminal'
+        subprocess.call('cmd /k', cwd=path, env=env, shell=True)
+        return
 
     try:
         from . import workspace

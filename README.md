@@ -2,7 +2,7 @@
 
 <p align="center">
   <b>The workspace layer for Claude Code.</b><br>
-  Persistent project memory, an interactive architecture graph, MCP awareness, and per-project launch control — in a fast terminal UI.
+  Persistent project memory, an interactive architecture graph, MCP awareness, and per-project launch control — in a fast terminal UI or a native desktop GUI.
 </p>
 
 <p align="center">
@@ -50,6 +50,8 @@ Without claudectl, a big project either starves the agent (no context) or floods
 - [Install](#install)
   - [Requirements](#requirements)
   - [Setup](#setup)
+    - [TUI setup](#tui-setup)
+    - [GUI setup](#gui-setup)
   - [Installing the agent library](#installing-the-agent-library)
 - [Usage](#usage)
   - [Main screen](#main-screen)
@@ -185,6 +187,17 @@ Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, 
 - **New-session options** — name the session (`-n`) and launch in a git worktree (`-w`)
 - **Extra PATH entries** / **Add directories** — per-project PATH dirs and `--add-dir` context roots
 
+### Desktop GUI (`claudectl --gui`)
+Everything above, as a native desktop app — full feature parity with the TUI, served locally (loopback-only, zero deps, works offline):
+
+- **Shells** — PyQt6 native window if installed, else an Edge app-mode window, else the browser (`gui_shell` setting: auto / qt / edge / browser). The bottom-left toggle (or `ui_mode`) picks which interface starts by default; `--tui`/`--gui` always override.
+- **Projects & sessions** — sidebar with live filter and quick-resume; per-session resume / fork / rename / tag / archive / restore / delete / export markdown / transcript with session info / changed files.
+- **Launch modal** — effort, model, permission mode, account, thinking cap, subagent model, session name, worktree — as one-click chips, prefilled from your defaults. Sessions open in a real new console window.
+- **Project tabs** — Memory (build / ask / recall preview / lessons review / workspace status, with **live scan progress**), CLAUDE.md (view / scaffold / AI analyze / AI compress / prune / edit + memory files map + system prompt), Audit (context weight + deny rules), Usage, Tools (inject context from any session/account, Plan→Execute, project agents picker mirroring the TUI's category multi-select with suggestions, extra PATH entries, `--add-dir` directories), and the architecture Graph.
+- **Managers** — MCP servers, agent library + AI-generate, hooks + AI-generate, accounts — same operations as the TUI, with the same diff-approval gate for AI-written files (jobs run server-side, you approve a git-style diff before anything is written).
+- **Usage banner** — one live bar-row per account (session/weekly/model windows with reset times), auto-refreshes every minute, refresh button for an immediate re-fetch.
+- **Themes** — all 17 TUI palettes restyle the whole app (backgrounds, panels, text — derived from each theme's hue); pick in Settings with **live preview** before saving. Icons are inline Material SVG — no CDN, no emoji.
+
 ### Quality of life
 - **Themes (17)** — switch palette in Settings (live preview, cursor stays on the selection): default, ocean, forest, mono, ember (red), plus Catppuccin Mocha, Catppuccin Latte, Tokyo Night, Dracula, Nord, Gruvbox, Rosé Pine, Kanagawa, Everforest, Ayu, Monokai Pro, Solarized
 - **AI session titles** — unnamed sessions show their AI-generated transcript title
@@ -205,6 +218,8 @@ Per-day table of the last 14 days — tokens in/out/cache, est. cost, sessions, 
 
 ### Setup
 
+#### TUI setup
+
 **Option A — pipx (recommended)**
 
 ```
@@ -222,6 +237,35 @@ cd claudectl
 ```
 
 Double-click `Open Repo cmd.bat` (or run it from a terminal).
+
+#### GUI setup
+
+The desktop GUI needs no extra dependencies for the Edge/browser shells. For the native window install PyQt6 (optional):
+
+```
+pip install PyQt6 PyQt6-WebEngine
+```
+
+Start it with:
+
+```
+claudectl --gui          # pipx install
+py claude-sessions.py --gui   # clone
+```
+
+`gui_shell` in Settings picks the window: `auto` (Qt → Edge app window → browser), `qt`, `edge`, or `browser`. The bottom-left **TUI/GUI** toggle (or the `ui_mode` setting) selects which interface starts by default; `--tui` / `--gui` always override.
+
+**Desktop shortcut with the GUI icon** — the GUI has its own icon (`claudectl-gui.ico`, regenerate with `py tools/make_gui_icon.py`). `pythonw.exe` runs it without a console window:
+
+```powershell
+$shell = New-Object -ComObject WScript.Shell
+$lnk = $shell.CreateShortcut("$env:USERPROFILE\Desktop\claudectl GUI.lnk")
+$lnk.TargetPath       = "$env:LOCALAPPDATA\Programs\Python\Python310\pythonw.exe"
+$lnk.Arguments        = "`"$PWD\claude-sessions.py`" --gui"
+$lnk.WorkingDirectory = "$PWD"
+$lnk.IconLocation     = "$PWD\claudectl-gui.ico, 0"
+$lnk.Save()
+```
 
 <details>
 <summary>Optional: Desktop shortcut & taskbar pin</summary>
@@ -516,7 +560,11 @@ claudectl's `find_actual_path()` in `paths.py` reverses this by walking the file
     ├── memory.py           # Claude-powered semantic memory (ECL + ask)
     ├── diffview.py         # git-style diffs for generated files
     ├── claude_md.py        # scaffold + AI CLAUDE.md, memory map
-    └── system_prompt.py    # edit / AI-generate system prompt
+    ├── system_prompt.py    # edit / AI-generate system prompt
+    ├── gui.py              # local HTTP server + launch endpoint (loopback-only)
+    ├── gui_api.py          # GUI job layer — TUI flows headless + diff-approval gates
+    ├── gui_html.py         # single-page app (self-contained, SVG icons, themes)
+    └── gui_qt.py           # optional PyQt6 native window shell
 ```
 
 ---

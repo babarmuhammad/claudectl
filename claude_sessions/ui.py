@@ -726,6 +726,7 @@ def settings_menu():
             (f"Think cap   :  {think}   {C_DIM}(MAX_THINKING_TOKENS — save tokens){C_RESET}", 'max_thinking'),
             (f"Subagent mdl:  {submod}   {C_DIM}(CLAUDE_CODE_SUBAGENT_MODEL){C_RESET}", 'subagent_model'),
             (f"Theme       :  {theme}", 'theme'),
+            (f"Interface   :  {s.get('ui_mode', 'tui').upper()}   {C_DIM}(TUI here / GUI in browser — or run --gui){C_RESET}", 'ui_mode'),
             (f"{'─' * W}", None),
             (f"Back", 'back'),
         ]
@@ -764,6 +765,15 @@ def settings_menu():
                     flash("Saved — restart claudectl to apply", secs=1.6)
         elif sel == 'theme':
             _theme_picker(s)
+        elif sel == 'ui_mode':
+            pick = menu([('TUI — this terminal interface', 'tui'),
+                         ('GUI — web app in your browser', 'gui')],
+                        "DEFAULT INTERFACE")
+            if pick:
+                s['ui_mode'] = pick
+                save_settings(s)
+                flash(f"Default interface: {pick.upper()} — applies next start "
+                      f"(--tui/--gui always override)", secs=2.2)
         elif sel in ('effort', 'model', 'permission', 'max_thinking', 'subagent_model'):
             values, labels = {
                 'effort':     (EFFORTS, EFFORT_LABELS),

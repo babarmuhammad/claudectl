@@ -152,6 +152,24 @@ def _ensure_started():
     threading.Thread(target=_background, daemon=True).start()
 
 
+def refresh_now():
+    """One synchronous fetch pass over every account (GUI refresh button)."""
+    _ensure_started()
+    for name, d in _targets():
+        try:
+            data = fetch_usage(d)
+        except Exception:
+            data = None
+        if data is None:
+            continue
+        with _lock:
+            st = _acct_state.setdefault(d, {})
+            st['name'] = name
+            st['data'] = data
+            if not st.get('email'):
+                st['email'] = _account_email(d)
+
+
 def _fmt_reset(iso):
     """ISO timestamp → short local time ('14:30' today, else 'Tue 09:00')."""
     try:

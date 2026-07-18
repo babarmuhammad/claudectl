@@ -160,6 +160,9 @@ def test_economy_env_injected(monkeypatch, tmp_path):
 
 
 def test_economy_env_absent_when_unset(monkeypatch, tmp_path):
+    # ambient values leak in when the test itself runs inside a claudectl-launched session
+    monkeypatch.delenv('MAX_THINKING_TOKENS', raising=False)
+    monkeypatch.delenv('CLAUDE_CODE_SUBAGENT_MODEL', raising=False)
     sb = Sandbox(monkeypatch, tmp_path)
     call = captured_launch(monkeypatch, sb, 'new', {})
     env = env_of(call)

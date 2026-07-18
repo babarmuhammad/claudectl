@@ -8,16 +8,12 @@ from .stats import iter_all_sessions, save_disk_cache
 from . import render
 
 
-def global_search(entries):
-    """Search every session across all projects (every known account).
-    entries: [(mtime, actual_path, encoded_name, cfgdir)] from main.run.
-    Returns None (cancel) or ('resume', project_path, encoded_name, sid, cfgdir)."""
-    from . import ui
-
-    # ── index phase (incremental, ESC = partial) ──────────────
-    index = []     # (mtime, ppath, enc, sid, display_name, haystack, cfgdir)
+def build_search_index(entries, silent=True):
+    """Pure index build shared by the TUI search and the GUI: one dict per
+    session with a lowercase `haystack` to filter on."""
+    index = []
     partial = False
-    for item in iter_all_sessions(entries, 'INDEXING SESSIONS'):
+    for item in iter_all_sessions(entries, 'INDEXING SESSIONS', silent=silent):
         if item is None:
             partial = True
             break
@@ -29,9 +25,27 @@ def global_search(entries):
             name, stats.get('title', ''), stats.get('preview', ''),
             os.path.basename(ppath) or ppath,
         ]).lower()
-        index.append((mtime, ppath, enc, sid, display, haystack, cfgdir))
+        index.append({'mtime': mtime, 'path': ppath, 'enc': enc, 'sid': sid,
+                      'display': display, 'haystack': haystack,
+                      'project': os.path.basename(ppath) or ppath,
+                      'age': format_age(mtime).strip(), 'cfgdir': cfgdir})
     save_disk_cache()
-    index.sort(reverse=True, key=lambda r: r[0])
+    index.sort(reverse=True, key=lambda r: r['mtime'])
+    return index, partial
+
+
+def global_search(entries):
+    """Search every session across all projects (every known account).
+    entries: [(mtime, actual_path, encoded_name, cfgdir)] from main.run.
+    Returns None (cancel) or ('resume', project_path, encoded_name, sid, cfgdir)."""
+    from . import ui
+
+    # ── index phase (incremental, ESC = partial) ──────────────
+    rows, partial = build_search_index(entries, silent=False)
+    # (mtime, ppath, enc, sid, display_name, haystack, cfgdir) tuples for the
+    # positional accesses below
+    index = [(r['mtime'], r['path'], r['enc'], r['sid'], r['display'],
+              r['haystack'], r['cfgdir']) for r in rows]
 
     # ── interactive phase ─────────────────────────────────────
     query = ''
