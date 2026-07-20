@@ -455,6 +455,7 @@ async function runJob(kind,params,onDone){
   const r=await post('/api/job',{kind,...params});
   if(!r.ok){toast(r.error||'Could not start','err');return;}
   const jid=r.job;
+  const memPath=kind==='memory_build'?params.path:null;
   $('#jovl').classList.add('show');$('#jGate').style.display='none';
   $('#jCancelRow').style.display='';
   $('#jCancel').onclick=async()=>{await post(`/api/job/${jid}/cancel`);};
@@ -462,7 +463,12 @@ async function runJob(kind,params,onDone){
     const st=await api(`/api/job/${jid}`);
     if(!st){$('#jovl').classList.remove('show');return;}
     $('#jLabel').textContent=st.label;
-    $('#jSub').textContent=`${st.elapsed||0}s elapsed`;
+    let sub=`${st.elapsed||0}s elapsed`;
+    if(memPath&&st.status==='running'){
+      const mp=await api('/api/memory/progress?path='+encodeURIComponent(memPath));
+      if(mp.progress)sub+=` — ${mp.progress}`;
+    }
+    $('#jSub').textContent=sub;
     $('#jMsgs').innerHTML=(st.messages||[]).map(m=>
       `<div class="${m.ok?'':'bad'}">${esc(m.text)}</div>`).join('');
     if(st.status==='awaiting'&&st.gate){

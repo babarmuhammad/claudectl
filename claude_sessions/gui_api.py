@@ -899,7 +899,17 @@ def api_job_start(q, body):
 
 
 def _memfn(refresh_memory, path, folder, name):
-    mem = refresh_memory(path, folder, name)
+    from .memory import acquire_scan_lock, clear_scan_lock
+    # refresh_memory reports per-module progress via the scan-lock file, but
+    # only does anything if THIS process holds the lock — a bg-scan worker
+    # acquires it for itself; a foreground GUI job must too, or the GUI's
+    # progress poll (/api/memory/progress) always reads back None.
+    got = acquire_scan_lock(path)
+    try:
+        mem = refresh_memory(path, folder, name)
+    finally:
+        if got:
+            clear_scan_lock(path)
     return {'entities': len(mem.get('entities', [])),
             'pending_units': mem.get('pending_units', 0)}
 
