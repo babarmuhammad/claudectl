@@ -584,9 +584,9 @@ def test_job_plan_make_with_council(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, sids = _seed(sb, monkeypatch)
     from claude_sessions import plan_execute
-    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     seen = {}
-    def fake_council(task, plan, cwd, models=None, omni_env=None):
+    def fake_council(task, plan, cwd, models=None, omni_env=None, cfgdir=''):
         seen['called'] = (task, plan)
         return 'council-optimized plan'
     monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
@@ -612,7 +612,7 @@ def test_job_plan_make_without_council_skips_optimizer(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, sids = _seed(sb, monkeypatch)
     from claude_sessions import plan_execute
-    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     def boom(*a, **k):
         raise AssertionError('council must not run when disabled')
     monkeypatch.setattr(plan_execute, 'optimize_plan_council', boom)
@@ -647,9 +647,9 @@ def test_job_plan_make_council_ignores_stale_omniroute_default(monkeypatch, tmp_
     s['omniroute_exec_model'] = 'auto/coding'
     s['omniroute_base_url'] = 'http://127.0.0.1:1'
     cfg.save_settings(s)
-    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     seen = {}
-    def fake_council(task, plan, cwd, models=None, omni_env=None):
+    def fake_council(task, plan, cwd, models=None, omni_env=None, cfgdir=''):
         seen['omni_env'] = omni_env
         return 'council-optimized plan'
     monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
@@ -680,9 +680,9 @@ def test_job_plan_make_council_uses_omniroute_when_via_selected(monkeypatch, tmp
     s['omniroute_base_url'] = 'http://localhost:20128'
     s['omniroute_api_key'] = 'secret'
     cfg.save_settings(s)
-    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     seen = {}
-    def fake_council(task, plan, cwd, models=None, omni_env=None):
+    def fake_council(task, plan, cwd, models=None, omni_env=None, cfgdir=''):
         seen['omni_env'] = omni_env
         return 'council-optimized plan'
     monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
@@ -703,6 +703,38 @@ def test_job_plan_make_council_uses_omniroute_when_via_selected(monkeypatch, tmp
                                      'ANTHROPIC_AUTH_TOKEN': 'secret',
                                      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
                                      'CLAUDE_CODE_SUBAGENT_MODEL': 'claude-sonnet-5'}
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_make_forwards_account(monkeypatch, tmp_path):
+    # regression: the plan-generation call itself used to always run under
+    # whichever account claudectl was active as, ignoring the account the
+    # user picked in the GUI -- only the later plan_launch honored it.
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import config as config_mod2, gui_api
+    monkeypatch.setattr(config_mod2, 'get_claude_exe', lambda: r'C:\fake.exe')
+    other_acct = str(tmp_path / 'other-account')
+    captured = {}
+    def fake_run_cancellable(args, **kw):
+        captured['env'] = kw.get('env')
+        return '1. step'
+    monkeypatch.setattr(gui_api, '_run_cancellable', fake_run_cancellable)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_make', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing',
+                        'account': other_acct})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert captured['env']['CLAUDE_CONFIG_DIR'] == other_acct
     finally:
         srv.shutdown()
 

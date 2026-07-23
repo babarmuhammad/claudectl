@@ -439,12 +439,17 @@ def write_agents_json_tempfile(refs):
 _MANIFEST = '.claudectl-managed.json'
 
 
-def sync_project_agents(project_path, refs):
+def sync_project_agents(project_path, refs, omniroute=False):
     """Make <project>/.claude/agents/ contain exactly the selected library
     agents. Claude auto-discovers them at launch — no command-line size limit.
     Only files claudectl previously placed (tracked in a manifest) are removed,
-    so the user's own project agents are never touched. Returns count synced."""
-    import json, shutil
+    so the user's own project agents are never touched. Returns count synced.
+
+    When *omniroute* is truthy, the ``model:`` field is stripped from copied
+    agent frontmatter so agents inherit the session model via
+    ``CLAUDE_CODE_SUBAGENT_MODEL`` instead of trying to route to a bare
+    Anthropic model id through OmniRoute (which would fail)."""
+    import json, shutil, re
     if not project_path:
         return 0
     dest = os.path.join(project_path, '.claude', 'agents')
@@ -477,11 +482,28 @@ def sync_project_agents(project_path, refs):
                 except Exception:
                     pass
 
-    # copy selected
+    # copy selected (strip model: frontmatter when routing via OmniRoute
+    # so agents inherit CLAUDE_CODE_SUBAGENT_MODEL instead of trying to
+    # call a bare Anthropic model id through the OmniRoute proxy)
     written = []
     for fn, src in desired.items():
         try:
-            shutil.copyfile(src, os.path.join(dest, fn))
+            dest_path = os.path.join(dest, fn)
+            if omniroute:
+                content = open(src, encoding='utf-8').read()
+                # Remove model: line from YAML frontmatter between --- fences
+                if content.startswith('---'):
+                    end = content.find('\n---', 3)
+                    if end != -1:
+                        fm = content[3:end]
+                        body = content[end + 4:]
+                        fm_lines = [l for l in fm.splitlines()
+                                    if not l.strip().startswith('model:')]
+                        content = '---' + '\n'.join(fm_lines) + '\n---' + body
+                with open(dest_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+            else:
+                shutil.copyfile(src, dest_path)
             written.append(fn)
         except Exception:
             pass

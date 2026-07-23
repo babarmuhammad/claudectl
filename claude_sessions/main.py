@@ -392,7 +392,8 @@ def run():
         # Re-sync in case the project .claude/agents/ drifted; safe no-op when
         # the selection already matches. Inline --agents is avoided because its
         # JSON overruns the Windows command line for real agents.
-        sync_project_agents(path, chosen_refs)
+        sync_project_agents(path, chosen_refs,
+                            omniroute=opts.get('omniroute'))
         # Remember per-project launch choices
         if encoded_name:
             settings.setdefault('project_defaults', {})[encoded_name] = {

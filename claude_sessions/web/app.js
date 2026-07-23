@@ -909,7 +909,7 @@ function drawPlanExec(){
       <div class="fld"><label>Model council</label><div class="chips" id="peCouncil">
         <span class="chip" data-v="1">Optimize plan with council</span></div>
         <div style="color:var(--dim);font-size:12px;margin-top:2px">Runs the draft past extra models for critique before you review it — costs more tokens.</div></div>
-      ${ST.accounts.length>1?`<div class="fld"><label>Execute under account</label><div class="chips" id="peAcct"></div></div>`:''}
+      ${ST.accounts.length>1?`<div class="fld"><label>Account (plan &amp; execute)</label><div class="chips" id="peAcct"></div></div>`:''}
       <div class="mrow"><button class="btn pri" onclick="peRun()">${ic('play')} Write the plan…</button></div></div>
     <div class="card" id="peEditCard" style="display:none"><h3>${ic('edit')} Edit plan <span class="sp"></span>
       <label style="font-size:13px;font-weight:400;display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -939,6 +939,16 @@ function drawPlanExec(){
   $('#peCouncil').querySelectorAll('.chip').forEach(c=>c.onclick=()=>c.classList.toggle('on'));
   if(ST.accounts.length>1) chipsFill($('#peAcct'),ST.accounts.map(a=>a.dir),ST.accounts.map(a=>a.name),ST.active_cfgdir);
   peViaChange();
+  // Re-navigating to this tab rebuilds the whole card and would otherwise
+  // silently reset via/model/account back to defaults, discarding a choice
+  // already captured for the plan currently in flight or awaiting approval.
+  const savedCfg=window._peExecCfg;
+  if(savedCfg&&savedCfg.via){
+    chipSet($('#peVia'),savedCfg.via);
+    peViaChange();
+    if(savedCfg.via!=='omniroute')chipSet($('#peExec'),savedCfg.execModel||'');
+  }
+  if(savedCfg&&ST.accounts.length>1)chipSet($('#peAcct'),savedCfg.account||'');
   // Restore any in-flight or just-finished plan work when returning to the tab:
   // a running job re-shows its inline banner, a finished-but-unreviewed plan
   // re-opens the editor. The background poll chain kept running the whole time.
@@ -964,13 +974,17 @@ async function peRun(){
   const council=!!$('#peCouncil').querySelector('.chip.on');
   const via=chipVal($('#peVia'));
   const model=chipVal($('#pePlan'));
-  const body={...C(),task,model,effort:chipVal($('#peEff')),council,via};
+  const execEl=$('#peExec'),acctEl=$('#peAcct');
+  const account=acctEl?chipVal(acctEl):'';
+  // account rides along on plan_make too — the plan call itself must run
+  // under the chosen account, not just the later execute launch, else a
+  // second account's plan-model access/limits are never actually used.
+  const body={...C(),task,model,effort:chipVal($('#peEff')),council,via,account};
   window._peTask=task;
   // Capture the execute-side config NOW while the chips are on-screen — the
   // plan may finish while the user is on another page, so peShowPlan can't
   // rely on the DOM still holding these values.
-  const execEl=$('#peExec'),acctEl=$('#peAcct');
-  window._peExecCfg={via,execModel:execEl?chipVal(execEl):'',account:acctEl?chipVal(acctEl):''};
+  window._peExecCfg={via,execModel:execEl?chipVal(execEl):'',account};
   peJobStart('plan_make',body,`Writing plan (${model})${council?' + council':''}`);
 }
 function peShowPlan(plan){
@@ -989,8 +1003,10 @@ async function peReplan(){
   const feedback=prompt('What to change about the plan? (feedback)');
   if(!feedback)return;
   const via=chipVal($('#peVia'));
+  const acctEl=$('#peAcct');
   const body={...C(),task,feedback,plan_text:curPlan,
-    model:chipVal($('#pePlan')),effort:chipVal($('#peEff')),council:false,via};
+    model:chipVal($('#pePlan')),effort:chipVal($('#peEff')),council:false,via,
+    account:acctEl?chipVal(acctEl):''};
   $('#peEditCard').style.display='none';
   peJobStart('plan_replan',body,'Re-planning with feedback');
 }
@@ -998,7 +1014,14 @@ async function peExecute(){
   const task=window._peTask||($('#peTask').value||'').trim();
   const plan=$('#pePlanEdit').value;
   const perStep=!!$('#pePerStep').checked;
-  const cfg=window._peExecCfg||{};
+  // Re-read the chips live rather than replaying the snapshot peRun() took
+  // when the plan was submitted — the review card stays on screen with the
+  // via/model/account chips still editable, so a change made after reading
+  // the plan (e.g. picking a different account before executing) must win.
+  const viaEl=$('#peVia'),execEl=$('#peExec'),acctEl=$('#peAcct');
+  const cfg=viaEl?{via:chipVal(viaEl),execModel:execEl?chipVal(execEl):'',
+                   account:acctEl?chipVal(acctEl):''}:(window._peExecCfg||{});
+  window._peExecCfg=cfg;
   $('#peEditCard').style.display='none';
   PE.plan=null;   // consumed — don't re-show on return
   peJobStart('plan_launch',{...C(),task,plan_text:plan,per_step:perStep,

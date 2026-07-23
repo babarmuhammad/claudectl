@@ -231,17 +231,20 @@ def run_with_progress(args, crumbs, label, timeout=120, cwd=None):
     return (chunks[0] if chunks else ''), False
 
 
-def run_with_progress_stdin(args, stdin_text, crumbs, label, timeout=240, cwd=None):
+def run_with_progress_stdin(args, stdin_text, crumbs, label, timeout=240, cwd=None, env=None):
     """Like run_with_progress but feeds the prompt via STDIN (avoids the
     Windows command-line length limit for large prompts). ESC cancels.
     Returns (stdout|None, cancelled). Silent/background mode: see
-    run_with_progress's docstring — same reasoning, same fix."""
+    run_with_progress's docstring — same reasoning, same fix.
+
+    env: full environment dict for the subprocess (e.g. to point
+    CLAUDE_CONFIG_DIR at a non-default account). None = inherit as before."""
     import subprocess
     from . import memory
     if getattr(memory._tls, 'silent', False):
         from .gui_api import _run_cancellable
         try:
-            return _run_cancellable(args, input_text=stdin_text, cwd=cwd, timeout=timeout), False
+            return _run_cancellable(args, input_text=stdin_text, cwd=cwd, env=env, timeout=timeout), False
         except Exception:
             return None, False
     import threading
@@ -249,7 +252,7 @@ def run_with_progress_stdin(args, stdin_text, crumbs, label, timeout=240, cwd=No
         proc = subprocess.Popen(
             args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='ignore',
-            cwd=cwd, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            cwd=cwd, env=env, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     except Exception:
         return None, False
 

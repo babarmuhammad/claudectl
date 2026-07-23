@@ -479,7 +479,13 @@ def omniroute_env(s=None, model=None):
         'ANTHROPIC_BASE_URL': s.get('omniroute_base_url') or '',
         'ANTHROPIC_AUTH_TOKEN': s.get('omniroute_api_key') or '',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
-        'CLAUDE_CODE_SUBAGENT_MODEL': 'claude-sonnet-5',
+        # NOTE: CLAUDE_CODE_SUBAGENT_MODEL was previously set to
+        # 'claude-sonnet-5' here, but OmniRoute can't route bare Anthropic
+        # model ids — agent calls go through the same OmniRoute proxy and
+        # fail with "Ambiguous model".  Agents now inherit the session's
+        # OmniRoute model instead, which guarantees routing works.  The
+        # model: field in agent .md files is also stripped by
+        # sync_project_agents(omniroute=True) for the same reason.
     }
     return {k: v for k, v in env.items() if v}
 

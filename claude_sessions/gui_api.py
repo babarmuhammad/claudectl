@@ -1228,6 +1228,10 @@ def api_job_start(q, body):
         task = body.get('task', '')
         effort = body.get('effort', '')
         council = bool(body.get('council'))
+        # plan under the same account chosen for execution -- otherwise the
+        # plan call silently runs under whatever account claudectl itself is
+        # active as, regardless of what the user picked in the GUI.
+        cfgdir = body.get('account') or ''
         # council must route through the SAME channel the user picked for
         # execution (body['via']), not the account-wide default setting --
         # else a stale omniroute_exec_model default silently routes every
@@ -1238,11 +1242,11 @@ def api_job_start(q, body):
         omni_env = omniroute_env(s, model='_') if via == 'omniroute' else {}
 
         def _make():
-            plan = _plan(task, model, path, effort)
+            plan = _plan(task, model, path, effort, cfgdir)
             if not plan:
                 raise RuntimeError('Planning failed or produced no output')
             if council:
-                plan = optimize_plan_council(task, plan, path, omni_env=omni_env)
+                plan = optimize_plan_council(task, plan, path, omni_env=omni_env, cfgdir=cfgdir)
             plan_path = write_plan_file(path, task, plan)
             if not plan_path:
                 raise RuntimeError('Could not save plan file')
@@ -1274,6 +1278,18 @@ def api_job_start(q, body):
                 ui.flash(f'OmniRoute: {msg}', ok=ok)
                 if not ok:
                     raise RuntimeError(msg)
+                # catch a stale/renamed omniroute_exec_model here, before
+                # launching -- otherwise the exec session opens fine and only
+                # fails once `claude` itself tries the model, deep inside the
+                # new terminal with no easy path back to fix the setting.
+                _exec_model_check = body.get('model') or s.get('omniroute_exec_model') or omniroute.AUTO_MODEL
+                if _exec_model_check != omniroute.AUTO_MODEL:
+                    available = [mid for mid, _lbl in omniroute.list_models(
+                        s.get('omniroute_base_url', ''), s.get('omniroute_api_key', ''))]
+                    if available and _exec_model_check not in available:
+                        raise RuntimeError(
+                            f"OmniRoute: exec model '{_exec_model_check}' is no longer available — "
+                            "pick a new one in Settings or switch to Auto")
                 # context-window warning for free-tier OmniRoute models
                 try:
                     _ctx = 0
@@ -1313,9 +1329,10 @@ def api_job_start(q, body):
         feedback = body.get('feedback', '')
         model = body.get('model') or 'claude-sonnet-5'
         effort = body.get('effort', '')
+        cfgdir = body.get('account') or ''
 
         def _replan():
-            revised = replan_from_plan(plan_text or task, feedback, model, path, effort)
+            revised = replan_from_plan(plan_text or task, feedback, model, path, effort, cfgdir)
             if not revised:
                 raise RuntimeError('Re-plan failed or produced no output')
             return {'plan': revised}

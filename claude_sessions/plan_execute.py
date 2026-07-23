@@ -137,12 +137,18 @@ def edit_plan(plan, action, index=None, text=''):
     return '\n'.join(lines)
 
 
-def _plan(task, plan_model, cwd, effort=''):
+def _plan(task, plan_model, cwd, effort='', cfgdir=''):
     """Headless plan generation with the plan model. Returns plan text or ''.
     effort matters here more than almost anywhere else in claudectl -- this
     is the ONE call that does the expensive reasoning, so it's worth paying
     for xhigh/max if the task is hard; a cheap effort here undermines the
     entire point of Plan→Execute.
+
+    cfgdir: resolved config dir of the account to plan under ('' = current
+    active account). Same knob build_exec_launch() takes for the execute
+    half -- without it the plan call always ran under whichever account
+    claudectl itself is running as, regardless of what account the user
+    picked to execute under.
 
     run_with_progress_stdin itself is silent-aware (memory._tls.silent, set
     by every GUI job thread) -- no separate branch needed here; see its
@@ -163,10 +169,15 @@ def _plan(task, plan_model, cwd, effort=''):
     if effort:
         args += ['--effort', effort]
 
+    env = None
+    if cfgdir:
+        env = os.environ.copy()
+        env['CLAUDE_CONFIG_DIR'] = cfgdir
+
     from .ui import run_with_progress_stdin
     out, _cancelled = run_with_progress_stdin(
         args, prompt, ('CLAUDECTL', 'PLAN'),
-        f'Planning with {plan_model}...', timeout=600, cwd=cwd)
+        f'Planning with {plan_model}...', timeout=600, cwd=cwd, env=env)
     result = (out or '').strip()
     if result:
         try: save_plan(result, plan_store_path())
@@ -174,7 +185,7 @@ def _plan(task, plan_model, cwd, effort=''):
     return result
 
 
-def _headless(model, prompt, cwd, omni_env=None):
+def _headless(model, prompt, cwd, omni_env=None, cfgdir=''):
     """One-shot headless call to `model` -- same plain-subprocess pattern
     _plan() uses for the silent/background path, minus the progress bar
     (council voices run back-to-back, not worth a renderer each).
@@ -183,6 +194,10 @@ def _headless(model, prompt, cwd, omni_env=None):
     already supports (config.omniroute_env()) -- routes council calls through
     the free-tier proxy too when it's configured, since a council is N extra
     calls per plan and that's exactly where the extra cost shows up.
+
+    cfgdir: same account override _plan() takes -- council voices should run
+    under the same account the user picked for the plan/execute, not
+    whatever account claudectl itself is running as.
 
     Caller picks the right roster for the target (COUNCIL_MODELS for direct
     API, OMNI_COUNCIL_MODELS for OmniRoute) -- model arrives here ready to use
@@ -197,6 +212,8 @@ def _headless(model, prompt, cwd, omni_env=None):
         return ''
     args = [exe, '-p', '--model', model, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash']
     env = os.environ.copy()
+    if cfgdir:
+        env['CLAUDE_CONFIG_DIR'] = cfgdir
     if omni_env:
         env.update(omni_env)
     from .gui_api import _run_cancellable
@@ -217,7 +234,7 @@ COUNCIL_MODELS = ['claude-sonnet-5', 'claude-opus-4-8', 'claude-haiku-4-5']
 OMNI_COUNCIL_MODELS = ['auto/best-reasoning', 'auto/best-coding', 'auto/best-fast']
 
 
-def optimize_plan_council(task, plan, cwd, models=None, omni_env=None):
+def optimize_plan_council(task, plan, cwd, models=None, omni_env=None, cfgdir=''):
     """Fan the draft plan out to a small council of OTHER models for critique,
     then synthesize one improved plan. Disabled callers simply never call
     this -- zero extra token cost. Routes through OmniRoute (omni_env) when
@@ -244,7 +261,7 @@ def optimize_plan_council(task, plan, cwd, models=None, omni_env=None):
     )
     critiques = []
     for m in roster:
-        out = _headless(m, critique_prompt, cwd, omni_env)
+        out = _headless(m, critique_prompt, cwd, omni_env, cfgdir)
         if out:
             critiques.append((m, out))
     if not critiques:
@@ -259,7 +276,7 @@ def optimize_plan_council(task, plan, cwd, models=None, omni_env=None):
         f"\n\nTASK:\n{task}\n\nDRAFT PLAN:\n{plan}\n\n"
         + "\n\n".join(f"CRITIQUE ({m}):\n{c}" for m, c in critiques)
     )
-    merged = _headless(roster[0], synth_prompt, cwd, omni_env)
+    merged = _headless(roster[0], synth_prompt, cwd, omni_env, cfgdir)
     return merged or plan
 
 
@@ -287,10 +304,10 @@ def replan(task, feedback):
     return plan
 
 
-def replan_from_plan(plan_text, feedback, plan_model, cwd, effort=''):
+def replan_from_plan(plan_text, feedback, plan_model, cwd, effort='', cfgdir=''):
     """Regenerate plan keeping original content + feedback."""
     revised = _plan(f"Original plan:\n{plan_text}\n\nFeedback:\n{feedback}",
-                    plan_model, cwd, effort)
+                    plan_model, cwd, effort, cfgdir)
     if revised:
         save_plan(revised, plan_store_path())
     return revised
@@ -470,7 +487,7 @@ def run(project_path, proj_folder, project_name, plan=None, per_step=False, shou
     if plan:
         pass  # use the pre-supplied plan
     else:
-        plan = _plan(task, plan_model, project_path, effort)
+        plan = _plan(task, plan_model, project_path, effort, cfgdir)
         if not plan:
             flash("Planning failed or cancelled", ok=False, secs=1.8)
             return False
@@ -480,7 +497,7 @@ def run(project_path, proj_folder, project_name, plan=None, per_step=False, shou
             via_note = ' via OmniRoute (free tier)' if omni_env else ''
             roster = OMNI_COUNCIL_MODELS if omni_env else COUNCIL_MODELS
             print(f"\n  Optimizing plan with model council ({', '.join(roster)}){via_note}...\n")
-            plan = optimize_plan_council(task, plan, project_path, omni_env=omni_env)
+            plan = optimize_plan_council(task, plan, project_path, omni_env=omni_env, cfgdir=cfgdir)
 
     # per-step approval: show each step and let user approve/skip
     if per_step and plan:
@@ -521,6 +538,17 @@ def run(project_path, proj_folder, project_name, plan=None, per_step=False, shou
         if not ok:
             flash(f"OmniRoute: {msg}", ok=False, secs=2.5)
             return False
+        # catch a stale/renamed omniroute_exec_model here, before launching --
+        # otherwise the exec session opens fine and only fails once `claude`
+        # itself tries the model, deep inside the new terminal with no easy
+        # path back to fix the setting.
+        if exec_model != omniroute.AUTO_MODEL:
+            available = [mid for mid, _lbl in omniroute.list_models(
+                s.get('omniroute_base_url', ''), s.get('omniroute_api_key', ''))]
+            if available and exec_model not in available:
+                flash(f"OmniRoute: exec model '{exec_model}' is no longer available — "
+                      "pick a new one in Settings or switch to Auto", ok=False, secs=3)
+                return False
         # context-window warning: free-tier OmniRoute models can have small
         # context windows — warn when CLAUDE.md + rules + plan are large
         try:

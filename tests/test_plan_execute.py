@@ -20,7 +20,7 @@ def test_plan_execute_happy_path(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, _ = sb.add_project('alpha')
     monkeypatch.setattr(plan_execute, '_plan',
-                        lambda task, m, cwd, effort='': '1. do X\n2. verify Y')
+                        lambda task, m, cwd, effort='', cfgdir='': '1. do X\n2. verify Y')
     monkeypatch.setattr(plan_execute, 'get_claude_exe', lambda: r'C:\fake.exe',
                         raising=False)
     launched = {}
@@ -47,7 +47,7 @@ def test_plan_execute_happy_path(monkeypatch, tmp_path):
 def test_plan_execute_reject(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, _ = sb.add_project('alpha')
-    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'a plan')
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'a plan')
     called = {}
     import subprocess
     monkeypatch.setattr(subprocess, 'call', lambda *a, **k: called.setdefault('x', 1))
@@ -98,7 +98,7 @@ def test_plan_prompt_includes_weak_model_instructions(monkeypatch, tmp_path):
 
 def test_council_synth_prompt_includes_weak_model_instructions(monkeypatch, tmp_path):
     seen = {}
-    def fake_headless(model, prompt, cwd, omni_env=None):
+    def fake_headless(model, prompt, cwd, omni_env=None, cfgdir=''):
         if 'CRITIQUE' not in prompt:
             return f'critique from {model}'
         seen['synth_prompt'] = prompt
@@ -132,7 +132,7 @@ def test_council_disabled_returns_plan_unchanged(monkeypatch, tmp_path):
 
 def test_council_enabled_calls_multiple_models_and_synthesizes(monkeypatch, tmp_path):
     calls = []
-    def fake_headless(model, prompt, cwd, omni_env=None):
+    def fake_headless(model, prompt, cwd, omni_env=None, cfgdir=''):
         calls.append(model)
         return 'FINAL MERGED PLAN' if model == plan_execute.COUNCIL_MODELS[0] and 'CRITIQUE' in prompt \
             else f'critique from {model}'
@@ -167,7 +167,7 @@ def test_council_short_plan_skipped(monkeypatch, tmp_path):
 
 def test_council_routes_through_omniroute_when_configured(monkeypatch, tmp_path):
     seen_envs = []
-    def fake_headless(model, prompt, cwd, omni_env=None):
+    def fake_headless(model, prompt, cwd, omni_env=None, cfgdir=''):
         seen_envs.append(omni_env)
         return f'critique from {model}'
     monkeypatch.setattr(plan_execute, '_headless', fake_headless)
@@ -202,7 +202,7 @@ def test_headless_never_prefixes_model(monkeypatch, tmp_path):
 
 def test_council_uses_omni_roster_when_routed_through_omniroute(monkeypatch, tmp_path):
     calls = []
-    def fake_headless(model, prompt, cwd, omni_env=None):
+    def fake_headless(model, prompt, cwd, omni_env=None, cfgdir=''):
         calls.append(model)
         return f'critique from {model}'
     monkeypatch.setattr(plan_execute, '_headless', fake_headless)
