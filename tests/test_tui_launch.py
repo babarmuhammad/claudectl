@@ -68,12 +68,11 @@ def test_economy_fields_cycle(monkeypatch, tmp_path):
     assert result['subagent_model'] == 'claude-haiku-4-5'
 
 
-def test_economy_preset_key(monkeypatch, tmp_path):
+def test_recommended_preset_alias_e(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
-    result, _ = run_menu(monkeypatch, flat(typed('e'), ENTER))
+    result, _ = run_menu(monkeypatch, flat(typed('e'), ENTER))   # e = preset 1 (Recommended)
     assert result['model'] == 'claude-sonnet-5'
-    assert result['max_thinking'] == '8000'
-    assert result['subagent_model'] == 'claude-haiku-4-5'
+    assert result['effort'] == 'high'
 
 
 def test_esc_returns_none(monkeypatch, tmp_path):
@@ -127,6 +126,54 @@ def test_resume_hides_new_fields(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     _, cap = run_menu(monkeypatch, flat(ENTER), is_new=False)
     assert 'Worktree' not in cap.plain
+
+
+def test_preset_key_recommended(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    result, _ = run_menu(monkeypatch, flat(typed('1'), ENTER))
+    assert result['model'] == 'claude-sonnet-5'
+    assert result['effort'] == 'high'
+
+
+def test_preset_key_deep_reasoning(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    result, _ = run_menu(monkeypatch, flat(typed('3'), ENTER))
+    assert result['model'] == 'claude-opus-4-8'
+    assert result['effort'] == 'xhigh'
+
+
+def test_effort_slider_moves(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    # field 0 = effort slider; RIGHT advances the knob off 'default' to 'low'
+    result, _ = run_menu(monkeypatch, flat(RIGHT, ENTER))
+    assert result['effort'] == 'low'
+
+
+def test_model_card_left_right(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    # field 0 = effort; DOWN -> Model; RIGHT advances selection off default
+    result, _ = run_menu(monkeypatch, flat(DOWN, RIGHT, ENTER))
+    assert result['model'] == 'claude-haiku-4-5'
+
+
+def test_advisor_warns_on_bad_combo(monkeypatch, tmp_path):
+    Sandbox(monkeypatch, tmp_path)
+    # Model -> opus (DOWN to model, RIGHT x3 = haiku,sonnet,opus), effort stays default->low
+    keys = flat(DOWN, RIGHT, RIGHT, RIGHT,   # model = opus-4-8
+                UP, RIGHT,                    # back to effort, -> low
+                ESC)
+    _, cap = run_menu(monkeypatch, keys)
+    assert 'Sonnet 5' in cap.plain and 'tip:' in cap.plain    # advises the cheaper equivalent
+
+
+def test_guide_overlay_and_no_emoji(monkeypatch, tmp_path):
+    import re
+    Sandbox(monkeypatch, tmp_path)
+    result, cap = run_menu(monkeypatch, flat(typed('?'), typed('x'), ENTER))
+    assert result is not None
+    assert 'MODEL GUIDE' in cap.plain
+    assert '$' in cap.plain and '▪' in cap.plain          # cost / capability bars
+    assert not re.search(r'[\U0001F000-\U0001FAFF]', cap.plain)   # no emoji
 
 
 def test_worktree_auto(monkeypatch, tmp_path):

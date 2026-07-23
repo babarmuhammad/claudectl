@@ -148,8 +148,19 @@ Run two (or more) accounts with almost no friction — claudectl owns the config
 - **Inject context across accounts** (`⇧K` in the sessions menu) — start a new session seeded with the transcript of any prior session for this project, including ones from a different account.
 - **Account-accurate memory** — the memory graph lives under the project's real path (shared by every account), and the features that feed it now read **every** account's sessions: lesson extraction, the CLAUDE.md session-topics block, per-project usage stats, workspace freshness counts, and the recent-sessions quick-resume list. A project used under two accounts is one merged row in the usage dashboard, not two.
 
-### Plan→Execute — two models, one task (`⇧X`)
-Plan with an accurate model, execute with a cheaper/faster one — big token savings for the same result. claudectl plans the task headlessly with `plan_model` (default Opus 4.8), shows you the plan to approve/reject, saves it to `.claudectl/plan-latest.md`, then launches an interactive session on `exec_model` (default Sonnet 5) seeded to read and execute that plan. Expensive reasoning happens once; the build runs on the cheap tier. Nobody else orchestrates this from the launcher.
+### Plan→Execute — two models, one task (`⇧X` in the TUI; its own **Plan → Execute** project tab in the GUI)
+Plan with an accurate model, execute with a cheaper — or completely free — one, for the same result. claudectl plans the task headlessly with `plan_model` (default Opus 4.8, effort picked per task), shows you the plan to approve/reject, saves it to `.claudectl/plan-latest.md`, then launches a **real, full interactive `claude` session** — same account, agents, skills, system prompt, and `--add-dir` roots this project already has — on `exec_model` (default Sonnet 5), seeded to read and execute that plan. Expensive reasoning happens once; the build runs on the cheap tier.
+
+**Free execution via OmniRoute** — point the execute half at a local [OmniRoute](https://github.com/diegosouzapw/OmniRoute) proxy instead of your Anthropic account, and it runs on OmniRoute's aggregated free-tier providers. Left on *Auto* (the default), OmniRoute itself scores every currently-healthy free model per request (health/quota/cost/latency/task-fit) and transparently falls back to the next-best one if the current one is rate-limited or exhausted — no manual model juggling, and claudectl auto-starts OmniRoute in the background the moment you run a task through it, so there's no terminal to babysit.
+
+**Setup (one-time):** connecting at least one provider happens in OmniRoute's own dashboard — claudectl never touches that credential.
+1. Install OmniRoute: `npm install -g omniroute` (PowerShell: run on its own line, or `;`-chain — no `&&`).
+2. Set a dashboard password once: `omniroute setup --password <yours>`.
+3. Start it (`omniroute`, or let claudectl auto-start it on first use) and open `http://localhost:20128` → log in → **Providers → Add Provider**, or go straight to **Free tiers**. Several are genuinely zero-signup (Pollinations, Puter, NVIDIA, OpenCode, FriendliAI, Coze, and more) — connect one or two. *(Note: OmniRoute's marketing claims ~90 free providers; what's actually reachable without a real signup is a smaller genuinely-keyless subset — worth checking the current list yourself in the dashboard.)*
+4. In claudectl's GUI **Settings → Free execution — OmniRoute**: leave the base URL at `http://localhost:20128`, click **Refresh** — the status dot shows provider(s) active once step 3 is done — leave **Execute model** on *Auto*, Save.
+5. Open a project's **Plan → Execute** tab, describe a task, pick **Execute via → OmniRoute**, approve the plan. First run starts OmniRoute for you if it isn't already running.
+
+Nobody else orchestrates this from the launcher.
 
 ### Adaptive agent selection (`g`)
 The agents screen opens with a **"Suggested for this project"** section — library agents ranked against the project's languages (from the dependency graph), memory entities, and name. Local scoring, instant, free. Setting `agents_auto: 'auto'` applies suggestions automatically on first open (your manual picks are never touched).
@@ -193,10 +204,20 @@ Everything above, as a native desktop app — full feature parity with the TUI, 
 - **Shells** — PyQt6 native window if installed, else an Edge app-mode window, else the browser (`gui_shell` setting: auto / qt / edge / browser). The bottom-left toggle (or `ui_mode`) picks which interface starts by default; `--tui`/`--gui` always override.
 - **Projects & sessions** — sidebar with live filter and quick-resume; per-session resume / fork / rename / tag / archive / restore / delete / export markdown / transcript with session info / changed files.
 - **Launch modal** — effort, model, permission mode, account, thinking cap, subagent model, session name, worktree — as one-click chips, prefilled from your defaults. Sessions open in a real new console window.
-- **Project tabs** — Memory (build / ask / recall preview / lessons review / workspace status, with **live scan progress**), CLAUDE.md (view / scaffold / AI analyze / AI compress / prune / edit + memory files map + system prompt), Audit (context weight + deny rules), Usage, Tools (inject context from any session/account, Plan→Execute, project agents picker mirroring the TUI's category multi-select with suggestions, extra PATH entries, `--add-dir` directories), and the architecture Graph.
+- **Project tabs** — Memory (build / ask / recall preview / lessons review / workspace status, with **live scan progress**), CLAUDE.md (view / scaffold / AI analyze / AI compress / prune / edit + memory files map + system prompt), Audit (context weight + deny rules), Usage, **Plan → Execute** (plan model + effort, execute via Anthropic or free OmniRoute, full explanation inline), Tools (inject context from any session/account, project agents picker mirroring the TUI's category multi-select with suggestions, extra PATH entries, `--add-dir` directories), and the architecture Graph.
 - **Managers** — MCP servers, agent library + AI-generate, hooks + AI-generate, accounts — same operations as the TUI, with the same diff-approval gate for AI-written files (jobs run server-side, you approve a git-style diff before anything is written).
 - **Usage banner** — one live bar-row per account (session/weekly/model windows with reset times), auto-refreshes every minute, refresh button for an immediate re-fetch.
 - **Themes** — all 17 TUI palettes restyle the whole app (backgrounds, panels, text — derived from each theme's hue); pick in Settings with **live preview** before saving. Icons are inline Material SVG — no CDN, no emoji.
+
+#### GUI enhancements (latest)
+
+- **Stacked toasts** — multiple simultaneous notifications (errors, success, info) stack instead of overwriting; each auto-dismisses after 3.5 seconds.
+- **Job cancel** — running background jobs (plan generation, memory build, review) show a Cancel button; `cancelled` flag is cooperative (checked at loop top, no thread kill).
+- **Persistent preferences** — theme and account selection saved to `localStorage`, restored across page reloads.
+- **Editable Plan → Execute** — generated plan appears in a monospace textarea for inline editing before approval; "Re-plan" button sends feedback to regenerate; "Per-step approval" checkbox gates execution step by step.
+- **Plan persistence** — every generated plan is auto-saved to `last_plan.json`; `save_plan()/load_plan()` helpers for programmatic access.
+- **Skills / Worklog / Review / Model-routing panels** — all already integrated: Skills manager, worklog toggle + entry history, one-click code review (working diff or staged-only), and OmniRoute free-tier configuration — all surfaced with zero extra deps.
+- **Error surfacing** — job failures show the error message in a red toast instead of a generic "Failed".
 
 ### Quality of life
 - **Themes (17)** — switch palette in Settings (live preview, cursor stays on the selection): default, ocean, forest, mono, ember (red), plus Catppuccin Mocha, Catppuccin Latte, Tokyo Night, Dracula, Nord, Gruvbox, Rosé Pine, Kanagawa, Everforest, Ayu, Monokai Pro, Solarized
@@ -580,3 +601,29 @@ claudectl's `find_actual_path()` in `paths.py` reverses this by walking the file
 | Wrong account / want a second account | Set **Config dir** in **⚙ Settings** to that account's `CLAUDE_CONFIG_DIR` (e.g. `~/.claude-work`). Drives both session browsing and the env handed to `claude` at launch. Blank = default `~/.claude`. Restart claudectl to apply. One config dir active at a time. |
 | Settings location | `~/.claude/claudectl.json` — safe to edit by hand or delete to reset (always read from `~/.claude`, independent of Config dir) |
 | Usage stats look stale | Delete `~/.claude/claudectl-stats-cache.json` — it rebuilds on the next scan |
+
+## Token-saving & workflow features
+
+- **Economy model routing** — claudectl's own internal Claude calls (memory extraction, lessons, CLAUDE.md / agent / hook / skill generation) default to **Haiku** to cut cost, while your actual coding sessions keep whatever model you choose. Change it in **⚙ Settings → Economy model** (`extract_model`).
+- **Skills manager** — browse, install, scaffold, and AI-generate Claude Code **skills** (`.claude/skills/<name>/SKILL.md`) that load on demand instead of bloating `CLAUDE.md`. Ships with cited starter templates (see Credits). TUI: **⚙ Skills**; GUI: the **Skills** tab.
+- **Code review** — `claudectl review [--staged] [--branch <base>]` reviews your working diff against your `CLAUDE.md` rules + learned memory lessons and reports **confidence-scored** findings (only ≥80% shown). Also on the project **Review** tab (GUI) and the `⇧R` key in the session menu.
+- **Recent-work memory** — opt-in per project (Memory tab / `⇧W` in the hub). Records a token-free one-line summary + files touched at the end of each session and injects a compact digest on the next `SessionStart`, so Claude knows what the last few sessions did.
+
+## Credits & Inspiration
+
+claudectl is built on ideas from the wider Claude Code ecosystem. With thanks:
+
+- **[microsoft/markitdown](https://github.com/microsoft/markitdown)** — document→markdown token-efficiency thinking (doc ingestion is on the roadmap).
+- **[anthropics/claude-code](https://github.com/anthropics/claude-code)** `code-review` plugin — the confidence-scoring + high-threshold + CLAUDE.md-compliance review pattern behind `claudectl review`.
+- **[thedotmack/claude-mem](https://github.com/thedotmack/claude-mem)** — the session-observation → summary → `SessionStart` injection pattern behind **Recent-work memory**.
+- **[anthropics/claude-plugins-official](https://github.com/anthropics/claude-plugins-official)** — the Skills (`SKILL.md`) extension model and plugin structure.
+- **[diegosouzapw/OmniRoute](https://github.com/diegosouzapw/OmniRoute)** (MIT) — self-hosted free-tier model proxy; originally the inspiration for **Economy model routing**, now also the backend behind **Settings → Free execution**, which routes the *execute* half of Plan → Execute to OmniRoute's free tier while planning stays on your real Anthropic account.
+- **[olsenbrands/fable-foreman](https://github.com/olsenbrands/fable-foreman)** (MIT, Jordan Olsen) — the Claude Code skill + worker/verifier subagent pattern for delegating execution to cheaper models under a frontier model's plan. Installable from **⚙ Skills → Install from GitHub**.
+- **[claudemarketplaces.com](https://claudemarketplaces.com/)** — skill/plugin discovery; the `caveman` token-compression skill inspired the bundled `token-economy` starter.
+
+Bundled starter skills under `claude_sessions/skills_templates/` are original write-ups inspired by patterns in these community collections, each credited in-file:
+[alirezarezvani/claude-skills](https://github.com/alirezarezvani/claude-skills),
+[ComposioHQ/awesome-claude-skills](https://github.com/ComposioHQ/awesome-claude-skills),
+[obra/superpowers](https://github.com/obra/superpowers),
+[khalilbenaz/claude-skills-collection](https://github.com/khalilbenaz/claude-skills-collection).
+They follow [Conventional Commits](https://www.conventionalcommits.org/) and [Keep a Changelog](https://keepachangelog.com/) where relevant.

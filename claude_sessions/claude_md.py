@@ -779,8 +779,10 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
         # folder of many repos) overruns the Windows command-line limit
         # (~32KB) → [WinError 206]. `claude -p` with no positional prompt
         # reads the prompt from stdin.
+        from .memory import extract_model
+        _mf = ['--model', extract_model()] if extract_model() else []
         proc = subprocess.Popen(
-            [claude_exe, '-p', '--output-format', 'stream-json', '--verbose', '--allowedTools', ''],
+            [claude_exe, '-p', *_mf, '--output-format', 'stream-json', '--verbose', '--allowedTools', ''],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding='utf-8', errors='ignore',
             cwd=project_path

@@ -182,6 +182,67 @@ def test_agents_create_read_delete(monkeypatch, tmp_path):
         srv.shutdown()
 
 
+def test_skills_endpoints(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    monkeypatch.setattr(config_mod, 'skills_library_dir', str(tmp_path / 'sklib'))
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    srv, base = _serve()
+    try:
+        # templates list includes the bundled starters
+        code, d = _req(f'{base}/api/skills?path={urllib.request.quote(actual)}')
+        assert code == 200
+        names = [t['name'] for t in d['templates']]
+        assert 'commit-message' in names and d['project'] == []
+
+        # install a bundled template into the project
+        tmpl = next(t for t in d['templates'] if t['name'] == 'commit-message')
+        code, r = _req(base + '/api/skills/install', {'dir': tmpl['dir'], 'path': actual})
+        assert r['ok'] and os.path.isfile(os.path.join(r['dir'], 'SKILL.md'))
+
+        # now it shows under project skills
+        code, d = _req(f'{base}/api/skills?path={urllib.request.quote(actual)}')
+        assert any(s['name'] == 'commit-message' for s in d['project'])
+
+        # read it back
+        code, r = _req(base + '/api/skills/read?dir=' + urllib.request.quote(tmpl['dir']))
+        assert r['meta']['name'] == 'commit-message'
+
+        # create a fresh skill, then remove it
+        code, r = _req(base + '/api/skills/create',
+                       {'name': 'my new skill', 'description': 'does things',
+                        'path': actual, 'body': '# X\n\nstep'})
+        assert r['ok'] and os.path.isfile(os.path.join(r['dir'], 'SKILL.md'))
+        code, r = _req(base + '/api/skills/remove', {'dir': r['dir']})
+        assert r['ok']
+    finally:
+        srv.shutdown()
+
+
+def test_worklog_endpoints(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    monkeypatch.setattr(config_mod, 'settings_file', str(tmp_path / 'cl.json'))
+    from claude_sessions import hooks as hooks_mod
+    monkeypatch.setattr(hooks_mod, 'settings_path', str(tmp_path / 'hooks.json'))
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    # seed a worklog entry on disk
+    from claude_sessions import worklog
+    worklog.add_entry(actual, {'session_id': 's1', 'ended_at': '2026-07-20T10:00:00Z',
+                               'summary': 'did work', 'files': ['a.py']})
+    srv, base = _serve()
+    try:
+        # off by default
+        code, d = _req(f'{base}/api/worklog?path={urllib.request.quote(actual)}&enc={enc}')
+        assert code == 200 and d['on'] is False
+        assert d['entries'] and d['entries'][0]['summary'] == 'did work'
+        # enable → persisted + hook installed
+        code, r = _req(base + '/api/worklog', {'enc': enc, 'on': True})
+        assert r['ok'] and r['on'] and r['installed']
+        code, d = _req(f'{base}/api/worklog?path={urllib.request.quote(actual)}&enc={enc}')
+        assert d['on'] is True
+    finally:
+        srv.shutdown()
+
+
 def test_accounts_add_rename_remove(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     monkeypatch.setattr(config_mod, '_USERPROFILE', str(tmp_path))
@@ -491,6 +552,186 @@ def test_job_memory_ask(monkeypatch, tmp_path):
         srv.shutdown()
 
 
+def test_job_review(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import review as review_mod, memory as memory_mod
+    monkeypatch.setattr(review_mod, 'get_diff', lambda *a, **k: 'diff\n+bad = eval(x)')
+    monkeypatch.setattr(review_mod, 'gather_guidance', lambda *a, **k: '')
+    monkeypatch.setattr(memory_mod, '_claude_stdin', lambda *a, **k:
+                        '[{"file":"f.py","line":9,"confidence":95,'
+                        '"severity":"critical","category":"security","summary":"eval"}]')
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'review', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg)})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        res = st['result']
+        assert res['findings'][0]['file'] == 'f.py'
+        assert res['findings'][0]['severity'] == 'critical'
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_make_with_council(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import plan_execute
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    seen = {}
+    def fake_council(task, plan, cwd, models=None, omni_env=None):
+        seen['called'] = (task, plan)
+        return 'council-optimized plan'
+    monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_make', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing', 'council': True})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert seen['called'] == ('do a thing', 'draft plan')
+        assert st['result']['plan'] == 'council-optimized plan'
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_make_without_council_skips_optimizer(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import plan_execute
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    def boom(*a, **k):
+        raise AssertionError('council must not run when disabled')
+    monkeypatch.setattr(plan_execute, 'optimize_plan_council', boom)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_make', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing'})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert st['result']['plan'] == 'draft plan'
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_make_council_ignores_stale_omniroute_default(monkeypatch, tmp_path):
+    # regression: council used to always route through the account-wide
+    # omniroute_exec_model default regardless of the 'via' the user picked
+    # for THIS plan -- a stale/unreachable default silently killed every
+    # council call (via _headless's own failure swallowing) with no error
+    # surfaced. Council must follow the request's own 'via', same as
+    # plan_launch already does.
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import plan_execute, config as cfg
+    s = cfg.load_settings()
+    s['omniroute_exec_model'] = 'auto/coding'
+    s['omniroute_base_url'] = 'http://127.0.0.1:1'
+    cfg.save_settings(s)
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    seen = {}
+    def fake_council(task, plan, cwd, models=None, omni_env=None):
+        seen['omni_env'] = omni_env
+        return 'council-optimized plan'
+    monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_make', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing', 'council': True,
+                        'via': 'anthropic'})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert seen['omni_env'] == {}
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_make_council_uses_omniroute_when_via_selected(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import plan_execute, config as cfg
+    s = cfg.load_settings()
+    s['omniroute_exec_model'] = 'auto/coding'
+    s['omniroute_base_url'] = 'http://localhost:20128'
+    s['omniroute_api_key'] = 'secret'
+    cfg.save_settings(s)
+    monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='': 'draft plan')
+    seen = {}
+    def fake_council(task, plan, cwd, models=None, omni_env=None):
+        seen['omni_env'] = omni_env
+        return 'council-optimized plan'
+    monkeypatch.setattr(plan_execute, 'optimize_plan_council', fake_council)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_make', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing', 'council': True,
+                        'via': 'omniroute'})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert seen['omni_env'] == {'ANTHROPIC_BASE_URL': 'http://localhost:20128',
+                                     'ANTHROPIC_AUTH_TOKEN': 'secret'}
+    finally:
+        srv.shutdown()
+
+
+def test_job_plan_launch_forwards_account(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import plan_execute, config as config_mod2
+    monkeypatch.setattr(config_mod2, 'get_claude_exe', lambda: r'C:\fake.exe')
+    other_acct = str(tmp_path / 'other-account')
+    captured = {}
+    import subprocess
+    monkeypatch.setattr(subprocess, 'Popen',
+                        lambda args, **k: captured.setdefault('env', k.get('env')) or None)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/job',
+                       {'kind': 'plan_launch', 'path': actual, 'enc': enc,
+                        'cfgdir': str(sb.cfg), 'task': 'do a thing', 'account': other_acct})
+        jid = d['job']
+        for _ in range(100):
+            code, st = _req(f'{base}/api/job/{jid}')
+            if st['status'] in ('done', 'error'):
+                break
+            time.sleep(0.05)
+        assert st['status'] == 'done'
+        assert captured['env']['CLAUDE_CONFIG_DIR'] == other_acct
+    finally:
+        srv.shutdown()
+
+
 def test_unknown_job_kind_rejected(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     srv, base = _serve()
@@ -613,6 +854,111 @@ def test_gui_page_has_open_project_wiring(monkeypatch, tmp_path):
     assert "/api/open-path" in PAGE and "/api/path-complete" in PAGE
 
 
+def test_gui_launch_modal_redesign(monkeypatch, tmp_path):
+    """Part B launch-modal redesign: real effort slider (not a stray chips
+    div), Advanced fields collapsed behind a <details>, design tokens in
+    :root, and the Resume button rendered outside the hover-only .acts group."""
+    from claude_sessions.gui_html import PAGE
+    assert '<input type="range" id="fEffort"' in PAGE
+    assert 'chipVal($(\'#fEffort\'))' not in PAGE   # old dead-code bug
+    assert '<details class="adv">' in PAGE
+    assert '--r-sm:' in PAGE and '--sp1:' in PAGE and '--mono:' in PAGE
+    # primary Resume/Restore button sits after the hover-revealed .acts block
+    sess_tpl = PAGE[PAGE.index('function drawSessions'):PAGE.index('function resumeS')]
+    assert 'class="acts">' in sess_tpl
+    acts_close = sess_tpl.index('</div>', sess_tpl.index('class="acts">'))
+    pri_idx = sess_tpl.index('btn sm pri')
+    assert pri_idx > acts_close
+
+
+def test_list_projects_exposes_last_active(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import gui
+    rows = gui.list_projects()
+    assert rows and all('last_active' in r and r['last_active'] for r in rows)
+
+
+def test_gui_launch_modal_frontier_slider(monkeypatch, tmp_path):
+    """The model+effort picker is now a single frontier slider by default;
+    the old raw model-card grid + effort slider still exist but only as a
+    'pin an exact model + effort' override tucked inside Advanced."""
+    from claude_sessions.gui_html import PAGE
+    assert '<input type="range" id="fFrontier"' in PAGE
+    assert 'id="fPinModel"' in PAGE and 'id="fPinBlock"' in PAGE
+    assert 'function currentModelEffort' in PAGE and 'function frontierRow' in PAGE
+    assert 'function setPinMode' in PAGE
+    # doLaunch must resolve through currentModelEffort(), not a stale chip/card read
+    do_launch = PAGE[PAGE.index('async function doLaunch'):]
+    assert 'currentModelEffort()' in do_launch[:400]
+    # the raw pin controls sit inside the Advanced <details>, not top-level
+    adv = PAGE[PAGE.index('<details class="adv">'):PAGE.index('</details>')]
+    assert 'id="fModel"' in adv and 'id="fEffort"' in adv
+    modal_body = PAGE[PAGE.index('<h3 id="mTitle">'):PAGE.index('<details class="adv">')]
+    assert 'id="fModel"' not in modal_body and 'id="fEffort"' not in modal_body
+
+
+def test_gui_state_exposes_frontier(monkeypatch, tmp_path):
+    sb = Sandbox(monkeypatch, tmp_path)
+    srv, base = _serve()
+    try:
+        code, d = _req(base + '/api/state')
+        assert code == 200
+        frontier = d['options']['frontier']
+        assert len(frontier) == 7
+        assert frontier[0][0] == 'claude-haiku-4-5'
+        assert frontier[-1][0] == 'claude-fable-5'
+    finally:
+        srv.shutdown()
+
+
+def test_gui_home_bento_dashboard_and_recent_age(monkeypatch, tmp_path):
+    """Home is a bento-style dashboard (continue/usage/projects/search/actions
+    tiles), not the old 3D swipeable card deck -- and each recent row still
+    carries a human 'age' for the continue tile."""
+    from claude_sessions.gui_html import PAGE
+    # the old deck is gone entirely
+    for dead in ('deckMarkup', 'renderDeck', 'bindDeckSwipe', 'deckNext',
+                 'deckPrev', 'deckBring', 'deckCardClick', 'DECK_ORDER'):
+        assert dead not in PAGE, dead
+    assert 'class="deck"' not in PAGE and 'class="deckcard"' not in PAGE
+    # the new dashboard tiles exist
+    assert 'class="bento"' in PAGE
+    for tile in ('t-continue', 't-usage', 't-projects', 't-search', 't-actions'):
+        assert f'class="card {tile}"' in PAGE
+    assert 'function continueTileHtml' in PAGE and 'function projectsTileHtml' in PAGE
+    assert 'function loadHomeUsage' in PAGE and 'function drawHomeSearchResults' in PAGE
+    # continue-tile resume reuses the one-click + inline-tune helpers, not askLaunch
+    home_resume = PAGE[PAGE.index('function homeResume('):PAGE.index('function toggleHomeTune')]
+    assert 'askLaunch' not in home_resume and 'doQuickLaunch' in home_resume
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, sids = _seed(sb, monkeypatch)
+    from claude_sessions import sessions as sessions_mod
+    monkeypatch.setattr(sessions_mod, 'load_recent_sessions', lambda n=5: [
+        {'project_path': actual, 'encoded_name': enc, 'session_id': sids[0],
+         'timestamp': time.time(), 'cfgdir': str(sb.cfg)}])
+    from claude_sessions import gui
+    payload = gui.state_payload()
+    assert payload['recent'] and payload['recent'][0]['age']
+
+
+def test_gui_project_resume_is_one_click_with_inline_tune(monkeypatch, tmp_path):
+    """Clicking Resume on a session inside a project must NOT open the
+    launch modal (askLaunch) — it launches immediately via doQuickLaunch
+    with the recommended/last-used model+effort. A secondary settings icon
+    expands that row in place (.rowtune) to override power before resuming,
+    with no overlay/dimming involved."""
+    from claude_sessions.gui_html import PAGE
+    resume_s = PAGE[PAGE.index('function resumeS('):PAGE.index('function forkS')]
+    assert 'askLaunch' not in resume_s
+    assert 'doQuickLaunch' in resume_s
+    assert 'function defaultModelEffort' in PAGE
+    assert 'function toggleTune' in PAGE and 'function resumeTuned' in PAGE
+    assert 'class="rowtune"' in PAGE
+    # Fork/New-session/Continue still use the full modal (more fields, less frequent)
+    assert 'askLaunch' in PAGE[PAGE.index('function forkS'):PAGE.index('function forkS')+200]
+
+
 def test_hook_template_installed_flag(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     from claude_sessions import hooks as hooks_mod
@@ -627,5 +973,46 @@ def test_hook_template_installed_flag(monkeypatch, tmp_path):
         code, d = _req(base + '/api/hooks')
         flags = {t['key']: t['installed'] for t in d['templates']}
         assert flags[key] is True
+    finally:
+        srv.shutdown()
+
+
+def test_plan_edit_endpoint(monkeypatch, tmp_path):
+    """Edit-plan via GUI API returns OK + modified plan for valid edits,
+    and returns error + no plan for invalid operations."""
+    from claude_sessions import plan_execute
+    srv, base = _serve()
+    plan = '1. first step\n2. second step\n3. third step'
+    try:
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'edit', 'index': 1, 'text': 'modified'})
+        assert d['ok'] and 'modified' in d['plan'] and 'first step' in d['plan']
+
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'delete', 'index': 0})
+        assert d['ok'] and 'second step' in d['plan'] and 'first step' not in d['plan']
+
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'insert', 'index': 1, 'text': 'new'})
+        assert d['ok'] and d['plan'].count('. ') == 4
+
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'move', 'index': 0, 'text': '2'})
+        assert d['ok']
+
+        # invalid index returns error
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'edit', 'index': 99, 'text': 'x'})
+        assert not d['ok'] and 'error' in d
+
+        # empty text returns error
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': plan, 'action': 'edit', 'index': 0, 'text': ''})
+        assert not d['ok'] and 'error' in d
+
+        # no-number plan returns error
+        code, d = _req(base + '/api/plan/edit',
+                       {'plan': 'just text', 'action': 'edit', 'index': 0, 'text': 'x'})
+        assert not d['ok'] and 'error' in d
     finally:
         srv.shutdown()

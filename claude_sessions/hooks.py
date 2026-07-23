@@ -220,6 +220,75 @@ def memory_hook_installed():
                for h in (e.get('hooks') or []))
 
 
+# ── recent-work (worklog) hook: SessionStart inject + Stop capture ──
+
+def _worklog_hook_command():
+    import sys
+    script = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'worklog_hook.py')
+    return f'"{sys.executable}" "{script}"'
+
+
+# one script serves both events; per-project opt-in is checked inside the script
+_WORKLOG_EVENTS = ('SessionStart', 'Stop')
+
+
+def install_worklog_hook():
+    """Idempotently install (or repair) the recent-work hook on SessionStart +
+    Stop in user-scope settings.json. Returns True when present after."""
+    s = _load()
+    hooks = s.setdefault('hooks', {})
+    cmd = _worklog_hook_command()
+    changed = False
+    for event in _WORKLOG_EVENTS:
+        entries = hooks.setdefault(event, [])
+        if not isinstance(entries, list):
+            continue
+        found = False
+        for entry in entries:
+            for h in (entry.get('hooks') or []):
+                if 'worklog_hook.py' in str(h.get('command', '')):
+                    found = True
+                    if h.get('command') != cmd:
+                        h['command'] = cmd
+                        h['timeout'] = 10
+                        changed = True
+        if not found:
+            entries.append({'hooks': [{'type': 'command', 'command': cmd, 'timeout': 10}]})
+            changed = True
+    return _save(s) if changed else True
+
+
+def uninstall_worklog_hook():
+    s = _load()
+    changed = False
+    for event in _WORKLOG_EVENTS:
+        entries = (s.get('hooks') or {}).get(event)
+        if not isinstance(entries, list):
+            continue
+        for entry in list(entries):
+            hs = entry.get('hooks') or []
+            kept = [h for h in hs if 'worklog_hook.py' not in str(h.get('command', ''))]
+            if len(kept) != len(hs):
+                changed = True
+                if kept:
+                    entry['hooks'] = kept
+                else:
+                    entries.remove(entry)
+        if not entries:
+            s.get('hooks', {}).pop(event, None)
+    return _save(s) if changed else True
+
+
+def worklog_hook_installed():
+    hooks = _load().get('hooks') or {}
+    for event in _WORKLOG_EVENTS:
+        for e in hooks.get(event) or []:
+            if isinstance(e, dict) and any('worklog_hook.py' in str(h.get('command', ''))
+                                           for h in (e.get('hooks') or [])):
+                return True
+    return False
+
+
 def _load():
     try:
         with open(settings_path, encoding='utf-8') as f:
@@ -252,6 +321,7 @@ def _entry_commands(entry):
 # bundled hook scripts → friendly name (matcher/event alone can't tell them apart)
 _SCRIPT_LABELS = {
     'recall_hook.py': 'recall (project memory)',
+    'worklog_hook.py': 'recent-work memory',
     'minimalcode_hook.py': 'minimal-code',
     'concise_hook.py': 'concise-output',
     'testfilter_hook.py': 'filter-test-output',

@@ -35,6 +35,12 @@ settings_file = os.path.join(_USERPROFILE, '.claude', 'claudectl.json')
 # auto-load them; claudectl injects the chosen ones per session via --agents.
 agents_library_dir = os.path.join(_USERPROFILE, '.claude', 'claudectl-agents')
 
+# Skill library — account-independent store of user SKILL.md skill folders.
+# Bundled starter templates ship in the package (skills_templates/); the
+# library holds the user's own + any they save. Installed per-project into
+# <project>/.claude/skills/ where Claude Code auto-discovers them on demand.
+skills_library_dir = os.path.join(_USERPROFILE, '.claude', 'claudectl-skills')
+
 _DEFAULT_SETTINGS = {
     'editor': '',              # path to preferred text editor ('' = auto-detect)
     'claude_exe': '',          # path to claude.exe ('' = auto-detect)
@@ -60,6 +66,11 @@ _DEFAULT_SETTINGS = {
     'conventions_to_global': True,  # promote cross-project conventions to ~/.claude/CLAUDE.md
     'plan_model': 'claude-opus-4-8',   # Plan→Execute: model that writes the plan
     'exec_model': 'claude-sonnet-5',   # Plan→Execute: model that executes it
+    'extract_model': 'claude-haiku-4-5',  # economy model for claudectl's OWN internal
+                                          # calls (memory/lessons/CLAUDE.md/agent/hook/
+                                          # skill generation). '' = account default.
+    'review_model': '',                # code-review model ('' = fall back to exec_model)
+    'review_min_confidence': 80,       # code-review: drop findings below this (0-100)
     'accounts': [],                    # named Claude accounts: [{'name','dir'}]
     'claude_md_sessions_cap': 10,  # SESSIONS block: keep most recent N (0 = unlimited)
     'claude_md_commits': 7,        # AUTOGEN block: git log -N per repo
@@ -68,6 +79,11 @@ _DEFAULT_SETTINGS = {
     'ui_mode': 'tui',              # default interface: 'tui' | 'gui' (desktop app)
     'gui_shell': 'auto',           # GUI window: 'auto' | 'qt' | 'edge' | 'browser'
     'auto_memory_interval': 3600,  # GUI background auto-memory re-check cadence (s)
+    'omniroute_base_url':   'http://localhost:20128',  # local OmniRoute proxy
+    'omniroute_api_key':    '',   # -> ANTHROPIC_AUTH_TOKEN for the exec session
+    'omniroute_exec_model': '',   # Plan→Execute exec model, routed free-tier via
+                                   # OmniRoute instead of the real Anthropic API.
+                                   # '' = disabled (exec_model/real API as usual).
 }
 
 
@@ -335,6 +351,158 @@ COST_PER_MTOK = {
 }
 CACHE_READ_MULT  = 0.1
 CACHE_WRITE_MULT = 1.25
+
+# ── model economy guide (launch picker) ──────────────────────────────────
+# Practical cost/capability profiles for the curated launch roster. Cost bars
+# are derived from COST_PER_MTOK so they stay in sync with pricing; capability
+# and guidance reflect Anthropic's July-2026 tuning notes (medium = sweet spot,
+# high/xhigh for coding-agentic, sonnet handles ~90% of coding at ~60% of Opus
+# cost, escalate to Opus for deep refactor / hard debugging).
+# swe = SWE-bench Verified %, cap = relative capability 1-5. Grounded in
+# July-2026 benchmarks (Haiku 73 / Sonnet-5 85 / Opus-4.8 89; Fable top, no
+# public SWE score). speed labels per Anthropic (Haiku fastest, Sonnet Fast,
+# Opus Moderate, Fable slow/deep).
+MODEL_PROFILES = {
+    'claude-haiku-4-5': {'cap': 2, 'swe': 73, 'speed': 'fast', 'best_for': 'bulk, simple edits, subagents'},
+    'claude-sonnet-5':  {'cap': 4, 'swe': 85, 'speed': 'fast', 'best_for': 'default coding (~90% of tasks)'},
+    'claude-opus-4-8':  {'cap': 5, 'swe': 89, 'speed': 'med',  'best_for': 'deep refactor, hard debugging'},
+    'claude-fable-5':   {'cap': 5, 'swe': None, 'speed': 'slow', 'best_for': 'hardest, longest-horizon work'},
+}
+EFFORT_PROFILES = {
+    '':       'account default',
+    'low':    'simple / subagents / cheap',
+    'medium': 'balanced — sweet spot',
+    'high':   'complex work, thorough',
+    'xhigh':  'best for coding & agentic',
+    'max':    'maximum depth, priciest',
+}
+# task-based quick-start presets: (name, description, opts-fields)
+LAUNCH_PRESETS = [
+    ('Recommended',   'everyday coding — best balance',
+     {'model': 'claude-sonnet-5', 'effort': 'high'}),
+    ('Cheap & fast',  'simple / bulk work, lowest cost',
+     {'model': 'claude-sonnet-5', 'effort': 'low', 'subagent_model': 'claude-haiku-4-5'}),
+    ('Deep reasoning', 'hard refactor, accuracy-critical',
+     {'model': 'claude-opus-4-8', 'effort': 'xhigh'}),
+    ('Max capability', 'hardest, longest-horizon',
+     {'model': 'claude-fable-5', 'effort': 'high'}),
+]
+
+
+def _model_price_in(model):
+    m = (model or '').replace('claude-', '')
+    for key, v in COST_PER_MTOK.items():
+        if key in m:
+            return v['in']
+    return None
+
+
+def cost_bar(model):
+    """'$'..'$$$$$' by input price; '' for account-default/unknown."""
+    p = _model_price_in(model)
+    if p is None:
+        return ''
+    tier = 1 if p <= 1 else 2 if p <= 3 else 3 if p <= 5 else 5
+    return '$' * tier
+
+
+def cap_bar(model):
+    """'▪' capability bar (1-5); '' for account-default/unknown."""
+    prof = MODEL_PROFILES.get(model)
+    return '▪' * (prof['cap'] if prof else 0)
+
+
+def swe_str(model):
+    """'85%' SWE-bench score, or '—' when unknown/account-default."""
+    prof = MODEL_PROFILES.get(model)
+    if not prof or prof.get('swe') is None:
+        return '—'
+    return f"{prof['swe']}%"
+
+
+def model_card_rows():
+    """[(model_id, label, cost_bar, cap_bar, best_for, swe_str)] for the roster."""
+    rows = []
+    for mid in MODELS:
+        prof = MODEL_PROFILES.get(mid)
+        if not mid or not prof:
+            continue
+        rows.append((mid, MODEL_LABELS[MODELS.index(mid)],
+                     cost_bar(mid), cap_bar(mid), prof['best_for'], swe_str(mid)))
+    return rows
+
+
+def advise(model, effort):
+    """Dynamic launch advisor. Returns (level, message) where level is
+    'ok' | 'tip' | 'warn'; names a better model/effort when the pick is
+    sub-optimal. Grounded in July-2026 cost/quality data."""
+    eff = effort or ''
+    ei = EFFORTS.index(eff) if eff in EFFORTS else 0    # 0 default,1 low,2 med,3 high,4 xhigh,5 max
+    if not MODEL_PROFILES.get(model):
+        return ('tip', 'Pick a model — Sonnet 5 · high is the recommended default.')
+    if model == 'claude-opus-4-8' and ei in (1, 2):
+        return ('tip', 'Opus is underused at this effort — Sonnet 5 · high gives ~similar quality at ~60% less cost.')
+    if model == 'claude-sonnet-5' and ei >= 4:
+        return ('warn', 'Sonnet at xhigh burns heavy reasoning tokens — can cost more than Opus 4.8 · high for similar quality. Use Opus · high or Sonnet · high.')
+    if model == 'claude-fable-5' and ei < 4:
+        return ('tip', 'Fable is the priciest tier — Opus 4.8 · xhigh handles almost everything at half the cost.')
+    if model == 'claude-haiku-4-5' and ei >= 3:
+        return ('warn', "Haiku isn't built for deep reasoning — switch to Sonnet 5 for hard tasks.")
+    good = {
+        'claude-haiku-4-5': 'Cheapest & fastest — great for bulk, simple edits, and subagents.',
+        'claude-sonnet-5':  'Best default — ~90% of coding at Opus quality; high ≈ Opus low.',
+        'claude-opus-4-8':  'Top accuracy tier — deep refactor & hard debugging; xhigh is the coding sweet spot.',
+        'claude-fable-5':   'Maximum capability for the hardest, longest-horizon work.',
+    }
+    return ('ok', good.get(model, ''))
+
+
+def omniroute_env(s=None):
+    """{} when free-tier exec routing is off; else the ANTHROPIC_BASE_URL/
+    AUTH_TOKEN override that points an interactive `claude` launch at
+    OmniRoute (github.com/diegosouzapw/OmniRoute) instead of the real
+    Anthropic API. Only ever used for the execution half of Plan→Execute —
+    planning always stays on the real API (see plan_execute.py)."""
+    s = load_settings() if s is None else s
+    if not s.get('omniroute_exec_model'):
+        return {}
+    return {'ANTHROPIC_BASE_URL': s.get('omniroute_base_url') or '',
+            'ANTHROPIC_AUTH_TOKEN': s.get('omniroute_api_key') or ''}
+
+
+# Ordered stops on the cost/quality frontier for the GUI's single-slider
+# model picker — deliberately curated to the advisor's 'good' combos (not
+# every advise()=='ok' pairing) so each stop is a genuine step up in
+# capability/cost, cheapest to most powerful. A bad combo (Sonnet·xhigh,
+# Opus·low, …) simply isn't reachable from this control.
+MODEL_EFFORT_FRONTIER = [
+    ('claude-haiku-4-5', 'low'),
+    ('claude-sonnet-5',  'medium'),
+    ('claude-sonnet-5',  'high'),
+    ('claude-opus-4-8',  'high'),
+    ('claude-opus-4-8',  'xhigh'),
+    ('claude-fable-5',   'xhigh'),
+    ('claude-fable-5',   'max'),
+]
+
+
+def frontier_rows():
+    """[(model, effort, label, cost_bar, swe_str, note)] for each frontier
+    stop, cheap→max-power, for the GUI's single frontier slider."""
+    rows = []
+    for mid, eff in MODEL_EFFORT_FRONTIER:
+        _level, note = advise(mid, eff)
+        rows.append((mid, eff, MODEL_LABELS[MODELS.index(mid)],
+                     cost_bar(mid), swe_str(mid), note))
+    return rows
+
+
+def active_preset(opts):
+    """Name of the preset whose fields all match opts, else None."""
+    for name, _desc, fields in LAUNCH_PRESETS:
+        if all((opts.get(k) or '') == v for k, v in fields.items()):
+            return name
+    return None
 
 _AUTOGEN_START  = '<!-- AUTOGEN:START -->'
 _AUTOGEN_END    = '<!-- AUTOGEN:END -->'

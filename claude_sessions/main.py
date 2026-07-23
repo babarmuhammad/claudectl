@@ -80,6 +80,10 @@ def run():
     if len(sys.argv) >= 3 and sys.argv[1] == 'recall':
         _recall_cli(' '.join(sys.argv[2:]))
         return
+    # `claudectl review [--staged|--branch BASE] [--min-confidence N] [path]`
+    if len(sys.argv) >= 2 and sys.argv[1] == 'review':
+        from .review import review_cli
+        sys.exit(review_cli(sys.argv[2:]))
     # detached background memory worker (spawned, not user-facing)
     if len(sys.argv) >= 3 and sys.argv[1] == '--bg-scan':
         _bg_scan_cli(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else '')
@@ -209,6 +213,7 @@ def run():
         ('⚙  Usage stats', '__usage_stats__'),
         ('⚙  MCP servers', '__mcp__'),
         ('⚙  Agents', '__agents__'),
+        ('⚙  Skills', '__skills__'),
         ('⚙  Hooks', '__hooks__'),
         ('⚙  Global CLAUDE.md  /  MCP Analysis', '__global_claude_md__'),
         ('⚙  Accounts (switch / run 2 at once)', '__accounts__'),
@@ -275,6 +280,11 @@ def run():
         elif sel == '__agents__':
             from .agents import agents_menu
             agents_menu(None)
+            continue
+
+        elif sel == '__skills__':
+            from .skills import skills_menu
+            skills_menu(None)
             continue
 
         elif sel == '__hooks__':

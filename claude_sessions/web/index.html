@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>claudectl</title>
+<style><!--CSS--></style>
+</head>
+<body>
+<div id="loading" aria-hidden="true"></div>
+<div class="app">
+  <aside class="side">
+    <div class="brand">
+      <div class="logo">C</div>
+      <div><b>claudectl</b><small>workspace for Claude Code</small></div>
+    </div>
+    <div class="search"><input id="q" placeholder="Filter projects…"></div>
+    <button class="btn sm openp" id="bOpenPath">＋ Open project by path…</button>
+    <div class="plist" id="plist"></div>
+    <div class="nav" id="nav"></div>
+    <div class="foot">
+      <span>interface</span>
+      <div class="seg">
+        <button id="segTui">TUI</button>
+        <button id="segGui">GUI</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="top" id="topbar">
+      <h1 id="ttl">Welcome</h1><span class="path" id="tpath"></span>
+      <span class="membadge" id="membadge" style="display:none"></span>
+      <span class="sp"></span>
+      <span id="pactions" style="display:none">
+        <button class="btn" id="bTerm">Terminal</button>
+        <button class="btn" id="bCont">Continue</button>
+        <button class="btn pri" id="bNew">New session</button>
+      </span>
+    </div>
+    <div class="ubar" id="ubar"></div>
+    <div class="tabs" id="tabs" style="display:none"></div>
+    <div class="content" id="content"></div>
+  </main>
+</div>
+
+<!-- launch modal -->
+<div class="ovl" id="ovl" role="dialog" aria-modal="true" aria-label="Launch session">
+  <div class="modal">
+    <h3 id="mTitle">New session</h3>
+    <div class="sub" id="mSub"></div>
+    <div>
+      <div class="fld"><label>Quick start</label><div class="presetrow" id="fPresets"></div></div>
+      <div class="fld"><label>Power</label>
+        <input type="range" id="fFrontier" min="0" step="1">
+        <div class="frontends"><span>Cheap &amp; fast</span><span>Max power</span></div>
+        <div class="frontread" id="fFrontRead"></div>
+      </div>
+      <div class="mhint" id="mHint"></div>
+      <details class="adv">
+        <summary>Advanced</summary>
+        <label class="pinrow"><input type="checkbox" id="fPinModel"> Pin an exact model + effort instead</label>
+        <div id="fPinBlock" style="display:none">
+          <div class="fld"><label>Model</label><div class="mcards" id="fModel"></div></div>
+          <div class="fld"><label>Effort</label>
+            <input type="range" id="fEffort" min="0" step="1">
+            <div class="effticks"><span>default</span><span>low</span><span>medium</span><span>high</span><span>xhigh</span><span>max</span></div>
+            <div class="efflabel" id="fEffLabel"></div>
+          </div>
+        </div>
+        <div class="grid2">
+          <div class="fld"><label>Permission mode</label><div class="chips" id="fPerm"></div></div>
+          <div class="fld" id="fAcctWrap"><label>Account</label><div class="chips" id="fAcct"></div></div>
+          <div class="fld"><label>Thinking cap</label><div class="chips" id="fThink"></div></div>
+          <div class="fld"><label>Subagent model</label><div class="chips" id="fSub"></div></div>
+          <div class="fld" id="fWtWrap"><label>Worktree</label><div class="chips" id="fWt"></div></div>
+          <div class="fld" id="fNameWrap"><label>Session name</label>
+            <input id="fName" placeholder="optional"></div>
+        </div>
+      </details>
+    </div>
+    <div class="mrow">
+      <button class="btn" id="mCancel">Cancel</button>
+      <button class="btn pri" id="mGo">Launch</button>
+    </div>
+  </div>
+</div>
+
+<!-- model guide modal -->
+<div class="ovl" id="govl" role="dialog" aria-modal="true" aria-label="Model guide">
+  <div class="modal">
+    <h3>Model guide</h3>
+    <div class="sub">Cost is per-token price; capability is relative. Raise effort before switching model tier — high/xhigh ≈ the next tier up.</div>
+    <div class="mcards" id="gCards"></div>
+    <div class="fld" style="margin-top:10px"><label>Effort</label><div id="gEffort"></div></div>
+    <div class="mrow"><button class="btn pri" id="gClose">Close</button></div>
+  </div>
+</div>
+
+<!-- open-project-by-path modal -->
+<div class="ovl" id="oovl" role="dialog" aria-modal="true" aria-label="Open project">
+  <div class="modal">
+    <h3>Open project by path</h3>
+    <div class="sub">Start a new session in any folder. Type a path — matching folders suggest as you go.</div>
+    <div class="fld"><label>Folder</label>
+      <input id="oPath" placeholder="e.g. D:\\code\\my-project" autocomplete="off"></div>
+    <div class="osugg" id="oSugg"></div>
+    <div class="osubmsg" id="oErr"></div>
+    <div class="mrow">
+      <button class="btn" id="oCancel">Cancel</button>
+      <button class="btn pri" id="oOk">Open</button>
+    </div>
+  </div>
+</div>
+
+<!-- job progress + gate modal -->
+<div class="ovl" id="jovl" role="dialog" aria-modal="true" aria-label="Job progress">
+  <div class="modal" id="jmodal">
+    <h3 id="jTitle"><span class="spin"></span> <span id="jLabel">Working…</span></h3>
+    <div class="sub" id="jSub"></div>
+    <div id="jGate" style="display:none">
+      <div class="diff" id="jDiff"></div>
+      <div class="mrow">
+        <button class="btn" id="jReject">Discard</button>
+        <button class="btn pri" id="jApply">Apply</button>
+      </div>
+    </div>
+    <div class="msgs" id="jMsgs"></div>
+    <div class="mrow" id="jCancelRow">
+      <button class="btn" id="jCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- generic prompt modal -->
+<div class="ovl" id="povl" role="dialog" aria-modal="true" aria-label="Prompt">
+  <div class="modal">
+    <h3 id="pTitle"></h3>
+    <div class="sub" id="pSub"></div>
+    <div id="pBody"></div>
+    <div class="mrow">
+      <button class="btn" id="pCancel">Cancel</button>
+      <button class="btn pri" id="pOk">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- transcript drawer -->
+<div class="drawer" id="drawer">
+  <div class="dhead">
+    <h3 id="dTitle">Transcript</h3>
+    <button class="btn sm" id="dClose">Close</button>
+  </div>
+  <div class="dbody" id="dBody"></div>
+</div>
+<div id="toast-wrap"></div>
+
+<script><!--JS--></script>
+</body>
+</html>

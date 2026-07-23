@@ -208,8 +208,10 @@ def _new_agent_ai(project_path):
         "Do NOT create or write any files and do not use any tools — return the "
         "markdown text directly. No preamble, no code fences."
     )
+    from .memory import extract_model
+    _mf = ['--model', extract_model()] if extract_model() else []
     out, cancelled = run_with_progress(
-        [claude, '--print', prompt, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
+        [claude, *_mf, '--print', prompt, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
         ('CLAUDECTL', 'AGENTS', name), f'Authoring agent {name} with Claude...  (15-60s)',
         timeout=120)
     if cancelled:

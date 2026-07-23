@@ -449,16 +449,20 @@ html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 42%,#0a1
 #legend{position:fixed;bottom:10px;right:12px;text-align:right;line-height:1.6;max-width:50%}
 #legend span{margin-left:11px}#legend i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px}
 #tip{position:fixed;pointer-events:none;background:#0d0f15;border:1px solid #343a47;padding:6px 9px;border-radius:5px;color:#e8ebf0;display:none;max-width:420px;white-space:pre-wrap;z-index:5}
+#views{margin-bottom:8px}.btn.on{background:#20304a;border-color:#3d6ea5;color:#fff}
 </style></head><body>
 <canvas id="c"></canvas>
 <div id="hud"><b>__TITLE__</b><div id="sub"></div></div>
 <div id="panel">
  <h4>Architecture</h4>
+ <div id="views"><span class="btn vb" data-v="code">Code</span><span class="btn vb" data-v="memory">Memory</span><span class="btn vb" data-v="both">Both</span></div>
  <input id="search" placeholder="search…" autocomplete="off">
  <label><input type="checkbox" id="deps" checked> dependency links</label>
  <label><input type="checkbox" id="tree" checked> containment links</label>
  <label><input type="checkbox" id="hulls" checked> project hulls</label>
  <label><input type="checkbox" id="lbl" checked> labels</label>
+ <label id="fltLess"><input type="checkbox" id="cLess" checked> lessons</label>
+ <label id="fltAg"><input type="checkbox" id="cAg" checked> agents</label>
  <hr>
  <div><span class="btn" id="expand">Expand all</span><span class="btn" id="collapse">Collapse</span></div>
  <div><span class="btn" id="fit">Fit</span><span class="btn" id="reset">Reset</span></div>
@@ -466,38 +470,53 @@ html,body{margin:0;height:100%;background:radial-gradient(circle at 50% 42%,#0a1
 <div id="hint">click node: expand/collapse · drag: move · wheel: zoom · hover: focus</div>
 <div id="legend"></div><div id="tip"></div>
 <script>
-const GRAPH=__GRAPH_JSON__,COLORS=__COLORS_JSON__;
+const CODE=__GRAPH_JSON__,MEMDATA=__MEMORY_JSON__,TYPES=__COLORS_JSON__,DEFVIEW=__DEFAULT_VIEW__;
+const HASMEM=!!(MEMDATA&&MEMDATA.nodes&&MEMDATA.nodes.length);
 const cv=document.getElementById('c'),ctx=cv.getContext('2d'),tip=document.getElementById('tip');
 let W,H;function resize(){W=cv.width=innerWidth;H=cv.height=innerHeight;}resize();addEventListener('resize',resize);
 
-const N={};for(const n of GRAPH.nodes)N[n.id]=Object.assign({x:0,y:0,vx:0,vy:0},n);
-const kids={};for(const id in N)kids[id]=[];
-for(const id in N){const p=N[id].parent;if(p&&kids[p])kids[p].push(id);}
-function hasKids(id){return kids[id]&&kids[id].length>0;}
-const deps=GRAPH.dep_edges.filter(e=>(e.source in N)&&(e.target in N));
-
-// cohesive neural palette: every project a hue inside blue→indigo→cyan
 function hue(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))&0xffffffff;return Math.abs(h)%360;}
-const repos=[...new Set(GRAPH.nodes.map(n=>n.repo))];
-const rhue={};repos.forEach(r=>rhue[r]=(r==='root')?208:195+hue(r)%92);
-const rcol={};for(const r in rhue)rcol[r]='hsl('+rhue[r]+',72%,64%)';
-function color(n){const h=rhue[n.repo]!=null?rhue[n.repo]:208;
+function mergeCounts(){const a=(CODE.meta&&CODE.meta.counts)||{},b=(MEMDATA.meta&&MEMDATA.meta.counts)||{},o={};
+ for(const k in a)o[k]=(a[k]||0)+(b[k]||0);for(const k in b)if(!(k in o))o[k]=b[k];return o;}
+function buildBoth(){const seen=new Set(),nodes=[],edges=[];
+ for(const g of [CODE,MEMDATA]){if(!g||!g.nodes)continue;
+  for(const n of g.nodes){if(seen.has(n.id))continue;seen.add(n.id);nodes.push(n);}
+  for(const e of (g.dep_edges||[]))edges.push(e);}
+ return {nodes,dep_edges:edges,meta:{counts:mergeCounts(),languages:(CODE.meta||{}).languages||[]}};}
+const BOTH=HASMEM?buildBoth():CODE;
+
+// active dataset + derived structures are rebuilt on every view switch
+let GRAPH,N,kids,deps,rhue={},rcol={},expanded,VIEW='code';
+function hasKids(id){return kids[id]&&kids[id].length>0;}
+function initData(){
+ N={};for(const n of GRAPH.nodes)N[n.id]=Object.assign({x:0,y:0,vx:0,vy:0},n);
+ kids={};for(const id in N)kids[id]=[];
+ for(const id in N){const p=N[id].parent;if(p&&kids[p])kids[p].push(id);}
+ deps=GRAPH.dep_edges.filter(e=>(e.source in N)&&(e.target in N));
+ const repos=[...new Set(GRAPH.nodes.map(n=>n.repo))];
+ rhue={};repos.forEach(r=>rhue[r]=(r==='root')?208:195+hue(r)%92);
+ rcol={};for(const r in rhue)rcol[r]='hsl('+rhue[r]+',72%,64%)';
+ expanded=new Set(['root:']);
+ if(GRAPH.nodes.length<=__AUTOEXP__){for(const id in N)if(hasKids(id))expanded.add(id);}
+}
+// code view: cohesive per-repo hue; memory/both: color by semantic node type
+function color(n){if(VIEW!=='code'){const t=TYPES[n.type];if(t)return t;}
+ const h=rhue[n.repo]!=null?rhue[n.repo]:208;
  const imp=Math.min(1,(n.total_files||1)/220+(n.rank||0)/45);
  return 'hsl('+h+',74%,'+(56+imp*16).toFixed(0)+'%)';}
-
-// expansion state
-const expanded=new Set(['root:']);
-if(GRAPH.nodes.length<=__AUTOEXP__){for(const id in N)if(hasKids(id))expanded.add(id);}
+function dimf(n){return n.dim?0.4:1;}                 // invalidated facts / pending lessons
 let view={x:0,y:0,k:0.8},temp=1.0;
-document.getElementById('sub').textContent=
- GRAPH.meta.counts.files+" files · "+GRAPH.meta.counts.dirs+" dirs · "+GRAPH.meta.counts.repos+" repos · "+GRAPH.meta.counts.deps+" deps"
- +"\n"+(GRAPH.meta.languages||[]).slice(0,6).map(p=>p[0]+" "+p[1]).join(" · ");
+function subText(){const c=GRAPH.meta.counts||{};
+ if(VIEW==='code')return (c.files||0)+" files · "+(c.dirs||0)+" dirs · "+(c.repos||0)+" repos · "+(c.deps||0)+" deps"
+  +"\n"+((GRAPH.meta.languages||[]).slice(0,6).map(p=>p[0]+" "+p[1]).join(" · "));
+ return (c.entities||0)+" entities · "+(c.lessons||0)+" lessons · "+(c.agents||0)+" agents · "+(c.deps||0)+" links";}
 
 // visible set: a node is visible iff all ancestors are expanded
-let VIS=new Set(),VARR=[];
+let VIS=new Set(),VARR=[],HIDDEN=new Set();
+function zkey(n){return n.zone||n.repo;}   // cluster key: module in memory view, repo in code
 function recompute(){
  VIS=new Set();const q=['root:'];VIS.add('root:');
- while(q.length){const id=q.pop();if(expanded.has(id))for(const c of kids[id]){VIS.add(c);q.push(c);}}
+ while(q.length){const id=q.pop();if(expanded.has(id))for(const c of kids[id]){if(HIDDEN.has(N[c].type))continue;VIS.add(c);q.push(c);}}
  VARR=[...VIS].map(id=>N[id]);
  // seed freshly shown children evenly AROUND their parent (radial, all directions)
  for(const n of VARR){if(!n._placed){const p=N[n.parent];const sibs=p?kids[p.id]:['root:'];
@@ -513,7 +532,7 @@ function visibleDeps(){const m=new Map();
 let VDEPS=[];
 let repoZones={};                                 // repo -> {x,y,zr} non-overlapping bubbles
 function computeZones(){
- const cnt={};for(const n of VARR){if(n.id==='root:')continue;cnt[n.repo]=(cnt[n.repo]||0)+1;}
+ const cnt={};for(const n of VARR){if(n.id==='root:')continue;cnt[zkey(n)]=(cnt[zkey(n)]||0)+1;}
  const rs=Object.keys(cnt);if(!rs.length){repoZones={};return;}
  const zr={};let sum=0;for(const r of rs){zr[r]=Math.max(150,Math.min(1600,Math.sqrt(cnt[r])*64));sum+=zr[r];}
  // ring radius so the zones fit around the circle with breathing room
@@ -530,7 +549,6 @@ function refresh(){
  animP=0;animOn=true;                            // smooth tween into place (no physics → no jitter)
  buildLegend();
 }
-refresh();
 
 function size(n){const f=n.total_files||1;return Math.max(5,Math.min(38,5+Math.log2(f+1)*4+Math.sqrt(n.rank||0)*0.6));}
 
@@ -553,7 +571,7 @@ function collide(act){for(let it=0;it<5;it++){const cell=100,grid=new Map(),K=(a
 function relax(act){
  repulse(act);
  for(const n of act){const p=N[n.parent];if(p&&VIS.has(p.id)){const rest=90+(kids[p.id].length)*5;let dx=p.x-n.x,dy=p.y-n.y,d=Math.sqrt(dx*dx+dy*dy)+.01,f=(d-rest)*0.02;n.vx+=dx/d*f;n.vy+=dy/d*f;}}
- for(const n of act){if(n.id==='root:'||n.pin)continue;const z=repoZones[n.repo];
+ for(const n of act){if(n.id==='root:'||n.pin)continue;const z=repoZones[zkey(n)];
   if(z){let dx=z.x-n.x,dy=z.y-n.y,d=Math.sqrt(dx*dx+dy*dy)+.01,k=d>z.zr?0.06:0.012;n.vx+=dx*k;n.vy+=dy*k;}
   n.x+=Math.max(-60,Math.min(60,n.vx));n.y+=Math.max(-60,Math.min(60,n.vy));n.vx*=.8;n.vy*=.8;}
 }
@@ -623,15 +641,15 @@ function draw(){
  ctx.globalCompositeOperation='lighter';
  for(const n of VARR){const on=!hi||hi.has(n.id);const r=size(n),col=color(n);const gr=r*(2.4+(on?0.7:0))*(1+0.14*Math.sin(T*1.6+(n._ph||0)));
   const g=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,gr);
-  g.addColorStop(0,col.replace('hsl(','hsla(').replace(')',','+(on?0.55:0.12)+')'));
+  g.addColorStop(0,col.replace('hsl(','hsla(').replace(')',','+((on?0.55:0.12)*dimf(n))+')'));
   g.addColorStop(1,col.replace('hsl(','hsla(').replace(')',',0)'));
   ctx.fillStyle=g;ctx.beginPath();ctx.arc(n.x,n.y,gr,0,7);ctx.fill();}
  ctx.globalCompositeOperation='source-over';
  // node bodies — rotating dodecahedra (dot fallback when very dense)
  const dod=VARR.length<=250;
- for(const n of VARR){const on=!hi||hi.has(n.id);const r=size(n)*(1+0.05*Math.sin(T*1.5+(n._ph||0)));const col=color(n);
-  if(dod&&r>=6){drawDodec(n,r,col,on?1:0.3,!!(hi&&hi.has(n.id)));}
-  else{ctx.globalAlpha=on?1:0.28;ctx.beginPath();ctx.arc(n.x,n.y,r,0,7);ctx.fillStyle=col;ctx.fill();
+ for(const n of VARR){const on=!hi||hi.has(n.id);const r=size(n)*(1+0.05*Math.sin(T*1.5+(n._ph||0)));const col=color(n);const df=dimf(n);
+  if(dod&&r>=6){drawDodec(n,r,col,(on?1:0.3)*df,!!(hi&&hi.has(n.id)));}
+  else{ctx.globalAlpha=(on?1:0.28)*df;ctx.beginPath();ctx.arc(n.x,n.y,r,0,7);ctx.fillStyle=col;ctx.fill();
    ctx.beginPath();ctx.arc(n.x-r*0.28,n.y-r*0.28,r*0.42,0,7);ctx.fillStyle='rgba(255,255,255,'+(on?0.45:0.14)+')';ctx.fill();ctx.globalAlpha=1;}
   if(hasKids(n.id)&&!expanded.has(n.id)){ctx.lineWidth=1.3/view.k;ctx.strokeStyle='rgba(255,255,255,'+(on?0.7:0.2)+')';ctx.beginPath();ctx.arc(n.x,n.y,r+3.5/view.k,0,7);ctx.stroke();}}
  if(optLabels){ctx.font=(11/view.k)+'px ui-monospace,monospace';const few=VARR.length<=40;
@@ -644,9 +662,9 @@ function draw(){
    const tx=n.x+size(n)+4/view.k,ty=n.y+3/view.k;ctx.fillStyle='#000';ctx.fillText(n.label,tx+0.6,ty+0.6);
    ctx.fillStyle='#dfe9ff';ctx.fillText(n.label,tx,ty);ctx.globalAlpha=1;}}
 }
-function drawHulls(hi){const groups={};for(const n of VARR){if(n.id==='root:')continue;(groups[n.repo]=groups[n.repo]||[]).push(n);}
+function drawHulls(hi){const groups={};for(const n of VARR){if(n.id==='root:')continue;(groups[zkey(n)]=groups[zkey(n)]||[]).push(n);}
  for(const r in groups){const pts=groups[r];if(pts.length<3)continue;let cx=0,cy=0;for(const p of pts){cx+=p.x;cy+=p.y;}cx/=pts.length;cy/=pts.length;
-  let rad=0;for(const p of pts)rad=Math.max(rad,Math.hypot(p.x-cx,p.y-cy)+size(p));const h=rhue[r]!=null?rhue[r]:208;
+  let rad=0;for(const p of pts)rad=Math.max(rad,Math.hypot(p.x-cx,p.y-cy)+size(p));const h=rhue[r]!=null?rhue[r]:(195+hue(r)%92);
   ctx.beginPath();ctx.arc(cx,cy,rad+16,0,7);ctx.fillStyle='hsla('+h+',70%,55%,.05)';ctx.fill();
   ctx.strokeStyle='hsla('+h+',70%,62%,.15)';ctx.lineWidth=1/view.k;ctx.stroke();}}
 let T=0;function loop(){T=performance.now()/1000;
@@ -665,7 +683,10 @@ addEventListener('mousemove',e=>{if(drag){const w=toWorld(e.clientX,e.clientY);d
  else if(pan){view.x=e.clientX-pan.x;view.y=e.clientY-pan.y;moved=true;}
  hoverN=(drag||pan)?hoverN:hit(e.clientX,e.clientY);
  if(hoverN&&!pan){tip.style.display='block';tip.style.left=(e.clientX+13)+'px';tip.style.top=(e.clientY+13)+'px';
-  tip.textContent=hoverN.type.toUpperCase()+': '+hoverN.label+'\n'+(hoverN.total_files||0)+' files · rank '+(hoverN.rank||0)+(hasKids(hoverN.id)?(expanded.has(hoverN.id)?'\n(click: collapse)':'\n(click: expand '+kids[hoverN.id].length+')'):'');}
+  tip.textContent=hoverN.type.toUpperCase()+': '+hoverN.label
+   +'\n'+(hoverN.summary?hoverN.summary:((hoverN.total_files||0)+' files · rank '+(hoverN.rank||0)))
+   +(hoverN.status?('\n['+hoverN.status+(hoverN.kind?' · '+hoverN.kind:'')+']'):'')
+   +(hasKids(hoverN.id)?(expanded.has(hoverN.id)?'\n(click: collapse)':'\n(click: expand '+kids[hoverN.id].length+')'):'');}
  else tip.style.display='none';});
 addEventListener('mouseup',e=>{if(drag){drag.pin=false;if(!moved&&hasKids(drag.id)){expanded.has(drag.id)?expanded.delete(drag.id):expanded.add(drag.id);refresh();}}drag=null;pan=null;});
 cv.addEventListener('wheel',e=>{e.preventDefault();const f=e.deltaY<0?1.12:0.89;const mx=e.clientX-W/2,my=e.clientY-H/2;view.x=mx-(mx-view.x)*f;view.y=my-(my-view.y)*f;view.k*=f;},{passive:false});
@@ -681,23 +702,174 @@ document.getElementById('expand').onclick=()=>{for(const id in N)if(hasKids(id))
 document.getElementById('collapse').onclick=()=>{expanded.clear();expanded.add('root:');refresh();setTimeout(fit,300);};
 document.getElementById('fit').onclick=fit;
 document.getElementById('reset').onclick=()=>{view={x:0,y:0,k:0.8};temp=1;};
-function buildLegend(){const seen=[...new Set(VARR.map(n=>n.repo))].filter(r=>r!=='root').slice(0,8);
- document.getElementById('legend').innerHTML=seen.map(r=>'<span><i style="background:'+rcol[r]+'"></i>'+r+'</span>').join('');}
+function buildLegend(){const el=document.getElementById('legend');
+ if(VIEW==='code'){const seen=[...new Set(VARR.map(n=>n.repo))].filter(r=>r!=='root').slice(0,8);
+  el.innerHTML=seen.map(r=>'<span><i style="background:'+rcol[r]+'"></i>'+r+'</span>').join('');return;}
+ const kinds=[['component','component'],['concept','concept'],['service','service'],['model','model'],['module','module'],['lesson','lesson'],['agent','agent']];
+ const present=new Set(VARR.map(n=>n.type));
+ el.innerHTML=kinds.filter(k=>present.has(k[0])).map(([t,lbl])=>'<span><i style="background:'+(TYPES[t]||'#888')+'"></i>'+lbl+'</span>').join('');}
+function setView(v){VIEW=((v==='memory'||v==='both')&&HASMEM)?v:'code';
+ GRAPH=VIEW==='memory'?MEMDATA:(VIEW==='both'?BOTH:CODE);
+ initData();view={x:0,y:0,k:0.8};temp=1;query='';
+ const sb=document.getElementById('search');if(sb)sb.value='';
+ // memory/both open collapsed at MODULE level (expand repos, not entities) so
+ // you see readable per-module clusters, not one hairball — drill in by click
+ HIDDEN=new Set();
+ if(VIEW!=='code'){for(const id in N)if(id.slice(0,6)==='mrepo:')expanded.add(id);}
+ const showF=VIEW!=='code';
+ for(const id of ['fltLess','fltAg']){const el=document.getElementById(id);if(el)el.style.display=showF?'':'none';}
+ const cl=document.getElementById('cLess'),ca=document.getElementById('cAg');if(cl)cl.checked=true;if(ca)ca.checked=true;
+ document.getElementById('sub').textContent=subText();refresh();updateVB();}
+function setHidden(){HIDDEN=new Set();
+ if(!document.getElementById('cLess').checked){HIDDEN.add('lessons_group');HIDDEN.add('lesson');}
+ if(!document.getElementById('cAg').checked){HIDDEN.add('agents_group');HIDDEN.add('agent');}
+ refresh();}
+document.getElementById('cLess').onchange=setHidden;
+document.getElementById('cAg').onchange=setHidden;
+function updateVB(){document.querySelectorAll('.vb').forEach(b=>b.classList.toggle('on',b.dataset.v===VIEW));}
+document.querySelectorAll('.vb').forEach(b=>{if(b.dataset.v!=='code'&&!HASMEM)b.style.display='none';
+ b.onclick=()=>{setView(b.dataset.v);setTimeout(fit,150);};});
+setView(HASMEM?DEFVIEW:'code');
 loop();setTimeout(fit,500);
 </script></body></html>"""
 
 
-def render_html(graph):
+def build_memory_hierarchy(project_path, proj_folder=None):
+    """Semantic memory (entities + typed relations) + lessons + per-project
+    agents as a graph in the SAME schema as build_hierarchy, so the canvas
+    renderer can show it. Pure transform of the cached memory graph — no
+    filesystem scan. IDs are namespaced (mrepo:/mmod:/entity:/lesson:/agent:)
+    so a combined 'both' view unions cleanly with the code graph."""
+    from . import memory as _mem
+    base = project_path or proj_folder or ''
+    g = _mem.load_memory(project_path, proj_folder) or {}
+    all_ents = g.get('entities', []) or []
+    ents    = [e for e in all_ents if e.get('type') != 'lesson']
+    lessons = [e for e in all_ents if e.get('type') == 'lesson']
+    rels    = g.get('relations', []) or []
+
+    nodes = {}
+    def add(nid, **kw):
+        d = {'id': nid, 'own_files': 0, 'total_files': 0, 'rank': 0}
+        d.update(kw)
+        nodes[nid] = d
+
+    root_label = os.path.basename(base.rstrip('/\\')) or base or 'memory'
+    add('root:', label=root_label, parent=None, type='root', repo='root')
+
+    name2id = {}
+    for e in ents:
+        repo = e.get('repo') or 'mem'
+        module = e.get('module') or repo
+        rid, mid = 'mrepo:' + repo, 'mmod:' + repo + '/' + module
+        if rid not in nodes:
+            add(rid, label=repo, parent='root:', type='repo', repo=repo)
+        if mid not in nodes:
+            add(mid, label=module, parent=rid, type='module_group', repo=repo, zone=mid)
+        eid = e.get('id')
+        if not eid:
+            continue
+        if e.get('name'):
+            name2id[e['name']] = eid
+        add(eid, label=e.get('name', eid), parent=mid, type=e.get('type', 'concept'),
+            repo=repo, zone=mid, total_files=int(e.get('hits', 0) or 0) + 1,
+            rank=int(e.get('rank', 0) or 0), summary=e.get('summary', ''),
+            dim=(not e.get('valid', True)))
+
+    edges = []
+    for r in rels:
+        a, b = name2id.get(r.get('source')), name2id.get(r.get('target'))
+        if a and b and a != b:
+            edges.append({'source': a, 'target': b, 'weight': 1, 'rel': r.get('rel', '')})
+
+    if lessons:
+        add('lessons:', label='lessons', parent='root:', type='lessons_group',
+            repo='lessons', zone='zlessons')
+        for l in lessons:
+            lid = l.get('id')
+            if not lid:
+                continue
+            add(lid, label=l.get('name', lid), parent='lessons:', type='lesson',
+                repo='lessons', zone='zlessons', total_files=1, summary=l.get('summary', ''),
+                status=l.get('status', ''), kind=l.get('kind', ''),
+                dim=(l.get('status') == 'pending'))
+
+    try:
+        from . import agents as _ag
+        proj_ad = _ag.project_agents_dir(project_path)
+        proj_names = set()
+        if proj_ad and os.path.isdir(proj_ad):
+            proj_names = {os.path.splitext(fn)[0] for fn in os.listdir(proj_ad)
+                          if fn.endswith('.md')}
+        try:
+            suggested = _ag.suggest_agents(project_path, proj_folder) or []
+        except Exception:
+            suggested = []
+        if proj_names or suggested:
+            add('agents:', label='agents', parent='root:', type='agents_group',
+                repo='agents', zone='zagents')
+            for nm in sorted(proj_names):
+                add('agent:proj:' + nm, label=nm, parent='agents:', type='agent',
+                    repo='agents', zone='zagents', total_files=2, status='active',
+                    summary='project agent')
+            for ref, reason, _score in suggested:
+                nm = ref.split('/', 1)[-1]
+                if ('agent:proj:' + nm) in nodes or ('agent:sugg:' + nm) in nodes:
+                    continue
+                add('agent:sugg:' + nm, label=nm, parent='agents:', type='agent',
+                    repo='agents', zone='zagents', total_files=1, status='suggested',
+                    summary=reason)
+    except Exception:
+        _c.log.exception('connections: memory-graph agents failed')
+
+    kids = {}
+    for nid, n in nodes.items():
+        if n.get('parent'):
+            kids.setdefault(n['parent'], []).append(nid)
+    def _leaves(nid):
+        ch = kids.get(nid)
+        return sum(_leaves(c) for c in ch) if ch else 1
+    for nid, n in nodes.items():
+        if n['type'] in ('root', 'repo', 'module_group', 'lessons_group', 'agents_group'):
+            n['total_files'] = _leaves(nid)
+
+    meta = {
+        'project_name': root_label, 'languages': [], 'truncated': False, 'kind': 'memory',
+        'counts': {
+            'files': len(ents),
+            'dirs': sum(1 for n in nodes.values()
+                        if n['type'] in ('module_group', 'lessons_group', 'agents_group')),
+            'repos': sum(1 for n in nodes.values() if n['type'] == 'repo'),
+            'deps': len(edges), 'entities': len(ents), 'lessons': len(lessons),
+            'agents': sum(1 for n in nodes.values() if n['type'] == 'agent'),
+        },
+    }
+    return {'nodes': list(nodes.values()), 'dep_edges': edges, 'meta': meta}
+
+
+def render_html(graph, memory=None, default_view='code'):
     payload = json.dumps(graph, ensure_ascii=False).replace('</', '<\\/')
+    mem_payload = json.dumps(memory or {}, ensure_ascii=False).replace('</', '<\\/')
+    if not memory:
+        default_view = 'code'
     title = _htmlmod.escape(graph['meta'].get('project_name', 'project'))
     return (_HTML_TEMPLATE
             .replace('__GRAPH_JSON__', payload)
+            .replace('__MEMORY_JSON__', mem_payload)
+            .replace('__DEFAULT_VIEW__', json.dumps(default_view))
             .replace('__COLORS_JSON__', json.dumps(TYPE_COLORS))
             .replace('__AUTOEXP__', str(AUTO_EXPAND_NODES))
             .replace('__TITLE__', title))
 
 
-TYPE_COLORS = {'root': '#ffffff', 'repo': '#7dcfff', 'dir': '#8a8a8a'}
+# semantic-memory node colors (memory / both views); code view keeps repo hues
+TYPE_COLORS = {
+    'root': '#ffffff', 'repo': '#7dcfff', 'dir': '#8a8a8a',
+    'module_group': '#7dcfff', 'module': '#7dcfff', 'component': '#9d7bff',
+    'concept': '#f7768e', 'service': '#73daca', 'model': '#e0af68',
+    'lessons_group': '#ffd479', 'lesson': '#ffd479',
+    'agents_group': '#7ee787', 'agent': '#7ee787',
+}
 
 
 def graph_html_path(project_path, proj_folder=None):
@@ -707,7 +879,7 @@ def graph_html_path(project_path, proj_folder=None):
     return ''
 
 
-def write_graph_html(graph, project_path, proj_folder=None):
+def write_graph_html(graph, project_path, proj_folder=None, memory=None, default_view='code'):
     for base in (project_path, proj_folder):
         if not base:
             continue
@@ -716,7 +888,7 @@ def write_graph_html(graph, project_path, proj_folder=None):
             os.makedirs(d, exist_ok=True)
             p = os.path.join(d, 'connections-graph.html')
             with open(p, 'w', encoding='utf-8') as f:
-                f.write(render_html(graph))
+                f.write(render_html(graph, memory=memory, default_view=default_view))
             return p
         except Exception:
             continue
@@ -771,7 +943,12 @@ def connections_screen(project_path, proj_folder, project_name):
         if ev[0] in ('enter', 'esc'):
             return
         if ev[0] == 'char' and ev[1] == 'o':
-            p = write_graph_html(graph, project_path, proj_folder)
+            try:
+                mem = build_memory_hierarchy(project_path, proj_folder)
+            except Exception:
+                _c.log.exception('connections: build_memory_hierarchy failed')
+                mem = None
+            p = write_graph_html(graph, project_path, proj_folder, memory=mem, default_view='code')
             if not p:
                 flash("Could not write graph HTML (check disk/permissions)", ok=False, secs=2.5)
             else:

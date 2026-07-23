@@ -60,12 +60,14 @@ def list_projects():
         g['dirs'].add(acct_dir)
         g['mtime'] = max(g['mtime'], mtime)
     pd = load_settings().get('project_defaults') or {}
+    from .sessions import format_age
     out = []
     for enc, g in groups.items():
         dirs = sorted(g['dirs'], key=lambda d: order.get(d, 999))
         out.append({'path': g['path'],
                     'name': os.path.basename(g['path']) or g['path'],
                     'encoded': enc, 'mtime': g['mtime'],
+                    'last_active': format_age(g['mtime']).strip(),
                     'accounts': [names.get(d, os.path.basename(d)) for d in dirs],
                     'primary_cfgdir': dirs[0],
                     'auto_memory': bool((pd.get(enc) or {}).get('auto_memory'))})
@@ -171,7 +173,7 @@ def theme_palettes():
 
 def state_payload():
     """Everything the SPA needs on load."""
-    from .sessions import load_recent_sessions, load_name, get_session_title
+    from .sessions import load_recent_sessions, load_name, get_session_title, format_age
     s = load_settings()
     recent = []
     for r in load_recent_sessions(5):
@@ -184,6 +186,7 @@ def state_payload():
                        'name': (load_name(pf, r['session_id'])
                                 or get_session_title(jsonl)
                                 or r.get('preview', '') or r['session_id'][:8]),
+                       'age': format_age(r['timestamp']).strip() if r.get('timestamp') else '',
                        'cfgdir': r.get('cfgdir') or _c.config_dir})
     return {
         'projects': list_projects(),
@@ -194,6 +197,11 @@ def state_payload():
             'efforts': EFFORTS, 'models': MODELS, 'model_labels': MODEL_LABELS,
             'perms': PERMS, 'perm_labels': PERM_LABELS,
             'thinking': THINKING_CAPS, 'thinking_labels': THINKING_LABELS,
+            'model_cards': _c.model_card_rows(),
+            'effort_profiles': _c.EFFORT_PROFILES,
+            'presets': [[n, d, f] for n, d, f in _c.LAUNCH_PRESETS],
+            'advice': {m: {e: list(_c.advise(m, e)) for e in EFFORTS} for m in MODELS},
+            'frontier': [list(r) for r in _c.frontier_rows()],
         },
         'defaults': {'effort': s.get('default_effort', ''),
                      'model': s.get('default_model', ''),
@@ -203,6 +211,11 @@ def state_payload():
         'ui_mode': s.get('ui_mode', 'tui'),
         'gui_shell': s.get('gui_shell', 'auto'),
         'plan_model': s.get('plan_model', ''),
+        'exec_model': s.get('exec_model', ''),
+        'extract_model': s.get('extract_model', ''),
+        'omniroute_base_url': s.get('omniroute_base_url', ''),
+        'omniroute_has_key': bool(s.get('omniroute_api_key')),
+        'omniroute_exec_model': s.get('omniroute_exec_model', ''),
         'theme': s.get('theme', 'default'),
         'themes': theme_palettes(),
     }
@@ -318,7 +331,12 @@ class _Handler(BaseHTTPRequestHandler):
             path, enc = q.get('path', ''), q.get('enc', '')
             proj_folder = os.path.join(_c.config_dir, 'projects', enc) if enc else None
             g = connections.build_hierarchy(path, proj_folder)
-            self._send(200, connections.render_html(g).encode('utf-8'), ctype='text/html')
+            try:
+                mem = connections.build_memory_hierarchy(path, proj_folder)
+            except Exception:
+                mem = None
+            self._send(200, connections.render_html(g, memory=mem).encode('utf-8'),
+                       ctype='text/html')
         except Exception as e:
             self._send(500, {'error': str(e)})
 
@@ -351,9 +369,17 @@ class _Handler(BaseHTTPRequestHandler):
                 s['ui_mode'] = body['ui_mode']
             for k in ('default_effort', 'default_model', 'default_permission',
                       'default_max_thinking', 'default_subagent_model',
-                      'gui_shell', 'theme', 'editor', 'claude_exe'):
+                      'extract_model', 'review_model', 'review_min_confidence',
+                      'gui_shell', 'theme', 'editor', 'claude_exe',
+                      'plan_model', 'exec_model', 'omniroute_base_url',
+                      'omniroute_exec_model'):
                 if k in body:
                     s[k] = body[k]
+            # api_key only overwritten when the user actually typed a new one —
+            # never blanked by a settings-save round-trip that omits it because
+            # the frontend never receives the raw key back to resubmit
+            if body.get('omniroute_api_key'):
+                s['omniroute_api_key'] = body['omniroute_api_key']
             save_settings(s)
             self._send(200, {'ok': True})
         elif u.path.startswith('/api/job/') and u.path.endswith('/decide'):

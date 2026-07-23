@@ -267,17 +267,32 @@ def spawn_background_worker(project_path, proj_folder):
 
 # ── Claude calls (monkeypatched in tests) ────────────────────
 
+def extract_model():
+    """Economy model for claudectl's OWN internal generation calls (memory,
+    lessons, CLAUDE.md, agent/hook/skill gen). '' = leave the account default."""
+    try:
+        from .config import load_settings
+        return (load_settings().get('extract_model') or '').strip()
+    except Exception:
+        return ''
+
+
 def _claude_stdin(prompt, cwd, timeout=EXTRACT_TIMEOUT,
-                  crumbs=('CLAUDECTL', 'MEMORY'), label='Working with Claude...'):
+                  crumbs=('CLAUDECTL', 'MEMORY'), label='Working with Claude...',
+                  model=None):
     """Run `claude -p` reading the prompt from stdin (avoids the Windows
     command-line length limit). Foreground: visible progress bar (ESC cancels).
     Background threads (_tls.silent): headless subprocess, no UI/keyboard.
+    `model` overrides the economy extract_model; '' forces the account default.
     Returns stdout text or ''."""
     from .config import get_claude_exe
     exe = get_claude_exe()
     if not exe:
         return ''
     args = [exe, '-p', '--disallowedTools', 'Write,Edit,NotebookEdit,Bash']
+    m = extract_model() if model is None else (model or '').strip()
+    if m:
+        args += ['--model', m]
     if getattr(_tls, 'silent', False):
         import subprocess
         try:

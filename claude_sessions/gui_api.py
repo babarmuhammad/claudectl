@@ -44,7 +44,8 @@ def start_job(label, fn, inputs=None):
     job = {'id': jid, 'status': 'running', 'label': label, 'messages': [],
            'result': None, 'error': '', 'gate': None,
            'decision': None, 'decision_evt': threading.Event(),
-           'inputs': list(inputs or []), 'started': time.time()}
+           'inputs': list(inputs or []), 'started': time.time(),
+           'cancelled': False}
     with _JOBS_LOCK:
         _JOBS[jid] = job
 
@@ -99,6 +100,7 @@ def job_cancel(jid):
         return False
     if job['status'] == 'awaiting':      # a cancel at the gate = reject
         return job_decide(jid, False)
+    job['cancelled'] = True
     job['status'] = 'cancelled'
     return True
 
@@ -562,6 +564,71 @@ def api_agents_session(q, body):
     return {'ok': True, 'active': n}
 
 
+def api_worklog_get(q, body):
+    from .config import load_settings
+    from .worklog import load_worklog
+    from . import hooks
+    enc = q.get('enc', '')
+    on = bool((( load_settings().get('project_defaults') or {}).get(enc) or {}).get('worklog'))
+    entries = load_worklog(q['path']) if q.get('path') else []
+    return {'on': on, 'installed': hooks.worklog_hook_installed(),
+            'entries': list(reversed(entries))[:10]}
+
+
+def api_worklog_set(q, body):
+    from .config import load_settings, save_settings
+    from . import hooks
+    enc = body.get('enc', '')
+    on = bool(body.get('on'))
+    s = load_settings()
+    s.setdefault('project_defaults', {}).setdefault(enc, {})['worklog'] = on
+    save_settings(s)
+    if on:
+        hooks.install_worklog_hook()     # ensure the global hook exists
+    return {'ok': True, 'on': on, 'installed': hooks.worklog_hook_installed()}
+
+
+def api_skills_get(q, body):
+    from .skills import list_templates, list_skills, project_skills_dir
+    templates = [{'name': n, 'desc': (d or '')[:160], 'dir': sd, 'source': src}
+                 for n, d, sd, src in list_templates()]
+    project = []
+    if q.get('path'):
+        project = [{'name': n, 'desc': (d or '')[:160], 'dir': sd}
+                   for n, d, sd in list_skills(project_skills_dir(q['path']))]
+    return {'templates': templates, 'project': project}
+
+
+def api_skill_read(q, body):
+    from .skills import parse_skill
+    meta, body_txt = parse_skill(q['dir'])
+    return {'meta': meta, 'body': body_txt}
+
+
+def api_skill_install(q, body):
+    from .skills import install_skill
+    dest = install_skill(body.get('dir', ''), body.get('path', ''))
+    return {'ok': bool(dest), 'dir': dest}
+
+
+def api_skill_remove(q, body):
+    from .skills import delete_skill
+    return {'ok': delete_skill(body.get('dir', ''))}
+
+
+def api_skill_create(q, body):
+    from .skills import write_skill, project_skills_dir, library_dir, _slug
+    base = project_skills_dir(body['path']) if body.get('path') else library_dir()
+    skill_dir = os.path.join(base, _slug(body['name']))
+    meta = {'name': _slug(body['name']), 'description': body.get('description', '')}
+    if body.get('tools'):
+        meta['allowed-tools'] = body['tools']
+    default_body = (f"# {body['name']}\n\n{body.get('description', '')}\n\n"
+                    f"## Instructions\n\n1. \n")
+    ok = write_skill(skill_dir, meta, body.get('body') or default_body)
+    return {'ok': ok, 'dir': skill_dir}
+
+
 def api_mcp_get(q, body):
     from .mcp import get_mcp_status
     return {'servers': [{'name': n, 'status': s} for n, s in get_mcp_status()]}
@@ -994,23 +1061,6 @@ def api_inject_launch(q, body):
     return {'ok': True}
 
 
-def api_plan_launch(q, body):
-    """Plan→Execute: run the plan step as a job elsewhere; this endpoint
-    launches the execute session with the plan file in a new console."""
-    import subprocess
-    from .config import get_claude_exe, load_settings
-    exe = get_claude_exe()
-    if not exe:
-        return {'ok': False, 'error': 'claude.exe not found'}
-    s = load_settings()
-    args = [exe, '--model', body.get('model') or s.get('exec_model', ''),
-            '--append-system-prompt',
-            f"A plan file for your task is at {body['plan_file']}. Read it and "
-            f"execute it step by step."]
-    title_arg = f"claude — {os.path.basename(body['path'])}"
-    subprocess.Popen(['cmd', '/c', 'start', title_arg, 'cmd', '/k'] + args,
-                     cwd=body['path'], env=os.environ.copy())
-    return {'ok': True}
 
 
 # ── job launchers for the AI features ────────────────────────
@@ -1059,12 +1109,152 @@ def api_job_start(q, body):
         from .hooks import _ai_hook
         jid = start_job('Generating hook', lambda: _ai_hook(),
                         inputs=[body.get('description', '')])
+    elif kind == 'skill_ai':
+        from . import skills, memory
+        from .claude_md import _pager_confirm
+        sk_name = body.get('name', '')
+        role = body.get('description', '') or sk_name
+        proj = path or None
+        def _skill():
+            prompt = skills.build_ai_prompt(sk_name, role, proj)
+            content = (memory._claude_stdin(prompt, cwd=path or '.') or '').strip()
+            if not content:
+                raise RuntimeError('No output from Claude')
+            if not _pager_confirm(f'SKILL / {skills._slug(sk_name)} — approve to write',
+                                  content):
+                return {'ok': False, 'rejected': True}
+            d = skills.write_skill_raw(proj, sk_name, content)
+            return {'ok': bool(d), 'dir': d}
+        jid = start_job(f'Generating skill {skills._slug(sk_name)}', _skill)
+    elif kind == 'review':
+        from .review import run_review
+        staged = bool(body.get('staged'))
+        base = body.get('base') or None
+        jid = start_job('Reviewing changes',
+                        lambda: run_review(path, folder, staged=staged, base=base))
     elif kind == 'plan_make':
-        from .plan_execute import _plan
-        from .config import load_settings
-        model = body.get('model') or load_settings().get('plan_model', '')
+        from .plan_execute import _plan, write_plan_file, optimize_plan_council
+        from .config import load_settings, omniroute_env
+        s = load_settings()
+        model = body.get('model') or s.get('plan_model', '')
         task = body.get('task', '')
-        jid = start_job('Writing plan', lambda: _plan(task, model, path))
+        effort = body.get('effort', '')
+        council = bool(body.get('council'))
+        # council must route through the SAME channel the user picked for
+        # execution (body['via']), not the account-wide default setting --
+        # else a stale omniroute_exec_model default silently routes every
+        # council call at an unreachable proxy, _headless swallows the
+        # errors, and optimize_plan_council quietly no-ops the plan back
+        # unchanged with no error shown.
+        via = body.get('via', 'anthropic')
+        omni_env = omniroute_env(s) if via == 'omniroute' else {}
+
+        def _make():
+            plan = _plan(task, model, path, effort)
+            if not plan:
+                raise RuntimeError('Planning failed or produced no output')
+            if council:
+                plan = optimize_plan_council(task, plan, path, omni_env=omni_env)
+            plan_path = write_plan_file(path, task, plan)
+            if not plan_path:
+                raise RuntimeError('Could not save plan file')
+            return {'plan': plan, 'plan_path': plan_path}
+        jid = start_job(f'Writing plan ({model}){" + council" if council else ""}', _make)
+    elif kind == 'plan_launch':
+        from .plan_execute import build_exec_launch, write_plan_file
+        from .config import load_settings, omniroute_env, config_dir
+        from . import omniroute, ui
+        task = body.get('task', '')
+        plan_text = body.get('plan_text', '')
+        per_step = bool(body.get('per_step'))
+        cfgdir = body.get('account') or ''
+        exec_folder = folder
+        if cfgdir and cfgdir != config_dir:
+            from .paths import encode_component
+            exec_folder = os.path.join(cfgdir, 'projects', encode_component(path))
+
+        def _launch():
+            import subprocess
+            s = load_settings()
+            via = body.get('via', 'anthropic')
+            omni_env = omniroute_env(s) if via == 'omniroute' else {}
+            # write user-edited plan text before launching
+            if plan_text:
+                write_plan_file(path, task, plan_text)
+            if omni_env:
+                ok, msg = omniroute.ensure_running(s.get('omniroute_base_url', ''))
+                ui.flash(f'OmniRoute: {msg}', ok=ok)
+                if not ok:
+                    raise RuntimeError(msg)
+            if body.get('model'):
+                model = body['model']
+            elif omni_env:
+                model = s.get('omniroute_exec_model') or omniroute.AUTO_MODEL
+            else:
+                model = s.get('exec_model', '')
+            args, env = build_exec_launch(path, exec_folder, task, model, omni_env, cfgdir)
+            if not args:
+                raise RuntimeError('claude.exe not found')
+            title = f"claude — {os.path.basename(path)}"
+            subprocess.Popen(['cmd', '/c', 'start', title, 'cmd', '/k'] + args,
+                             cwd=path, env=env)
+            return {'model': model, 'via': via}
+        jid = start_job('Launching execute session' + (' (per-step)' if per_step else ''), _launch)
+    elif kind == 'plan_replan':
+        from .plan_execute import replan_from_plan
+        task = body.get('task', '')
+        plan_text = body.get('plan_text', '')
+        feedback = body.get('feedback', '')
+        model = body.get('model') or 'claude-sonnet-5'
+        effort = body.get('effort', '')
+
+        def _replan():
+            revised = replan_from_plan(plan_text or task, feedback, model, path, effort)
+            if not revised:
+                raise RuntimeError('Re-plan failed or produced no output')
+            return {'plan': revised}
+        jid = start_job('Re-planning with feedback', _replan)
+    elif kind == 'skill_git_install':
+        from . import skills
+        from .config import load_settings
+        url = body.get('url', '')
+        proj = path or None
+
+        def _install():
+            exec_model = load_settings().get('omniroute_exec_model', '')
+            ok, msg = skills.install_from_git(url, proj, exec_model)
+            if not ok:
+                raise RuntimeError(msg)
+            return {'message': msg}
+        jid = start_job(f'Installing from {url}', _install)
+    elif kind == 'omniroute_ensure':
+        from . import omniroute
+        from .config import load_settings
+
+        def _ensure():
+            s = load_settings()
+            ok, msg = omniroute.ensure_running(s.get('omniroute_base_url', ''))
+            return {'ok': ok, 'message': msg}
+        jid = start_job('Starting OmniRoute', _ensure)
+    elif kind == 'omniroute_test_connection':
+        from . import omniroute
+        conn_id = body.get('conn_id', '')
+
+        def _test():
+            ok, msg = omniroute.cli_test_connection(conn_id)
+            return {'ok': ok, 'message': msg}
+        jid = start_job(f'Testing {conn_id}', _test)
+    elif kind == 'omniroute_live_test':
+        from . import omniroute
+        from .config import load_settings
+        model = body.get('model') or omniroute.AUTO_MODEL
+
+        def _live():
+            s = load_settings()
+            ok, used, msg = omniroute.test_live(
+                s.get('omniroute_base_url', ''), model, s.get('omniroute_api_key', ''))
+            return {'ok': ok, 'model_used': used, 'message': msg}
+        jid = start_job(f'Sending a real test request via {model}', _live)
     else:
         return {'ok': False, 'error': f'unknown job kind {kind!r}'}
     return {'ok': True, 'job': jid}
@@ -1086,6 +1276,53 @@ def _memfn(refresh_memory, path, folder, name):
             'pending_units': mem.get('pending_units', 0)}
 
 
+# ── OmniRoute — free-tier execution backend ───────────────────
+# github.com/diegosouzapw/OmniRoute (MIT, diegosouzapw). Self-hosted local
+# proxy speaking the Anthropic Messages API natively — never returns the raw
+# api_key to the frontend, status/models only.
+
+def api_omniroute_status(q, body):
+    from . import omniroute
+    from .config import load_settings
+    s = load_settings()
+    base, key = s.get('omniroute_base_url', ''), s.get('omniroute_api_key', '')
+    reachable = omniroute.is_reachable(base, key)
+    out = {'reachable': reachable, 'model_count': 0, 'configured': 0, 'active': 0,
+           'connections': []}
+    if reachable:
+        out['model_count'] = len(omniroute.list_models(base, key))
+        out.update({k: v for k, v in omniroute.provider_status(base).items()
+                    if k in ('configured', 'active')})
+        out['connections'] = omniroute.cli_connections()
+    return out
+
+
+def api_omniroute_models(q, body):
+    from . import omniroute
+    from .config import load_settings
+    s = load_settings()
+    models = omniroute.list_models(s.get('omniroute_base_url', ''), s.get('omniroute_api_key', ''))
+    return {'models': [m for m, _l in models], 'labels': {m: l for m, l in models}}
+
+
+def api_plan_edit(q, body):
+    from .plan_execute import edit_plan
+    plan = body.get('plan', '')
+    action = body.get('action', '')
+    index = body.get('index')
+    text = body.get('text', '')
+    if index is not None:
+        try:
+            index = int(index)
+        except (TypeError, ValueError):
+            return {'ok': False, 'error': 'invalid index'}
+    try:
+        result = edit_plan(plan, action, index=index, text=text)
+        return {'ok': True, 'plan': result}
+    except ValueError as e:
+        return {'ok': False, 'error': str(e)}
+
+
 # ── dispatch table (method, path) → handler(q, body) ─────────
 
 GET_ROUTES = {
@@ -1103,6 +1340,9 @@ GET_ROUTES = {
     '/api/agents/library': api_agents_library,
     '/api/agents/read': api_agent_read,
     '/api/agents/session': api_agents_session_get,
+    '/api/skills': api_skills_get,
+    '/api/skills/read': api_skill_read,
+    '/api/worklog': api_worklog_get,
     '/api/mcp': api_mcp_get,
     '/api/accounts': api_accounts_get,
     '/api/memory/state': api_memory_state,
@@ -1121,6 +1361,8 @@ GET_ROUTES = {
     '/api/add-dirs': api_add_dirs_get,
     '/api/path-complete': api_path_complete,
     '/api/inject/sessions': api_inject_sessions,
+    '/api/omniroute/status': api_omniroute_status,
+    '/api/omniroute/models': api_omniroute_models,
 }
 
 POST_ROUTES = {
@@ -1137,6 +1379,10 @@ POST_ROUTES = {
     '/api/agents/create': api_agent_create,
     '/api/agents/delete': api_agent_delete,
     '/api/agents/session': api_agents_session,
+    '/api/skills/install': api_skill_install,
+    '/api/skills/remove': api_skill_remove,
+    '/api/skills/create': api_skill_create,
+    '/api/worklog': api_worklog_set,
     '/api/mcp/add': api_mcp_add,
     '/api/mcp/remove': api_mcp_remove,
     '/api/accounts/action': api_accounts_post,
@@ -1152,6 +1398,6 @@ POST_ROUTES = {
     '/api/add-dirs': api_add_dirs_set,
     '/api/open-path': api_open_path,
     '/api/inject/launch': api_inject_launch,
-    '/api/plan/launch': api_plan_launch,
     '/api/job': api_job_start,
+    '/api/plan/edit': api_plan_edit,
 }

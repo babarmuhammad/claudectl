@@ -162,8 +162,28 @@ def flash(msg, ok=True, secs=0.8):
 def run_with_progress(args, crumbs, label, timeout=120, cwd=None):
     """Run a subprocess while showing an animated progress bar; ESC cancels.
     Returns (stdout: str | None, cancelled: bool) — stdout None on
-    cancel/timeout/launch failure."""
+    cancel/timeout/launch failure.
+
+    Silent/background mode (memory._tls.silent, set by every GUI job
+    thread): plain subprocess.run, no render loop at all. CONFIRMED
+    NECESSARY, not optional — the render loop's clear-screen fallback
+    (os.system('cls'), used when VT mode isn't available) spawns a real
+    console per tick on a console-less job thread. At ~10 ticks/sec for up
+    to `timeout` seconds that looked like terminals endlessly opening and
+    closing until the whole app was killed (confirmed via Plan→Execute).
+    Same idiom memory._claude_stdin() already used for exactly this reason
+    — this makes it apply to every run_with_progress[_stdin] caller at
+    once (agents.py AI-gen, mcp.py MCP analysis, plan_execute.py, …)
+    instead of requiring each call site to remember to check."""
     import subprocess
+    from . import memory
+    if getattr(memory._tls, 'silent', False):
+        try:
+            p = subprocess.run(args, capture_output=True, text=True,
+                               encoding='utf-8', errors='ignore', cwd=cwd, timeout=timeout)
+            return (p.stdout or ''), False
+        except Exception:
+            return None, False
     import threading
 
     try:
@@ -215,8 +235,17 @@ def run_with_progress(args, crumbs, label, timeout=120, cwd=None):
 def run_with_progress_stdin(args, stdin_text, crumbs, label, timeout=240, cwd=None):
     """Like run_with_progress but feeds the prompt via STDIN (avoids the
     Windows command-line length limit for large prompts). ESC cancels.
-    Returns (stdout|None, cancelled)."""
+    Returns (stdout|None, cancelled). Silent/background mode: see
+    run_with_progress's docstring — same reasoning, same fix."""
     import subprocess
+    from . import memory
+    if getattr(memory._tls, 'silent', False):
+        try:
+            p = subprocess.run(args, input=stdin_text, capture_output=True, text=True,
+                               encoding='utf-8', errors='ignore', cwd=cwd, timeout=timeout)
+            return (p.stdout or ''), False
+        except Exception:
+            return None, False
     import threading
     try:
         proc = subprocess.Popen(
@@ -715,6 +744,8 @@ def settings_menu():
         think = s.get('default_max_thinking') or 'default'
         submod = next((l for v, l in zip(MODELS, MODEL_LABELS)
                        if v == s.get('default_subagent_model', '')), 'default')
+        xmod = next((l for v, l in zip(MODELS, MODEL_LABELS)
+                     if v == s.get('extract_model', '')), 'default')
         theme = s.get('theme', 'default')
         items = [
             (f"Editor      :  {editor_now}", 'editor'),
@@ -725,6 +756,7 @@ def settings_menu():
             (f"Permissions :  {perm}   {C_DIM}(--permission-mode){C_RESET}", 'permission'),
             (f"Think cap   :  {think}   {C_DIM}(MAX_THINKING_TOKENS — save tokens){C_RESET}", 'max_thinking'),
             (f"Subagent mdl:  {submod}   {C_DIM}(CLAUDE_CODE_SUBAGENT_MODEL){C_RESET}", 'subagent_model'),
+            (f"Economy mdl :  {xmod}   {C_DIM}(claudectl's own memory/gen calls — cuts cost){C_RESET}", 'extract_model'),
             (f"Theme       :  {theme}", 'theme'),
             (f"Interface   :  {s.get('ui_mode', 'tui').upper()}   {C_DIM}(TUI here / GUI in browser — or run --gui){C_RESET}", 'ui_mode'),
             (f"{'─' * W}", None),
@@ -786,6 +818,13 @@ def settings_menu():
                         f"DEFAULT {sel.upper()}")
             if pick is not None:
                 s[f'default_{sel}'] = '' if pick == '__default__' else pick
+                save_settings(s)
+                flash("Saved")
+        elif sel == 'extract_model':
+            pick = menu([(l, v if v else '__default__') for l, v in zip(MODEL_LABELS, MODELS)],
+                        "ECONOMY MODEL  (claudectl's own generation calls)")
+            if pick is not None:
+                s['extract_model'] = '' if pick == '__default__' else pick
                 save_settings(s)
                 flash("Saved")
 
@@ -1007,20 +1046,95 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
         if wt_state == '*': return 'auto'
         return wt_state
 
+    def _model_rows():
+        # index-aligned to MODELS so the ◉ marker tracks model_idx; '' = default
+        out = []
+        for mid in MODELS:
+            if not mid:
+                out.append(('', 'default', '', '', 'account model', ''))
+                continue
+            prof = _c.MODEL_PROFILES.get(mid)
+            lbl = MODEL_LABELS[MODELS.index(mid)]
+            if prof:
+                out.append((mid, lbl, _c.cost_bar(mid), _c.cap_bar(mid),
+                            prof['best_for'], _c.swe_str(mid)))
+            else:
+                out.append((mid, lbl, '', '', '', ''))
+        return out
+
+    def _slider(idx, n, width=30):
+        cells = ['─'] * width
+        ticks = [round(j * (width - 1) / (n - 1)) for j in range(n)]
+        for t in ticks:
+            cells[t] = '·'
+        cells[ticks[idx]] = '●'
+        return '├' + ''.join(cells) + '┤'
+
+    def _apply_preset(i):
+        nonlocal model_idx, effort_idx, think_idx, sub_idx
+        if not (0 <= i < len(_c.LAUNCH_PRESETS)):
+            return
+        name, _desc, f = _c.LAUNCH_PRESETS[i]
+        if f.get('model') in MODELS:            model_idx  = MODELS.index(f['model'])
+        if f.get('effort') in EFFORTS:          effort_idx = EFFORTS.index(f['effort'])
+        if f.get('max_thinking') in THINKING_CAPS:   think_idx = THINKING_CAPS.index(f['max_thinking'])
+        if f.get('subagent_model') in MODELS:   sub_idx    = MODELS.index(f['subagent_model'])
+        flash(f"Preset: {name}", secs=1.0)
+
+    def _show_guide():
+        lines = [render.header('CLAUDECTL', project_name, 'MODEL GUIDE'), '',
+                 render.hline(),
+                 f"  {C_DIM}model         SWE    cost    cap      best for{C_RESET}"]
+        for _mid, lbl, cb, capb, bf, sw in _c.model_card_rows():
+            lines.append(f"  {lbl:<12} {sw:<6} {cb:<6} {capb:<7} {bf}")
+        lines += ['', f"  {C_DIM}effort  (raise before switching model tier — high/xhigh ≈ next tier up){C_RESET}"]
+        for ev_, el_ in zip(EFFORTS, EFFORT_LABELS):
+            if not ev_:
+                continue
+            lines.append(f"  {el_:<7} {_c.EFFORT_PROFILES.get(ev_, '')}")
+        lines += ['', f"  {C_DIM}presets{C_RESET}"]
+        for pn, pd, _f in _c.LAUNCH_PRESETS:
+            lines.append(f"  {pn:<15} {C_DIM}{pd}{C_RESET}")
+        lines += ['',
+                  f"  {C_DIM}Sonnet at xhigh can cost more than Opus·high — don't over-crank effort.{C_RESET}",
+                  '', render.hint_keys([('any key', 'back')])]
+        render.render_frame(lines)
+        wait_event()
+
     while True:
         def sel_c(i):
             return C_SEL if field == i else C_DIM
 
         perm_label = PERM_LABELS[perm_idx]
         perm_color = '\033[93m' if PERM_LABELS[perm_idx] in PERM_RISKY else ''
+        eff_cur = EFFORTS[effort_idx]
+        preset_name = _c.active_preset({
+            'model': MODELS[model_idx], 'effort': eff_cur,
+            'max_thinking': THINKING_CAPS[think_idx], 'subagent_model': MODELS[sub_idx]})
+        strip = [(f"{C_SEL}{pn}{C_RESET}" if pn == preset_name else f"{C_DIM}{pn}{C_RESET}")
+                 for pn, _d, _f in _c.LAUNCH_PRESETS]
+        slcol = C_SEL if field == 0 else C_DIM
         frame = [
-            render.header('CLAUDECTL', project_name, 'LAUNCH OPTIONS'),
+            render.header('CLAUDECTL', project_name, 'START SESSION' if is_new else 'LAUNCH OPTIONS'),
             '',
+            f"  {C_DIM}Quick start{C_RESET}   " + f" {C_DIM}·{C_RESET} ".join(strip)
+            + f"   {C_DIM}1-4{C_RESET}",
             render.hline(),
-            f"  {sel_c(0)}{'▸' if field == 0 else ' '}  Effort      :  [ {EFFORT_LABELS[effort_idx]:<18} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}",
-            f"  {sel_c(1)}{'▸' if field == 1 else ' '}  Model       :  [ {MODEL_LABELS[model_idx]:<18} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}",
-            f"  {sel_c(2)}{'▸' if field == 2 else ' '}  Permissions :  [ {perm_color}{perm_label:<18}{C_RESET}{sel_c(2)} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}",
+            f"  {sel_c(0)}{'▸' if field == 0 else ' '}  Effort{C_RESET}  {C_DIM}default{C_RESET} "
+            f"{slcol}{_slider(effort_idx, len(EFFORTS))}{C_RESET} {C_DIM}max{C_RESET}   "
+            f"{sel_c(0)}{EFFORT_LABELS[effort_idx]}{C_RESET} {C_DIM}· {_c.EFFORT_PROFILES.get(eff_cur, '')}{C_RESET}",
         ]
+        bcol = C_SEL if field == 1 else C_DIM
+        frame.append(f"  {bcol}{'▸' if field == 1 else ' '}  Model{C_RESET}   {C_DIM}← → cycle{C_RESET}")
+        frame.append(f"    {bcol}╭{'─' * 46}╮{C_RESET}")
+        for mid, lbl, cb, capb, bf, sw in _model_rows():
+            marked = (MODELS[model_idx] == mid)
+            body = f"{'◉' if marked else '○'} {lbl:<10} {sw:<4}{cb:<6}{capb:<6}{bf}"
+            lc = C_GREEN if marked else C_DIM
+            frame.append(f"    {bcol}│{C_RESET} {lc}{render.trunc(body, 44):<44}{C_RESET} {bcol}│{C_RESET}")
+        frame.append(f"    {bcol}╰{'─' * 46}╯{C_RESET}")
+        frame.append(
+            f"  {sel_c(2)}{'▸' if field == 2 else ' '}  Permissions :  [ {perm_color}{perm_label:<18}{C_RESET}{sel_c(2)} ]{C_RESET}   {C_DIM}← → cycle{C_RESET}")
         if is_new:
             frame += [
                 f"  {sel_c(3)}{'▸' if field == 3 else ' '}  Worktree    :  [ {render.trunc(_wt_label(), 18):<18} ]{C_RESET}   {C_DIM}← → cycle, → on 'custom'{C_RESET}",
@@ -1059,10 +1173,14 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
                 frame.append(f"    {C_DIM}{line.rstrip(',')}{C_RESET}")
         if memory_status:
             frame.append(f"  {C_DIM}{memory_status}{C_RESET}")
+        adv_level, adv_msg = _c.advise(MODELS[model_idx], eff_cur)
+        adv_c = {'ok': C_GREEN, 'tip': C_SRCH, 'warn': _c.C_WARN}.get(adv_level, C_DIM)
+        adv_tag = {'ok': '', 'tip': 'tip: ', 'warn': 'note: '}.get(adv_level, '')
         frame += [
             '',
-            render.hint_keys([('↑↓', 'field'), ('← →', 'change'), ('e', 'economy preset'),
-                              ('ENTER', 'launch'), ('ESC', 'back')]),
+            f"  {adv_c}{render.trunc(adv_tag + adv_msg, render.content_width() - 4)}{C_RESET}",
+            render.hint_keys([('↑↓', 'field'), ('← →', 'change'), ('1-4', 'preset'),
+                              ('?', 'guide'), ('ENTER', 'launch'), ('ESC', 'back')]),
         ]
         render.render_frame(frame)
 
@@ -1071,12 +1189,12 @@ def launch_options_menu(project_name, defaults=None, is_new=False, agents=None,
             field = (field - 1) % n_fields
         elif ev[0] == 'down':
             field = (field + 1) % n_fields
+        elif ev[0] == 'char' and ev[1] in '1234':
+            _apply_preset(int(ev[1]) - 1)
         elif ev[0] == 'char' and ev[1] == 'e':
-            # economy preset: sonnet + 8k thinking cap + haiku subagents
-            model_idx = MODELS.index('claude-sonnet-5') if 'claude-sonnet-5' in MODELS else model_idx
-            think_idx = THINKING_CAPS.index('8000') if '8000' in THINKING_CAPS else think_idx
-            sub_idx   = MODELS.index('claude-haiku-4-5') if 'claude-haiku-4-5' in MODELS else sub_idx
-            flash("Economy preset: sonnet · 8k think cap · haiku subagents", secs=1.2)
+            _apply_preset(0)   # Economy alias (back-compat)
+        elif ev[0] == 'char' and ev[1] == '?':
+            _show_guide()
         elif ev[0] in ('left', 'right'):
             step = -1 if ev[0] == 'left' else 1
             if field == 0:

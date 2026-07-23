@@ -71,8 +71,10 @@ def analyze_mcp_tools(mcp_name):
         f"Do not create, write, or edit any files — output the markdown directly."
     )
     # prompt BEFORE --disallowedTools (variadic flag would swallow it)
+    from .memory import extract_model
+    _mf = ['--model', extract_model()] if extract_model() else []
     out, cancelled = run_with_progress(
-        [claude_exe, '--print', prompt,
+        [claude_exe, *_mf, '--print', prompt,
          '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
         ('CLAUDECTL', mcp_name, 'MCP ANALYSIS'),
         f'Analyzing {mcp_name} MCP tools via Claude...  (15-60s)',

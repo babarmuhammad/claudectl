@@ -79,8 +79,10 @@ def ai_generate_system_prompt(sp_path, project_name, project_path, proj_folder):
 
     # prompt BEFORE --disallowedTools: the flag is variadic and would
     # otherwise swallow the prompt as tool names
+    from .memory import extract_model
+    _mf = ['--model', extract_model()] if extract_model() else []
     out, cancelled = run_with_progress(
-        [claude_exe, '--print', prompt,
+        [claude_exe, *_mf, '--print', prompt,
          '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
         ('CLAUDECTL', project_name, 'AI SYSTEM PROMPT'),
         'Generating system prompt with Claude...  (15-60s)',

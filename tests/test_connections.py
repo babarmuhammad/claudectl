@@ -110,7 +110,7 @@ def test_render_html_self_contained(monkeypatch, tmp_path):
     actual, enc, folder, _ = sb.add_project('alpha')
     _mkfile(actual, 'a/x.py', 'x=1\n')
     html = connections.render_html(connections.build_hierarchy(actual, folder))
-    for needle in ('<canvas', 'const GRAPH', 'id="search"', 'expanded', 'id="fit"', 'drawDodec'):
+    for needle in ('<canvas', 'const CODE', 'id="search"', 'expanded', 'id="fit"', 'drawDodec'):
         assert needle in html, needle
     assert 'http://' not in html and 'https://' not in html
     assert '<script src=' not in html

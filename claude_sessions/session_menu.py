@@ -210,10 +210,14 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
             if not active:
                 rows.append((f"{C_DIM}(no archived sessions){C_RESET}", None))
         else:
-            rows = [(f"{'─' * W}", None), (f"+ New Chat", 'new')]
+            rows = [(f"{'─' * W}", None),
+                    (f"  {C_DIM}START{C_RESET}", None),
+                    (f"{C_OK}+ New Chat{C_RESET}          {C_DIM}fresh session{C_RESET}", 'new')]
             if sessions:
-                rows.append((f"+ Continue latest  {C_DIM}(claude -c){C_RESET}", 'continue'))
+                rows.append((f"{C_OK}+ Continue latest{C_RESET}   {C_DIM}resume most recent (claude -c){C_RESET}", 'continue'))
             rows.append((f"{'─' * W}", None))
+            if active:
+                rows.append((f"  {C_DIM}RESUME  ({len(active)}){C_RESET}", None))
         for i, (mtime, sid, preview, count, s_folder, acct_name) in enumerate(active, 1):
             age  = format_age(mtime).strip()
             date = datetime.fromtimestamp(mtime).strftime('%d %b %Y')
@@ -323,7 +327,7 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
                 ('⇧F', 'files'), ('⇧A', 'archived')], prefix='session:'))
             frame.append(render.hint_keys([
                 ('m', 'memory'), ('g', 'agents'), ('n', 'graph'), ('⇧X', 'plan→exec'),
-                ('a', 'ai-analyze'), ('c', 'claude.md'), ('s', 'sys-prompt'),
+                ('⇧R', 'review'), ('a', 'ai-analyze'), ('c', 'claude.md'), ('s', 'sys-prompt'),
                 ('u', 'usage'), ('w', 'status'), ('⇧K', 'inject context'),
                 ('⇧W', 'ctx audit')], prefix='project:'))
             frame.append(render.hint_bar(
@@ -552,6 +556,10 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
         elif ev[0] == 'char' and ev[1] == 'X' and not show_archived:
             from . import plan_execute
             plan_execute.run(project_path, proj_folder, project_name)
+
+        elif ev[0] == 'char' and ev[1] == 'R' and not show_archived:
+            from . import review
+            review.review_screen(project_path, proj_folder, project_name)
 
         elif ev[0] == 'char' and ev[1] == 'K' and not show_archived:
             from . import context_inject

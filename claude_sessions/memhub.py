@@ -71,8 +71,8 @@ def hub_screen(project_path, proj_folder, project_name):
                                     ('p', 'preview injection'), ('⇧L', 'lessons')]),
                   render.hint_keys([('s', 'suggestions'), ('d', 'since last session'),
                                     ('h', 'hook on/off'), ('u', 'rules on/off'),
-                                    ('g', 'open graph'), ('⇧M', 'memory files'),
-                                    ('ESC', 'back')])]
+                                    ('⇧W', 'recent-work'), ('g', 'open graph'),
+                                    ('⇧M', 'memory files'), ('ESC', 'back')])]
         render.render_frame(frame)
         ev = wait_event()
         if ev[0] == 'esc':
@@ -116,6 +116,8 @@ def hub_screen(project_path, proj_folder, project_name):
             lessons_mod.review_screen(project_path, proj_folder, project_name)
         elif ch == 'h':
             _toggle_hook(project_path, st, flash)
+        elif ch == 'W':
+            _toggle_worklog(project_path, st, flash)
         elif ch == 'u':
             from .config import load_settings, save_settings
             s = load_settings()
@@ -129,7 +131,12 @@ def hub_screen(project_path, proj_folder, project_name):
         elif ch == 'g':
             from . import connections
             g = connections.build_hierarchy(project_path, proj_folder)
-            p = connections.write_graph_html(g, project_path, proj_folder)
+            try:
+                mem = connections.build_memory_hierarchy(project_path, proj_folder)
+            except Exception:
+                mem = None
+            p = connections.write_graph_html(g, project_path, proj_folder,
+                                             memory=mem, default_view='memory')
             if not p:
                 flash("Could not write graph HTML (check disk/permissions)", ok=False, secs=2.5)
             else:
@@ -152,4 +159,19 @@ def _toggle_hook(project_path, st, flash):
     if new_state and not hooks_mod.memory_hook_installed():
         hooks_mod.install_memory_hook()
     flash(f"Per-prompt hook {'ENABLED' if new_state else 'disabled'} for this project",
+          ok=new_state, secs=1.6)
+
+
+def _toggle_worklog(project_path, st, flash):
+    """Toggle recent-work memory (claude-mem style) for this project."""
+    from .config import load_settings, save_settings
+    from . import hooks as hooks_mod
+    s = load_settings()
+    proj = s.setdefault('project_defaults', {}).setdefault(st['enc'], {})
+    new_state = not proj.get('worklog', False)
+    proj['worklog'] = new_state
+    save_settings(s)
+    if new_state:
+        hooks_mod.install_worklog_hook()
+    flash(f"Recent-work memory {'ENABLED' if new_state else 'disabled'} for this project",
           ok=new_state, secs=1.6)
