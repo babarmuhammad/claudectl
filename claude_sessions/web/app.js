@@ -117,7 +117,7 @@ async function runJob(kind,params,onDone){
   if(!r.ok){toast(r.error||'Could not start','err');return;}
   const jid=r.job;
   const memPath=kind==='memory_build'?params.path:null;
-  let __plMsgs='',__plSub='',__plLabel='',__plGateTitle='';
+  let __plMsgs='',__plSub='',__plLabel='';
   $('#jovl').classList.add('show');$('#jGate').style.display='none';
   $('#jCancelRow').style.display='';
   $('#jCancel').onclick=async()=>{await post(`/api/job/${jid}/cancel`);};
@@ -131,22 +131,23 @@ async function runJob(kind,params,onDone){
       if(mp.progress)sub+=` — ${mp.progress}`;
     }
     if(sub!==__plSub){__plSub=sub;$('#jSub').textContent=sub;}
+    // skip innerHTML rebuild when content unchanged -- avoids destroying/recreating
+    // text nodes every 600ms poll tick, which was the actual flicker source
     const msgsHtml=(st.messages||[]).map(m=>
       `<div class="${m.ok?'':'bad'}">${esc(m.text)}</div>`).join('');
     if(msgsHtml!==__plMsgs){__plMsgs=msgsHtml;$('#jMsgs').innerHTML=msgsHtml;}
     if(st.status==='awaiting'&&st.gate){
-      if(st.gate.title!==__plGateTitle){__plGateTitle=st.gate.title;
-        $('#jTitle').innerHTML=esc(st.gate.title);}
       $('#jGate').style.display='';$('#jCancelRow').style.display='none';
+      $('#jTitle').innerHTML=esc(st.gate.title);
       $('#jDiff').innerHTML=(st.gate.diff||[]).map(l=>{
         const c=l.startsWith('+++')||l.startsWith('---')||l.startsWith('@@')?'h'
               :l.startsWith('+')?'a':l.startsWith('-')?'d':'';
         return `<div class="${c}">${esc(l)}</div>`;}).join('')||'<div>(no diff)</div>';
-      $('#jApply').onclick=async()=>{await post(`/api/job/${jid}/decide`,{apply:true});
+      $('#jApply').onclick=async()=>{__plMsgs='';__plLabel='';await post(`/api/job/${jid}/decide`,{apply:true});
         $('#jGate').style.display='none';$('#jCancelRow').style.display='';
-        __plLabel='';$('#jTitle').innerHTML='<span class="spin"></span> <span id="jLabel">Working…</span>';
+        $('#jTitle').innerHTML='<span class="spin"></span> <span id="jLabel">Working…</span>';
         setTimeout(poll,300);};
-      $('#jReject').onclick=async()=>{await post(`/api/job/${jid}/decide`,{apply:false});
+      $('#jReject').onclick=async()=>{__plMsgs='';await post(`/api/job/${jid}/decide`,{apply:false});
         $('#jGate').style.display='none';setTimeout(poll,300);};
       return;   // paused at gate — no auto-poll
     }

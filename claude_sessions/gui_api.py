@@ -73,7 +73,7 @@ def job_status(jid):
     if not job:
         return None
     out = {k: job[k] for k in ('id', 'status', 'label', 'messages', 'error')}
-    out['elapsed'] = round(time.time() - job['started'], 1)
+    out['elapsed'] = int(time.time() - job['started'])
     if job['status'] == 'awaiting' and job['gate']:
         g = job['gate']
         out['gate'] = {'title': g['title'], 'diff': g['diff'],
@@ -713,7 +713,7 @@ def api_accounts_terminal(q, body):
     if not exe:
         return {'ok': False, 'error': 'claude.exe not found'}
     name = body.get('name', 'claude')
-    subprocess.Popen(['cmd', '/c', 'start', f'claude [{name}]', 'cmd', '/k', exe],
+    subprocess.Popen(['cmd', '/c', 'start', f'claude [{name}]', 'cmd', '/c', exe],
                      env=_env_for(body.get('dir', '')))
     return {'ok': True}
 
@@ -1056,7 +1056,7 @@ def api_inject_launch(q, body):
     if add_dirs:
         args += ['--add-dir', *add_dirs]
     title_arg = f'claude — {os.path.basename(path) or path}'
-    subprocess.Popen(['cmd', '/c', 'start', title_arg, 'cmd', '/k'] + args,
+    subprocess.Popen(['cmd', '/c', 'start', title_arg, 'cmd', '/c'] + args,
                      cwd=path, env=env)
     return {'ok': True}
 
@@ -1196,7 +1196,7 @@ def api_job_start(q, body):
             if not args:
                 raise RuntimeError('claude.exe not found')
             title = f"claude — {os.path.basename(path)}"
-            subprocess.Popen(['cmd', '/c', 'start', title, 'cmd', '/k'] + args,
+            subprocess.Popen(['cmd', '/c', 'start', title, 'cmd', '/c'] + args,
                              cwd=path, env=env)
             return {'model': model, 'via': via}
         jid = start_job('Launching execute session' + (' (per-step)' if per_step else ''), _launch)

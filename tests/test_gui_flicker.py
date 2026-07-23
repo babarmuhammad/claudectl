@@ -8,6 +8,7 @@ def test_poll_uses_cache_vars():
     assert '__plSub' in PAGE, 'expected __plSub cache variable in poll()'
     assert '__plLabel' in PAGE, 'expected __plLabel cache variable in poll()'
     assert 'msgsHtml!==__plMsgs' in PAGE, 'expected conditional DOM update for messages'
+    assert 'innerHTML=msgsHtml' in PAGE, 'expected innerHTML for messages only'
 
 
 def test_poll_uses_textcontent():

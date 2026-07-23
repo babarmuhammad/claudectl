@@ -153,12 +153,19 @@ Plan with an accurate model, execute with a cheaper — or completely free — o
 
 **Free execution via OmniRoute** — point the execute half at a local [OmniRoute](https://github.com/diegosouzapw/OmniRoute) proxy instead of your Anthropic account, and it runs on OmniRoute's aggregated free-tier providers. Left on *Auto* (the default), OmniRoute itself scores every currently-healthy free model per request (health/quota/cost/latency/task-fit) and transparently falls back to the next-best one if the current one is rate-limited or exhausted — no manual model juggling, and claudectl auto-starts OmniRoute in the background the moment you run a task through it, so there's no terminal to babysit.
 
-**Setup (one-time):** connecting at least one provider happens in OmniRoute's own dashboard — claudectl never touches that credential.
+**Setup (one-time):** connecting at least one provider happens in OmniRoute's own dashboard — claudectl never touches that credential. The CLI commands for adding providers are broken on Windows (confirmed upstream), so the dashboard is the only reliable path.
+
 1. Install OmniRoute: `npm install -g omniroute` (PowerShell: run on its own line, or `;`-chain — no `&&`).
 2. Set a dashboard password once: `omniroute setup --password <yours>`.
-3. Start it (`omniroute`, or let claudectl auto-start it on first use) and open `http://localhost:20128` → log in → **Providers → Add Provider**, or go straight to **Free tiers**. Several are genuinely zero-signup (Pollinations, Puter, NVIDIA, OpenCode, FriendliAI, Coze, and more) — connect one or two. *(Note: OmniRoute's marketing claims ~90 free providers; what's actually reachable without a real signup is a smaller genuinely-keyless subset — worth checking the current list yourself in the dashboard.)*
-4. In claudectl's GUI **Settings → Free execution — OmniRoute**: leave the base URL at `http://localhost:20128`, click **Refresh** — the status dot shows provider(s) active once step 3 is done — leave **Execute model** on *Auto*, Save.
+3. Start it (`omniroute`, or let claudectl auto-start it on first use) and open `http://localhost:20128` → log in → **Providers → Add Provider**, or go straight to **Free tiers**. Several are genuinely zero-signup (Pollinations, Puter, NVIDIA, OpenCode, FriendliAI, Coze, and more) — connect one or two. *(Note: OmniRoute's marketing claims ~90 free providers; what's actually reachable without a real signup is a smaller genuinely-keyless subset — worth checking the current list yourself in the dashboard. The CLI `omniroute providers add` commands crash on this platform — dashboard only for now.)*
+4. In claudectl's GUI **Settings → Free execution — OmniRoute**: leave the base URL at `http://localhost:20128`, click **Refresh** — the status dot shows provider(s) active once step 3 is done. The built-in connection self-check can report false negatives (confirmed: reports working no-auth connections as broken); use **Send a live test** for the real answer. Leave **Execute model** on *Auto*, Save.
 5. Open a project's **Plan → Execute** tab, describe a task, pick **Execute via → OmniRoute**, approve the plan. First run starts OmniRoute for you if it isn't already running.
+
+**Troubleshooting:**
+- **Status dot shows "not running"** — OmniRoute auto-starts on first Plan→Execute run; click **Start now** on the Settings page to start it immediately, or run `omniroute` in a terminal.
+- **"0 providers connected"** — open the dashboard at `http://localhost:20128`, log in (password from step 2), and add a provider under **Providers**. No providers = no free model to route to.
+- **Live test fails** — use **Send a live test** on the Settings page; if it fails, the connection is genuinely broken. Try a different free provider in the dashboard (some providers are rate-limited or have exhausted daily quotas).
+- **Self-check says connected but live test fails** — OmniRoute's own per-connection self-check can be wrong (confirmed). The live test is authoritative.
 
 Nobody else orchestrates this from the launcher.
 

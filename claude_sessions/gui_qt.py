@@ -25,9 +25,20 @@ def run_desktop():
     """Serve the GUI and show it in a native Qt window. Blocks until the
     window closes. Raises ImportError if PyQt6/WebEngine is unavailable —
     caller falls back."""
+    # QtWebEngine composites via a GPU hardware surface on Windows; on any
+    # continuously-animating content (the job-modal spinner) that surface
+    # swap tears/flickers — a plain Chromium tab doesn't, which is why the
+    # browser shell is fine and only the Qt shell flickers. Disabling GPU
+    # compositing routes rendering through the CPU compositor and stops it.
+    # Must be set before QtWebEngine initializes (i.e. before QApplication).
+    flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '')
+    if '--disable-gpu' not in flags:
+        os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = (
+            flags + ' --disable-gpu-compositing').strip()
+
     from PyQt6.QtWidgets import QApplication, QMainWindow
     from PyQt6.QtWebEngineWidgets import QWebEngineView
-    from PyQt6.QtGui import QIcon, QDesktopServices
+    from PyQt6.QtGui import QIcon, QDesktopServices, QColor
     from PyQt6.QtCore import QUrl
 
     from .gui import make_server
@@ -46,6 +57,12 @@ def run_desktop():
     if ico:
         win.setWindowIcon(QIcon(ico))
     view = QWebEngineView()
+    # QWebEngineView's page defaults to a white backing surface; every repaint
+    # (e.g. the job-progress modal's per-second text update) briefly shows that
+    # white surface through before Chromium composites the dark page over it,
+    # reading as a flicker. app.css's --bg is always #0d1117 (GUI has no light
+    # theme), so matching it here removes the flash entirely.
+    view.page().setBackgroundColor(QColor('#0d1117'))
     # window.open (graph tab) is silently dropped by QWebEngineView unless
     # new-window requests are handled — route them to the system browser
     view.page().newWindowRequested.connect(

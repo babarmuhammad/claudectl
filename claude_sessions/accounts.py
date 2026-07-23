@@ -151,11 +151,11 @@ def _open_terminal(d, name):
         flash("claude.exe not found", ok=False, secs=1.6)
         return
     try:
-        # `start` opens a separate console; keep it open with cmd /k.
+        # `start` opens a separate console; cmd /c closes it once claude exits.
         # Pass argv as a list (no shell=True) so an account name containing
         # `"`, `&`, `|` etc. can't break out of the quoted title and run
         # arbitrary commands — Windows' list2cmdline quotes each arg safely.
-        subprocess.Popen(['cmd', '/c', 'start', f'claude [{name}]', 'cmd', '/k', exe],
+        subprocess.Popen(['cmd', '/c', 'start', f'claude [{name}]', 'cmd', '/c', exe],
                          env=_env_for(d))
         flash(f"Opened a new terminal running claude as '{name}'", secs=1.8)
     except Exception as e:
