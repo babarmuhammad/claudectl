@@ -58,7 +58,7 @@ a handler sees them; a missing or malformed one is a 400.
 | `/api/plugins/provenance` | `api_provenance` | {kind: {name: plugin_key}} — which rows in the skill/agent/hook managers |
 | `/api/prompt-history` | `api_prompt_history` | — |
 | `/api/provider/models` | `api_provider_models` | Models that can actually serve a session, not the whole routable catalog. |
-| `/api/provider/status` | `api_provider_status` | — |
+| `/api/provider/status` | `api_provider_status` | Reachability plus, for OmniRoute only, its circuit-breaker detail. |
 | `/api/recall-preview` | `api_recall_preview` | — |
 | `/api/search-index` | `api_search_index` | — |
 | `/api/session/archived` | `api_archived` | — |

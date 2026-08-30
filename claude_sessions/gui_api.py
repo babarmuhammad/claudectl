@@ -2249,6 +2249,20 @@ def api_job_start(q, body):
                 raise RuntimeError(msg)
             return {'message': msg}
         jid = start_job(f'Installing from {url}', _install)
+    elif kind == 'gateway_ensure':
+        from . import gateway
+
+        def _gwup():
+            ok, msg = gateway.ensure_running()
+            return {'ok': ok, 'message': msg}
+        jid = start_job('Starting gateway', _gwup)
+    elif kind == 'gateway_stop':
+        from . import gateway
+
+        def _gwdown():
+            ok, msg = gateway.stop_running()
+            return {'ok': ok, 'message': msg}
+        jid = start_job('Stopping gateway', _gwdown)
     elif kind == 'provider_ensure':
         from . import omniroute
         from .config import load_settings
@@ -2373,9 +2387,33 @@ def api_plan_last(q, body):
 # api_key to the frontend, status/models only.
 
 def api_provider_status(q, body):
-    from . import omniroute
+    """Reachability plus, for OmniRoute only, its circuit-breaker detail.
+
+    Branching on kind is not a shortcut — a generic Anthropic-shaped server has
+    no /v1/models catalogue and no provider-health endpoint, so the OmniRoute
+    path would report a perfectly working Ollama as "not running". A plain
+    reachability dot is the honest amount of signal available."""
+    from . import gateway, omniroute
     from .config import load_settings
     s = load_settings()
+    kind = s.get('provider_kind') or ''
+    gw = {'kind': s.get('gateway_kind') or '',
+          'target': s.get('gateway_target_base_url') or ''}
+    if gw['kind']:
+        gw['error'] = gateway.target_error(gw['target'])
+        gw['running'] = gateway._D.is_ready(int(s.get('gateway_port') or 20130))
+    if kind != 'omniroute':
+        base = s.get('provider_base_url', '')
+        return {'kind': kind, 'gateway': gw,
+                'exec_model': s.get('provider_exec_model', ''),
+                # With a gateway in front, the reachable thing IS the gateway --
+                # the OpenAI-shaped host behind it cannot answer a probe shaped
+                # like this one.
+                'reachable': bool(gw.get('running')) if gw['kind']
+                             else (bool(base) and omniroute.is_reachable(
+                                 base, s.get('provider_api_key', ''))),
+                'providers': [], 'lockouts': [], 'connections': [],
+                'model_count': 0, 'usable_count': 0}
     base, key = s.get('provider_base_url', ''), s.get('provider_api_key', '')
     # ONE concurrent fetch of both payloads, then everything is derived locally.
     # Each OmniRoute round trip costs ~2s on a loaded instance, so the previous
@@ -2384,6 +2422,9 @@ def api_provider_status(q, body):
     summary = h.get('summary') or {}
     usable, _autos, _ex = omniroute.classify_models(entries, h)
     return {
+        'kind': kind,
+        'gateway': gw,
+        'exec_model': s.get('provider_exec_model', ''),
         'reachable': bool(entries or h.get('providers')),
         'model_count': len(entries),
         'configured': summary.get('configuredCount', 0),
@@ -2415,6 +2456,17 @@ def api_provider_models(q, body):
     s = load_settings()
     base = s.get('provider_base_url', '')
     key = s.get('provider_api_key', '')
+
+    if (s.get('provider_kind') or '') != 'omniroute':
+        # No catalogue exists for a generic Anthropic-shaped server or an
+        # OpenAI-shaped host behind the gateway. Offer the model the user
+        # configured and nothing else -- inventing a list here would be offering
+        # ids that 401 on the first turn, which is the exact failure the
+        # OmniRoute filtering below exists to prevent.
+        cur = s.get('provider_exec_model', '')
+        return {'models': [cur] if cur else [], 'labels': {cur: cur} if cur else {},
+                'usable': [], 'excluded': {}, 'filtered': False,
+                'kind': s.get('provider_kind') or ''}
 
     entries, h = omniroute.fetch_both(base, key)
 

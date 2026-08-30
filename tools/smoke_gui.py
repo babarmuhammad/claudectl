@@ -384,6 +384,9 @@ class H(BaseHTTPRequestHandler):
         self._j({'ok': True})
 
 
+NL = chr(10)
+
+
 def main():
     from playwright.sync_api import sync_playwright
     srv = ThreadingHTTPServer(('127.0.0.1', PORT), H)
@@ -828,6 +831,42 @@ def main():
         check('no burst at motion=subtle',
               pg.evaluate("document.querySelectorAll('.burst').length") == 0)
         pg.evaluate("MO.set('full');ST.world='';ST.skin='';applyTheme(ST.theme);startDashboard()")
+
+        # -- the provider card changes shape per backend --
+        # The card was OmniRoute-shaped for its whole life: a live catalogue, a
+        # provider-health panel and a dashboard button. None of that exists for a
+        # server the user runs themselves, and rendering it anyway reported a
+        # working Ollama as "0 providers connected".
+        print(NL + '-- provider card --')
+        pg.evaluate("go('settings')")
+        pg.wait_for_timeout(700)
+        for cid in ('pvKind', 'gwKind', 'gwUrl', 'gwKey', 'pvCtx', 'pvTools',
+                    'orUrl', 'orKey', 'gwRow'):
+            check('control #' + cid + ' exists',
+                  pg.evaluate("!!document.getElementById('" + cid + "')"))
+        kinds = pg.evaluate(
+            "[...document.querySelectorAll('#pvKind .chip')].map(c=>c.dataset.v)")
+        check('every backend kind is offered',
+              kinds == ['', 'generic', 'omniroute'], kinds)
+        gws = pg.evaluate(
+            "[...document.querySelectorAll('#gwKind .chip')].map(c=>c.dataset.v)")
+        check('gateway kinds offered', gws == ['', 'openai'], gws)
+
+        pg.evaluate("""document.querySelector('#pvKind .chip[data-v="generic"]').click()""")
+        pg.wait_for_timeout(900)
+        check('generic backend gets a free-text model input',
+              pg.evaluate("!!document.getElementById('pvModel')"))
+        check('generic backend hides the OmniRoute catalogue',
+              pg.evaluate("!document.getElementById('sOrPin')"))
+        check('OmniRoute-only actions hidden for a generic backend',
+              pg.evaluate("[...document.querySelectorAll('.orOnly')]"
+                          ".every(e=>e.style.display==='none')"))
+
+        pg.evaluate("""document.querySelector('#pvKind .chip[data-v=""]').click()""")
+        pg.wait_for_timeout(900)
+        check('Anthropic direct offers no model widget',
+              pg.evaluate("!document.getElementById('pvModel') "
+                          "&& !document.getElementById('sOrPin')"))
 
         print('\n— narrow window —')
         pg.set_viewport_size({'width': 700, 'height': 900})

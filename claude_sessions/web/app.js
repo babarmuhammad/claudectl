@@ -3937,7 +3937,19 @@ async function pgSettings(nav){
       <div class="fld"><label>Gateway target key</label><input id="gwKey" type="password"
         placeholder="${ST.gateway_has_key?'set — leave blank to keep':'leave blank if none needed'}"></div>
     </div>
-    <p id="orNeedsProvider" style="color:var(--warn);font-size:12px;margin-bottom:8px;display:none">
+    <div id="gwRow" style="display:none;align-items:center;gap:8px;margin:2px 0 8px">
+      <span id="gwDot" class="tag">—</span>
+      <button class="btn sm" onclick="gwStart()">${ic('bolt')} Start now</button>
+      <button class="btn sm" onclick="gwStop()">${ic('x')} Stop</button>
+      <span style="color:var(--dim);font-size:12px">Runs in its own console window — that window is the log.</span>
+    </div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="pvTools" style="width:auto;margin:0"> Re-enable MCP tool search</label>
+      <div style="color:var(--dim);font-size:12px;margin-top:4px">Claude Code turns tool search off on any
+        non-Anthropic endpoint. Re-enabling it only works if your backend forwards
+        <code>tool_reference</code> blocks — if it does not, the turn fails outright, which is why this is
+        your assertion rather than something a provider setting implies.</div></div>
+    <p id="orNeedsProvider" class="orOnly" style="color:var(--warn);font-size:12px;margin-bottom:8px;display:none">
       OmniRoute's own per-connection status shows nothing passing below — but that check can be stale/wrong
       (confirmed: it reported a genuinely working no-auth connection as broken). Use <b>Send a live test</b> to know
       for real. If that also fails: adding a provider is dashboard-only right now (OmniRoute's CLI add commands
@@ -3958,8 +3970,8 @@ async function pgSettings(nav){
     <div class="mrow">
       <button class="btn sm" onclick="orRefresh()">${ic('refresh')} Refresh</button>
       <button class="btn sm" onclick="orLiveTest()">${ic('bolt')} Send a live test</button>
-      <button class="btn sm" onclick="orProbe()" title="Sends a few real requests to find working models. Each one is a billed request — on free tiers repeated runs will exhaust the key, so this stops as soon as it finds enough. The proxy then refines the list from real sessions at no cost.">${ic('check')} Find working models</button>
-      <button class="btn sm" onclick="orDashboard()">${ic('ext')} Open OmniRoute dashboard</button>
+      <button class="btn sm orOnly" onclick="orProbe()" title="Sends a few real requests to find working models. Each one is a billed request — on free tiers repeated runs will exhaust the key, so this stops as soon as it finds enough. The proxy then refines the list from real sessions at no cost.">${ic('check')} Find working models</button>
+      <button class="btn sm orOnly" onclick="orDashboard()">${ic('ext')} Open OmniRoute dashboard</button>
       <span class="sp"></span>
       <button class="btn pri" onclick="orSave()">Save</button></div>
     <div id="orProbeOut" style="font-size:12.5px;margin-top:6px"></div>
@@ -4029,8 +4041,16 @@ async function pgSettings(nav){
   $('#orUrl').value=ST.provider_base_url||'';
   $('#pvCtx').value=ST.provider_context_tokens||'';
   chipSet($('#pvKind'),ST.provider_kind||'');
+  /* Hand-written chip groups carry no behaviour of their own -- only chipsFill()
+     wires the exclusive-select, and these are literal markup (same as #peVia,
+     which does this by hand for the same reason). Without it the chip never
+     takes .on, chipVal() keeps returning the old value, and the control looks
+     clickable while being inert. */
+  pickOne($('#pvKind'),()=>orRefresh());
+  pickOne($('#gwKind'),()=>orRefresh());
   chipSet($('#gwKind'),ST.gateway_kind||'');
   $('#gwUrl').value=ST.gateway_target_base_url||'';
+  $('#pvTools').checked=!!ST.provider_tool_search;
   $('#foModels').value=(ST.failover_models||[]).join('\n');
   $('#foPort').value=ST.failover_port||20129;
   $('#foQuiet').checked=!!ST.failover_quiet;
@@ -4265,14 +4285,81 @@ async function setPlanExecSave(){
    below; specific model ids are only for manually pinning one. ── */
 const OR_AUTO='auto/coding';
 function orExecModel(){
+  const free=$('#pvModel');
+  if(free)return free.value.trim();
+  if(!$('#sOrAuto')&&!$('#sOrPin'))return ST.provider_exec_model||'';
   return chipVal($('#sOrAuto'))||chipVal($('#sOrPin'))||OR_AUTO;
 }
+function orExecModelInput(cur){
+  /* A generic Anthropic-shaped server publishes no catalogue, so the model is
+     free text. Rendering a chip list here would mean inventing its contents --
+     the same reason the TUI falls back to a prompt for this kind. */
+  return `<div class="fld"><label>Model id</label>
+    <input id="pvModel" placeholder="e.g. qwen3-coder:30b" value="${esc(cur||'')}">
+    <div style="color:var(--dim);font-size:12px;margin-top:4px">Exactly what your backend calls it.
+      Nothing validates this against a catalogue, because there isn't one.</div></div>`;
+}
+function gwRender(gw){
+  const row=$('#gwRow'),dot=$('#gwDot');
+  if(!row||!dot)return;
+  if(!gw||!gw.kind){row.style.display='none';return;}
+  row.style.display='flex';
+  if(gw.error){dot.textContent=gw.error;dot.className='tag err';return;}
+  dot.textContent=gw.running?('gateway running → '+(gw.target||'')):'gateway not running';
+  dot.className='tag '+(gw.running?'ok':'warn');
+}
+function gwStart(){runJob('gateway_ensure',{},st=>{
+  toast((st.result&&st.result.message)||'started',(st.result&&st.result.ok)?'ok':'err');orRefresh();});}
+function gwStop(){runJob('gateway_stop',{},st=>{
+  toast((st.result&&st.result.message)||'stopped','ok');orRefresh();});}
 async function orRefresh(){
   const dot=$('#orDot');if(!dot)return;
   dot.textContent='checking…';dot.className='tag';
   const st=await api('/api/provider/status');
   const warn=$('#orNeedsProvider');
   const conns=$('#orConns');
+  gwRender(st.gateway);
+  /* SHAPE follows the chip you just clicked; STATUS follows what the server has
+     saved. They differ between clicking a backend and pressing Save, and taking
+     the server's answer for both meant the card ignored the click entirely --
+     you picked "Anthropic-shaped server" and were still looking at OmniRoute. */
+  const pick=$('#pvKind');
+  const kind=pick?(chipVal(pick)||''):(st.kind||'');
+  const saved=(kind===(st.kind||''));
+  // OmniRoute-only affordances: its dashboard, and the probe that spends real
+  // quota against its catalogue. Neither means anything for a server the user
+  // runs themselves.
+  document.querySelectorAll('.orOnly').forEach(el=>{
+    el.style.display=(kind==='omniroute')?'':'none';});
+  if(!kind){
+    dot.textContent='Anthropic (direct)';dot.className='tag ok';
+    if(warn)warn.style.display='none';
+    if(conns)conns.innerHTML='';
+    const w=$('#orModWrap');
+    if(w)w.innerHTML='<div style="color:var(--dim);font-size:13px;margin:6px 0">'+
+      'Sessions run on your Anthropic account. Pick a backend above to route them elsewhere.</div>';
+    return;
+  }
+  if(kind!=='omniroute'){
+    /* Reachability is the only signal that exists here -- no catalogue, no
+       provider-health endpoint. Showing the OmniRoute panel would report a
+       working Ollama as "0 providers connected". */
+    dot.textContent=!saved?'save to check':(st.reachable?'reachable':'not reachable');
+    dot.className='tag '+(!saved?'':(st.reachable?'ok':'warn'));
+    if(warn)warn.style.display='none';
+    if(conns)conns.innerHTML='';
+    const w=$('#orModWrap');
+    if(w)w.innerHTML=orExecModelInput(st.exec_model);
+    return;
+  }
+  if(!saved){
+    dot.textContent='save to check';dot.className='tag';
+    if(warn)warn.style.display='none';
+    const w=$('#orModWrap');
+    if(w)w.innerHTML='<div style="color:var(--dim);font-size:13px;margin:6px 0">'+
+      'Save to load this backend\'s model catalogue.</div>';
+    return;
+  }
   if(!st.reachable){
     dot.textContent='not running';dot.className='tag warn';
     if(warn)warn.style.display='none';
@@ -4379,6 +4466,7 @@ async function orSave(){
   const body={provider_base_url:$('#orUrl').value,provider_exec_model:orExecModel(),
               provider_kind:chipVal($('#pvKind')),
               provider_context_tokens:parseInt($('#pvCtx').value||'0',10)||0,
+              provider_tool_search:$('#pvTools').checked,
               gateway_kind:chipVal($('#gwKind')),
               gateway_target_base_url:$('#gwUrl').value};
   if($('#gwKey').value)body.gateway_target_api_key=$('#gwKey').value;
@@ -4600,6 +4688,14 @@ function chipsFill(el,vals,labels,cur,onpick){
    data -- not that it was free. Quoting `~$0.00` told a paid OpenRouter or
    self-hosted user their spend was approximately nothing. */
 function costCell(cost,exact){return (!exact&&!cost)?'n/a':((exact?'':'~')+'$'+(cost||0).toFixed(2));}
+function pickOne(box,after){
+  if(!box)return;
+  box.querySelectorAll('.chip').forEach(c=>c.addEventListener('click',()=>{
+    box.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+    c.classList.add('on');
+    if(after)setTimeout(after,0);
+  }));
+}
 function chipVal(el){if(!el)return '';const c=el.querySelector('.chip.on');return c?c.dataset.v:'';}
 function chipSet(el,v){if(!el)return;el.querySelectorAll('.chip').forEach(c=>
   c.classList.toggle('on',c.dataset.v===v));}
@@ -4761,7 +4857,9 @@ function askLaunch(cfg){
   chipsFill($('#fThink'),o.thinking,o.thinking_labels,d.max_thinking);
   chipsFill($('#fSub'),o.models,o.model_labels,d.subagent_model);
   chipsFill($('#fWt'),['','*'],['off','auto'],'');
-  // OmniRoute: fetch available models and show the section only if reachable
+  // Hidden unless a provider is configured. For OmniRoute the list is its live
+  // catalogue; for a generic server there is no catalogue, so the endpoint
+  // returns the one configured model and this becomes an on/off choice.
   const orWrap=$('#fOmniWrap');orWrap.style.display='none';
   api('/api/provider/models').then(m=>{
     const models=m&&m.models||[];

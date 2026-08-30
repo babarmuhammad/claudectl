@@ -141,8 +141,9 @@
           <div class="fld" id="fAcctWrap"><label>Account</label><div class="chips" id="fAcct"></div></div>
           <div class="fld"><label>Thinking cap</label><div class="chips" id="fThink"></div></div>
           <div class="fld"><label>Subagent model</label><div class="chips" id="fSub"></div></div>
-          <div class="fld" id="fOmniWrap"><label>OmniRoute (free tier)</label><div class="chips" id="fOmni"></div>
-            <div style="color:var(--dim);font-size:11px;margin-top:2px">Agents &amp; skills auto-use Sonnet 5</div></div>
+          <div class="fld" id="fOmniWrap"><label>Run on provider</label><div class="chips" id="fOmni"></div>
+            <div style="color:var(--dim);font-size:11px;margin-top:2px">Agents inherit this model — their
+              <code>model:</code> field is stripped, since a routed backend cannot resolve an Anthropic id</div></div>
           <div class="fld" id="fWtWrap"><label>Worktree</label><div class="chips" id="fWt"></div></div>
           <div class="fld" id="fNameWrap"><label>Session name</label>
             <input id="fName" placeholder="optional"></div>
