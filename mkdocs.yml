@@ -72,6 +72,7 @@ nav:
       - Sessions & search: sessions.md
       - Project memory: memory.md
       - Architecture graph: graph.md
+      - Model providers: providers.md
       - Plan → Execute & OmniRoute: plan-execute.md
       - Multiple accounts: accounts.md
       - Context hand-off: context-handoff.md

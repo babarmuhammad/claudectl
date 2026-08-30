@@ -7,6 +7,40 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Run a session against a local model, OpenRouter or a self-hosted server**, not only
+  OmniRoute. claudectl could already point a real `claude` session at another backend —
+  that is what the OmniRoute support has always been — but the capability was wired to one
+  product name, so an Ollama, vLLM or llama.cpp server speaking the same protocol was
+  unreachable. Settings → **Model provider** now takes any endpoint that serves
+  `POST /v1/messages`. Sessions keep their agents, skills, hooks, MCP servers, slash
+  commands and checkpoints, because none of those ever talk to the model API. See
+  [Model providers](https://babarmuhammad.github.io/claudectl/providers/) for the list of
+  what a backend swap genuinely costs — subagents, prompt caching, extended thinking and
+  `web_search` are affected, and three of the four cannot be fixed from outside Claude Code.
+
+### Fixed
+
+- **Subagents kept a model id a routed backend cannot resolve.** The frontmatter-stripping
+  that makes agents work on a non-Anthropic model was a parameter three of its four callers
+  never passed, so agents synced from the GUI or accepted from a suggestion still carried
+  `model: claude-…` and 401'd. It is derived from the active provider now instead of being
+  asked of each caller.
+- **A routed model's cost read as `~$0.00`.** There are no published rates for one, which
+  is not the same as it being free — a paid OpenRouter or self-hosted model was reported as
+  approximately nothing. It shows `n/a`; a session mixing Anthropic and routed models still
+  quotes the part that is known.
+- **Extended thinking no longer fails the whole turn on a non-Anthropic backend.** Claude
+  Code sends the adaptive-thinking field unconditionally and an upstream that does not know
+  it answers 400, so it is disabled automatically whenever a provider is configured.
+
+### Changed
+
+- The `omniroute_base_url` / `omniroute_api_key` / `omniroute_exec_model` settings are now
+  `provider_*`, with `provider_kind` choosing between OmniRoute's managed daemon and a
+  server you already run. Existing settings are migrated on first start.
+
 ## [1.7.0] - 2026-08-28
 
 ### Added

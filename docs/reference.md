@@ -215,7 +215,7 @@ letter.
     │
     │  # model routing
     ├── plan_execute.py     # Plan→Execute: plan with one model, execute with another
-    ├── omniroute.py        # OmniRoute free-tier client (model catalog, health)
+    ├── omniroute.py        # provider seam: prepare_launch + OmniRoute catalog/health
     ├── failover.py         # local proxy: retry a dead model instead of hanging
     │
     │  # GUI

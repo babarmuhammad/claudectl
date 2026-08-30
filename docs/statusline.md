@@ -32,7 +32,7 @@ schema the backing provider rejects, makes a session look frozen forever — not
 tries a different model, because Claude Code has no such concept.
 
 claudectl's failover proxy sits between `claude.exe` and the
-[OmniRoute](plan-execute.md#free-execution-via-omniroute) upstream. It forwards bytes
+[configured provider](providers.md) upstream. It forwards bytes
 verbatim and, when a turn errors **before any response body byte has reached the client**,
 rewrites the request's `model` and tries the next candidate. Request-level retry *is*
 per-turn failover, because every turn is its own request. The routing log is the point — the
