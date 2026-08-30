@@ -196,3 +196,30 @@ def test_the_gui_renders_the_same_two_cases():
     assert "'n/a'" in js.split('function costCell(')[1][:200]
     assert '?.exact' not in js  # no stray old-style inline render left behind
     assert "exact?'':'~'}$${" not in js
+
+
+# ── the launcher round-trip ──────────────────────────────────
+
+def test_the_choice_line_carries_the_provider_pick():
+    """The bat launcher writes the whole launch to a file and re-reads it in a
+    second process, so a field the line cannot carry is silently dropped -- the
+    picker said OmniRoute and the session ran on Anthropic, with nothing
+    anywhere saying so."""
+    from claude_sessions import main
+    opts = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': '',
+            'cfgdir': 'C:/x', 'agent': '', 'agents_json': '', 'max_thinking': '',
+            'subagent_model': '', 'provider': 'auto/coding'}
+    line = main.build_choice_line('C:/p', 'C--p', 'new', opts)
+    _path, _enc, _choice, back = main.parse_choice_line(line)
+    assert back['provider'] == 'auto/coding'
+
+
+def test_older_choice_lines_still_parse():
+    """A v6 line can be sitting in %TEMP% from the previous version at upgrade
+    time — the launcher reads whatever is there."""
+    from claude_sessions import main
+    v6 = 'v6|C:/p|C--p|new|-|claude-sonnet-5|-|-|-|C:/x|-|-|-|-'
+    path, enc, choice, opts = main.parse_choice_line(v6)
+    assert (path, enc, choice) == ('C:/p', 'C--p', 'new')
+    assert opts['model'] == 'claude-sonnet-5'
+    assert opts['provider'] == ''

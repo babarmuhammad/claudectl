@@ -591,34 +591,46 @@ def run():
 
 
 def build_choice_line(path, encoded_name, choice, opts):
-    """v6 choice-file line. Sentinel '-' for empty fields: cmd's for /f
+    """v7 choice-file line. Sentinel '-' for empty fields: cmd's for /f
     collapses consecutive delimiters, which silently shifted fields in the
     old 5-field format. v3 added config_dir; v4 the --agent name; v5 a path
     to a temp JSON file of selected subagents (--agents); v6 the launch-economy
-    env values (MAX_THINKING_TOKENS, CLAUDE_CODE_SUBAGENT_MODEL)."""
+    env values (MAX_THINKING_TOKENS, CLAUDE_CODE_SUBAGENT_MODEL); v7 the routed
+    provider model.
+
+    v7 exists because the field was genuinely missing, not for symmetry: the bat
+    launcher round-trips the whole launch through this line, so a pick the line
+    could not carry was silently dropped and the session ran on Anthropic while
+    the picker said otherwise."""
     def sv(x):
         return str(x).replace('|', '') if x else '-'
-    return '|'.join(['v6', path, encoded_name or '-', choice,
+    return '|'.join(['v7', path, encoded_name or '-', choice,
                      sv(opts['effort']), sv(opts['model']), sv(opts['perm']),
                      sv(opts['name']), sv(opts['worktree']),
                      sv(opts.get('cfgdir') or config_dir),
                      sv(opts.get('agent', '')), sv(opts.get('agents_json', '')),
                      sv(opts.get('max_thinking', '')),
-                     sv(opts.get('subagent_model', ''))])
+                     sv(opts.get('subagent_model', '')),
+                     sv(opts.get('provider', ''))])
 
 
 def parse_choice_line(line):
     """Parse any choice-file version → (path, encoded_name, choice, opts).
     opts always has effort/model/perm/name/worktree/agent/agents_json/cfgdir
-    + max_thinking/subagent_model."""
+    + max_thinking/subagent_model/provider."""
     t = line.rstrip('\r\n').split('|')
     def g(i):
         v = t[i] if i < len(t) else ''
         return '' if v == '-' else v
     opts = {'effort': '', 'model': '', 'perm': '', 'name': '',
             'worktree': '', 'agent': '', 'agents_json': '', 'cfgdir': '',
-            'max_thinking': '', 'subagent_model': ''}
-    if t and t[0] == 'v6':
+            'max_thinking': '', 'subagent_model': '', 'provider': ''}
+    if t and t[0] == 'v7':
+        path, enc, choice = g(1), g(2), g(3)
+        opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
+                    worktree=g(8), cfgdir=g(9), agent=g(10), agents_json=g(11),
+                    max_thinking=g(12), subagent_model=g(13), provider=g(14))
+    elif t and t[0] == 'v6':
         path, enc, choice = g(1), g(2), g(3)
         opts.update(effort=g(4), model=g(5), perm=g(6), name=g(7),
                     worktree=g(8), cfgdir=g(9), agent=g(10), agents_json=g(11),

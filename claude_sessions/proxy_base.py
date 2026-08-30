@@ -272,13 +272,23 @@ def guard(handler, key, marker_path, label):
 
 
 def deny(handler, label, why):
+    # Drain the request body FIRST. The guard runs before anything reads it, so
+    # replying and closing leaves unread bytes in the socket: on Windows that
+    # surfaces as an RST the client sees instead of the 403, intermittently and
+    # depending on timing. Draining costs a read of an already-buffered body and
+    # makes the refusal arrive reliably.
+    try:
+        n = int(handler.headers.get('Content-Length') or 0)
+    except ValueError:
+        n = 0
+    if 0 < n <= 1 << 20:
+        try:
+            handler.rfile.read(n)
+        except Exception:
+            pass
     write_json(handler, 403, {'type': 'error', 'error': {
         'type': 'permission_error',
         'message': 'claudectl %s: refused (%s)' % (label, why)}})
-    # The guard runs before the request body is read, so this connection is
-    # desynchronized for keep-alive — the unread body would be parsed as the
-    # next request line. Close instead of leaving a socket that only fails later.
-    handler.close_connection = True
     return False
 
 

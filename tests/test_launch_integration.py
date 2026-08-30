@@ -204,15 +204,15 @@ def test_choice_line_matrix(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)          # pins main_mod.config_dir
     cfg = str(sb.cfg)
     cases = [
-        ('new', dict(OPTS0), f'v6|P|E|new|-|-|-|-|-|{cfg}|-|-|-|-'),
+        ('new', dict(OPTS0), f'v7|P|E|new|-|-|-|-|-|{cfg}|-|-|-|-|-'),
         ('continue', dict(OPTS0, effort='low'),
-         f'v6|P|E|continue|low|-|-|-|-|{cfg}|-|-|-|-'),
+         f'v7|P|E|continue|low|-|-|-|-|{cfg}|-|-|-|-|-'),
         ('resume:abc', dict(OPTS0, model='claude-fable-5', perm='dontAsk'),
-         f'v6|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}|-|-|-|-'),
+         f'v7|P|E|resume:abc|-|claude-fable-5|dontAsk|-|-|{cfg}|-|-|-|-|-'),
         ('new', dict(OPTS0, name='N N', worktree='wt', agent='rev'),
-         f'v6|P|E|new|-|-|-|N N|wt|{cfg}|rev|-|-|-'),
+         f'v7|P|E|new|-|-|-|N N|wt|{cfg}|rev|-|-|-|-'),
         ('new', dict(OPTS0, max_thinking='8000', subagent_model='claude-haiku-4-5'),
-         f'v6|P|E|new|-|-|-|-|-|{cfg}|-|-|8000|claude-haiku-4-5'),
+         f'v7|P|E|new|-|-|-|-|-|{cfg}|-|-|8000|claude-haiku-4-5|-'),
     ]
     for choice, opts, expected in cases:
         line = main_mod.build_choice_line('P', 'E', choice, opts)
@@ -245,13 +245,13 @@ def test_economy_env_absent_when_unset(monkeypatch, tmp_path):
     assert 'CLAUDE_CODE_SUBAGENT_MODEL' not in env
 
 
-def test_choice_line_v6_round_trip(monkeypatch, tmp_path):
+def test_choice_line_v7_round_trip(monkeypatch, tmp_path):
     Sandbox(monkeypatch, tmp_path)
     opts = dict(OPTS0, effort='high', model='claude-sonnet-5', cfgdir='C:/cfg',
                 max_thinking='16000', subagent_model='claude-haiku-4-5',
                 agent='', agents_json='')
     line = main_mod.build_choice_line('C:/proj', 'ENC', 'new', opts)
-    assert line.startswith('v6|')
+    assert line.startswith('v7|')
     p, enc, choice, got = main_mod.parse_choice_line(line)
     assert (p, enc, choice) == ('C:/proj', 'ENC', 'new')
     assert got['max_thinking'] == '16000'
