@@ -193,9 +193,10 @@ def state_payload():
         'plan_model': s.get('plan_model', ''),
         'exec_model': s.get('exec_model', ''),
         'extract_model': s.get('extract_model', ''),
-        'omniroute_base_url': s.get('omniroute_base_url', ''),
-        'omniroute_has_key': bool(s.get('omniroute_api_key')),
-        'omniroute_exec_model': s.get('omniroute_exec_model', ''),
+        'provider_base_url': s.get('provider_base_url', ''),
+        'provider_has_key': bool(s.get('provider_api_key')),
+        'provider_exec_model': s.get('provider_exec_model', ''),
+        'provider_kind': s.get('provider_kind', ''),
         'failover_models': s.get('failover_models', []),
         'failover_port': s.get('failover_port', 20129),
         'failover_quiet': bool(s.get('failover_quiet')),
@@ -629,8 +630,8 @@ def _api_settings(q, body):
     # api_key only overwritten when the user actually typed a new one — never
     # blanked by a settings-save round-trip that omits it because the frontend
     # never receives the raw key back to resubmit
-    if body.get('omniroute_api_key'):
-        s['omniroute_api_key'] = body['omniroute_api_key']
+    if body.get('provider_api_key'):
+        s['provider_api_key'] = body['provider_api_key']
     save_settings(s)
     return {'ok': True}
 

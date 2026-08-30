@@ -668,9 +668,9 @@ def test_job_plan_make_surfaces_real_subprocess_error(monkeypatch, tmp_path):
         srv.shutdown()
 
 
-def test_job_plan_make_council_ignores_stale_omniroute_default(monkeypatch, tmp_path):
+def test_job_plan_make_council_ignores_stale_provider_default(monkeypatch, tmp_path):
     # regression: council used to always route through the account-wide
-    # omniroute_exec_model default regardless of the 'via' the user picked
+    # provider_exec_model default regardless of the 'via' the user picked
     # for THIS plan -- a stale/unreachable default silently killed every
     # council call (via _headless's own failure swallowing) with no error
     # surfaced. Council must follow the request's own 'via', same as
@@ -679,8 +679,8 @@ def test_job_plan_make_council_ignores_stale_omniroute_default(monkeypatch, tmp_
     actual, enc, folder, sids = _seed(sb, monkeypatch)
     from claude_sessions import plan_execute, config as cfg
     s = cfg.load_settings()
-    s['omniroute_exec_model'] = 'auto/coding'
-    s['omniroute_base_url'] = 'http://127.0.0.1:1'
+    s['provider_exec_model'] = 'auto/coding'
+    s['provider_base_url'] = 'http://127.0.0.1:1'
     cfg.save_settings(s)
     monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     seen = {}
@@ -702,14 +702,14 @@ def test_job_plan_make_council_ignores_stale_omniroute_default(monkeypatch, tmp_
         srv.shutdown()
 
 
-def test_job_plan_make_council_uses_omniroute_when_via_selected(monkeypatch, tmp_path):
+def test_job_plan_make_council_uses_the_provider_when_via_selected(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, sids = _seed(sb, monkeypatch)
     from claude_sessions import plan_execute, config as cfg
     s = cfg.load_settings()
-    s['omniroute_exec_model'] = 'auto/coding'
-    s['omniroute_base_url'] = 'http://localhost:20128'
-    s['omniroute_api_key'] = 'secret'
+    s['provider_exec_model'] = 'auto/coding'
+    s['provider_base_url'] = 'http://localhost:20128'
+    s['provider_api_key'] = 'secret'
     cfg.save_settings(s)
     monkeypatch.setattr(plan_execute, '_plan', lambda task, m, cwd, effort='', cfgdir='': 'draft plan')
     monkeypatch.setattr(plan_execute, 'check_endpoint', lambda *a, **k: None)
@@ -723,13 +723,14 @@ def test_job_plan_make_council_uses_omniroute_when_via_selected(monkeypatch, tmp
         code, d = _req(base + '/api/job',
                        {'kind': 'plan_make', 'path': actual, 'enc': enc,
                         'cfgdir': str(sb.cfg), 'task': 'do a thing', 'council': True,
-                        'via': 'omniroute'})
+                        'via': 'provider'})
         jid = d['job']
         st = _wait_job(base, jid, 'done', 'error')
         assert st['status'] == 'done'
         assert seen['omni_env'] == {'ANTHROPIC_BASE_URL': 'http://localhost:20128',
                                      'ANTHROPIC_AUTH_TOKEN': 'secret',
-                                     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
+                                     'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+                                     'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING': '1'}
     finally:
         srv.shutdown()
 

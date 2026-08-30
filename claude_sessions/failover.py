@@ -300,7 +300,7 @@ def serve_cli(port):
         pass
     cands = ', '.join([m for m in (s.get('failover_models') or []) if str(m).strip()]) or '(none)'
     _emit('')
-    _emit('claudectl failover  :%d -> %s' % (port, s.get('omniroute_base_url') or '?'))
+    _emit('claudectl failover  :%d -> %s' % (port, s.get('provider_base_url') or '?'))
     _emit('candidates: %s' % cands)
     _emit('%-8s  %-28s %-22s %7s  %s' % ('time', 'request', 'model', 'took', 'result'))
     try:
@@ -340,7 +340,7 @@ class _Handler(BaseHTTPRequestHandler):
           Sec-Fetch/Origin — every browser sends at least one of these on every
                       fetch; Claude Code's HTTP client sends none. One check
                       kills the whole browser-origin class, key or no key.
-          bearer    — when a key is configured, require it. config.omniroute_env
+          bearer    — when a key is configured, require it. config.provider_env
                       already hands it to the session as ANTHROPIC_AUTH_TOKEN,
                       which Claude Code sends as `Authorization: Bearer`.
         """
@@ -352,7 +352,7 @@ class _Handler(BaseHTTPRequestHandler):
         for h in ('Origin', 'Sec-Fetch-Site', 'Sec-Fetch-Mode', 'Referer'):
             if self.headers.get(h):
                 return self._deny('browser-originated request')
-        key = (self._settings().get('omniroute_api_key') or '').strip()
+        key = (self._settings().get('provider_api_key') or '').strip()
         if key and self.path != _MARKER_PATH:
             got = (self.headers.get('x-api-key')
                    or (self.headers.get('Authorization') or '').removeprefix('Bearer ')
@@ -371,13 +371,13 @@ class _Handler(BaseHTTPRequestHandler):
         return _c.load_settings()
 
     def _upstream(self, s):
-        return (s.get('omniroute_base_url') or '').rstrip('/')
+        return (s.get('provider_base_url') or '').rstrip('/')
 
     def _fwd_headers(self, length, s):
         h = {k: v for k, v in self.headers.items()
              if k.lower() not in _HOP_BY_HOP}
         h['Content-Length'] = str(length)
-        key = s.get('omniroute_api_key') or ''
+        key = s.get('provider_api_key') or ''
         if key:
             h['Authorization'] = 'Bearer ' + key
             h['x-api-key'] = key

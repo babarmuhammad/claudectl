@@ -2091,7 +2091,7 @@ async function drawProjUsage(){
   const rows=(d.sessions||[]).map(r=>`
     <tr><td>${esc(r.age)}</td><td>${esc(r.name)} ${r.account&&r.account!=='default'?`<span class="tag">${esc(r.account)}</span>`:''}</td>
     <td class="num">${r.msgs}</td><td class="num">${r.usage.in}</td>
-    <td class="num">${r.usage.out}</td><td class="num">${r.exact?'':'~'}$${r.cost.toFixed(2)}</td></tr>`).join('');
+    <td class="num">${r.usage.out}</td><td class="num">${costCell(r.cost,r.exact)}</td></tr>`).join('');
   paint(nav,`<div class="card"><h3>Per-session usage</h3>
     <table class="tbl"><tr><th>age</th><th>session</th><th>msgs</th><th>in</th><th>out</th><th>est.$</th></tr>${rows}</table></div>`);
 }
@@ -2351,7 +2351,7 @@ function peJobDone(result){
     if(onPage)peShowPlan(result.plan);
   }else if(PE.kind==='plan_launch'){
     PE.plan=null;   // launch actually succeeded -- now safe to consume
-    toast(`Execute session launched — ${esc(result.model||'')} via ${result.via==='omniroute'?'OmniRoute':'Anthropic'}`,'ok');
+    toast(`Execute session launched — ${esc(result.model||'')} via ${result.via==='provider'?'Provider':'Anthropic'}`,'ok');
   }
 }
 async function peCancel(){
@@ -2420,7 +2420,7 @@ function drawPlanExec(){
       <div class="grid2">${fld('pePlan','Plan model')}${fld('peEff','Plan effort')}</div>
       <div class="fld"><label>Execute via</label><div class="chips" id="peVia">
         <span class="chip on" data-v="anthropic">Anthropic</span>
-        <span class="chip" data-v="omniroute">OmniRoute (free)</span></div></div>
+        <span class="chip" data-v="provider">Provider</span></div></div>
       <div id="peExecWrap"></div>
       <div class="fld"><label>Model council</label><div class="chips" id="peCouncil">
         <span class="chip" data-v="1">Optimize plan with council</span></div>
@@ -2464,7 +2464,7 @@ function drawPlanExec(){
   if(savedCfg&&savedCfg.via){
     chipSet($('#peVia'),savedCfg.via);
     peViaChange();
-    if(savedCfg.via!=='omniroute')chipSet($('#peExec'),savedCfg.execModel||'');
+    if(savedCfg.via!=='provider')chipSet($('#peExec'),savedCfg.execModel||'');
   }
   if(savedCfg&&ST.accounts.length>1)chipSet($('#peAcct'),savedCfg.account||'');
   // Restore any in-flight or just-finished plan work when returning to the tab:
@@ -2505,7 +2505,7 @@ function peUseExisting(){
 function peViaChange(){
   const via=chipVal($('#peVia'));
   const wrap=$('#peExecWrap');
-  if(via==='omniroute'){
+  if(via==='provider'){
     wrap.innerHTML=`<div style="color:var(--dim);font-size:12px;margin:2px 0 8px">
       Best free model auto-selected by OmniRoute, with automatic fallback. Endpoint configured under
       <span style="color:var(--cyan);cursor:pointer" onclick="go('settings')">Settings</span>.</div>`;
@@ -2889,7 +2889,7 @@ async function pgUsage(nav){
   const pRows=(projects.projects||[]).map(p=>`
     <tr><td>${esc(p.name)}</td><td class="num">${p.sessions}</td><td class="num">${p.msgs}</td>
     <td class="num">${p.usage.in}</td><td class="num">${p.usage.out}</td>
-    <td class="num">${p.exact?'':'~'}$${p.cost.toFixed(2)}</td></tr>`).join('');
+    <td class="num">${costCell(p.cost,p.exact)}</td></tr>`).join('');
   const total=(projects.projects||[]).reduce((a,p)=>a+p.cost,0);
   if(!paint(nav,`
     <div class="card"><h3>Plan usage by account</h3>${planRows||'<div style="color:var(--dim)">checking…</div>'}</div>
@@ -3914,14 +3914,20 @@ async function pgSettings(nav){
     <p style="color:var(--dim);font-size:13px;margin-bottom:8px">Model that writes the plan (runs once, headless) vs the model that executes it interactively. Keep the plan model accurate — the expensive reasoning happens once.</p>
     ${fld('sPlanMod','Plan model')}${fld('sExecMod','Execute model')}
     <div class="mrow"><button class="btn pri" onclick="setPlanExecSave()">Save</button></div></div>
-  <div class="card"><h3>${ic('plug')} Free execution — OmniRoute <span class="sp"></span>
+  <div class="card"><h3>${ic('plug')} Model provider <span class="sp"></span>
       <span id="orDot" class="tag">checking…</span></h3>
-    <p style="color:var(--dim);font-size:13px;margin-bottom:8px">Route the <b>execute</b> half of Plan → Execute through a local
-      <a href="https://github.com/diegosouzapw/OmniRoute" target="_blank" rel="noopener"
-         style="color:var(--cyan);text-decoration:none">OmniRoute</a> proxy — auto-starts in the background the
-      moment a Plan → Execute task runs, no terminal to babysit. Planning always stays on your real Anthropic
-      account; only execution runs through it, and it's still a real, full <code>claude</code> session with this
-      project's usual agents/skills/system-prompt.</p>
+    <p style="color:var(--dim);font-size:13px;margin-bottom:8px">Run sessions against something other than your
+      Anthropic account — a local <b>Ollama / llama.cpp / vLLM</b> server, <b>OpenRouter</b>, a self-hosted box, or a
+      local <a href="https://github.com/diegosouzapw/OmniRoute" target="_blank" rel="noopener"
+         style="color:var(--cyan);text-decoration:none">OmniRoute</a> proxy. It stays a real, full
+      <code>claude</code> session with this project's usual agents/skills/hooks/MCP — only the model endpoint
+      changes. The backend must speak <code>POST /v1/messages</code>.
+      <a href="#" onclick="go('help');return false" style="color:var(--cyan);text-decoration:none">What stops working</a>.</p>
+    <div class="fld"><label>Backend</label>
+      <div class="chips" id="pvKind">
+        <span class="chip" data-v="">Anthropic (direct)</span>
+        <span class="chip" data-v="generic">Anthropic-shaped server</span>
+        <span class="chip" data-v="omniroute">OmniRoute</span></div></div>
     <p id="orNeedsProvider" style="color:var(--warn);font-size:12px;margin-bottom:8px;display:none">
       OmniRoute's own per-connection status shows nothing passing below — but that check can be stale/wrong
       (confirmed: it reported a genuinely working no-auth connection as broken). Use <b>Send a live test</b> to know
@@ -3933,7 +3939,10 @@ async function pgSettings(nav){
     <div class="grid2">
       <div class="fld"><label>Base URL</label><input id="orUrl" placeholder="http://localhost:20128"></div>
       <div class="fld"><label>API key</label><input id="orKey" type="password"
-        placeholder="${ST.omniroute_has_key?'set — leave blank to keep':'leave blank if none needed'}"></div>
+        placeholder="${ST.provider_has_key?'set — leave blank to keep':'leave blank if none needed'}"></div>
+      <div class="fld"><label>Context window (tokens)</label><input id="pvCtx" type="number" min="0"
+        placeholder="0 = unknown"
+        title="Used only to warn before a launch. Not probed: most /v1/models responses omit it."></div>
     </div>
     <div id="orModWrap"></div>
     <div id="orLiveResult" style="color:var(--dim);font-size:12.5px;margin:4px 0"></div>
@@ -4008,7 +4017,9 @@ async function pgSettings(nav){
   drawThemeGallery();
   chipsFill($('#sPlanMod'),o.models,o.model_labels,ST.plan_model||'');
   chipsFill($('#sExecMod'),o.models,o.model_labels,ST.exec_model||'');
-  $('#orUrl').value=ST.omniroute_base_url||'';
+  $('#orUrl').value=ST.provider_base_url||'';
+  $('#pvCtx').value=ST.provider_context_tokens||'';
+  chipSet($('#pvKind'),ST.provider_kind||'');
   $('#foModels').value=(ST.failover_models||[]).join('\n');
   $('#foPort').value=ST.failover_port||20129;
   $('#foQuiet').checked=!!ST.failover_quiet;
@@ -4248,7 +4259,7 @@ function orExecModel(){
 async function orRefresh(){
   const dot=$('#orDot');if(!dot)return;
   dot.textContent='checking…';dot.className='tag';
-  const st=await api('/api/omniroute/status');
+  const st=await api('/api/provider/status');
   const warn=$('#orNeedsProvider');
   const conns=$('#orConns');
   if(!st.reachable){
@@ -4290,9 +4301,9 @@ async function orRefresh(){
       <span style="color:var(--dim)">${esc(l.reason||'')}${mins?` · ${mins} min left`:''}</span></div>`;
   });
   if(conns)conns.innerHTML=html||'<div style="color:var(--dim);font-size:12.5px">No providers connected yet.</div>';
-  const m=await api('/api/omniroute/models');
+  const m=await api('/api/provider/models');
   const wrap=$('#orModWrap');if(!wrap)return;
-  const cur=ST.omniroute_exec_model||OR_AUTO;
+  const cur=ST.provider_exec_model||OR_AUTO;
   // Only models on a configured, non-tripped provider that can actually run a
   // session. The full catalog lists every routable id regardless of whether a
   // provider backing it is connected, so offering it invites picking a model
@@ -4325,7 +4336,7 @@ async function orRefresh(){
     $('#sOrAuto').querySelectorAll('.chip').forEach(x=>x.classList.remove('on'))));
 }
 function orTestConn(id){
-  runJob('omniroute_test_connection',{conn_id:id},st=>{
+  runJob('provider_test_connection',{conn_id:id},st=>{
     const r=st.result||{};
     // this self-check can be wrong either way -- report it as informational,
     // never as a verdict (that's what "Send a live test" is for)
@@ -4336,7 +4347,7 @@ function orTestConn(id){
 function orLiveTest(){
   const model=orExecModel();
   $('#orLiveResult').textContent='Sending a real request through '+model+'…';
-  runJob('omniroute_live_test',{model},st=>{
+  runJob('provider_live_test',{model},st=>{
     const r=st.result||{};
     $('#orLiveResult').innerHTML=r.ok
       ?`<span style="color:var(--ok)">${ic('check')} Works — ${esc(r.message||'')}</span>`
@@ -4345,7 +4356,7 @@ function orLiveTest(){
   });
 }
 async function orStart(){
-  runJob('omniroute_ensure',{},st=>{
+  runJob('provider_ensure',{},st=>{
     toast(st.result&&st.result.ok?'OmniRoute started':'Could not start — check it\'s installed','ok');
     orRefresh();
   });
@@ -4354,8 +4365,10 @@ function orDashboard(){
   window.open(($('#orUrl').value||'http://localhost:20128'),'_blank');
 }
 async function orSave(){
-  const body={omniroute_base_url:$('#orUrl').value,omniroute_exec_model:orExecModel()};
-  if($('#orKey').value)body.omniroute_api_key=$('#orKey').value;
+  const body={provider_base_url:$('#orUrl').value,provider_exec_model:orExecModel(),
+              provider_kind:chipVal($('#pvKind')),
+              provider_context_tokens:parseInt($('#pvCtx').value||'0',10)||0};
+  if($('#orKey').value)body.provider_api_key=$('#orKey').value;
   await post('/api/settings',body);
   ST=await api('/api/state');
   $('#orKey').value='';
@@ -4371,7 +4384,7 @@ let ORPROBE=[];
 function orProbe(full){
   const out=$('#orProbeOut');
   out.innerHTML=`<span style="color:var(--dim)">Probing with real requests — stops as soon as 4 answer, ${full?'re-testing everything (spends more quota)':'skipping models already known dead'}, ${full?'240':'45'}s ceiling…</span>`;
-  runJob('omniroute_probe',full?{full:true,want:0,budget:240}:{},st=>{
+  runJob('provider_probe',full?{full:true,want:0,budget:240}:{},st=>{
     const r=st.result||{};ORPROBE=r.results||[];
     if(!ORPROBE.length){out.innerHTML='<span style="color:var(--dim)">Nothing to probe.</span>';return;}
     // A timeout is not a verdict on the model -- it means the probe budget
@@ -4569,6 +4582,10 @@ function chipsFill(el,vals,labels,cur,onpick){
     el.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
     c.classList.add('on');if(onpick)onpick(c.dataset.v);});
 }
+/* A zero total that is ALSO inexact means nothing in the rollup had price
+   data -- not that it was free. Quoting `~$0.00` told a paid OpenRouter or
+   self-hosted user their spend was approximately nothing. */
+function costCell(cost,exact){return (!exact&&!cost)?'n/a':((exact?'':'~')+'$'+(cost||0).toFixed(2));}
 function chipVal(el){if(!el)return '';const c=el.querySelector('.chip.on');return c?c.dataset.v:'';}
 function chipSet(el,v){if(!el)return;el.querySelectorAll('.chip').forEach(c=>
   c.classList.toggle('on',c.dataset.v===v));}
@@ -4732,10 +4749,10 @@ function askLaunch(cfg){
   chipsFill($('#fWt'),['','*'],['off','auto'],'');
   // OmniRoute: fetch available models and show the section only if reachable
   const orWrap=$('#fOmniWrap');orWrap.style.display='none';
-  api('/api/omniroute/models').then(m=>{
+  api('/api/provider/models').then(m=>{
     const models=m&&m.models||[];
     if(!models.length)return;
-    const cur=ST.omniroute_exec_model||'';
+    const cur=ST.provider_exec_model||'';
     const vals=['',...models];
     const lbls=['off (use Anthropic API)',...models.map(id=>id==='auto/coding'?'auto/coding (dynamic)':id)];
     chipsFill($('#fOmni'),vals,lbls,cur);
@@ -4759,7 +4776,7 @@ async function doLaunch(){
     subagent_model:chipVal($('#fSub')),
     name:c.isNew?$('#fName').value:'',worktree:c.isNew?chipVal($('#fWt')):'',
     cfgdir:c.isNew&&ST.accounts.length>1?chipVal($('#fAcct')):(c.cfgdir||''),
-    omniroute:chipVal($('#fOmni'))};
+    provider:chipVal($('#fOmni'))};
   $('#ovl').classList.remove('show');
   const r=await post('/api/launch',{path:c.path,enc:c.enc,choice:c.choice,opts});
   if(r.ok)toast('Launched in a new terminal window','ok');

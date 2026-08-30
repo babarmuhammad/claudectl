@@ -158,7 +158,7 @@ def install_from_git(repo_url, project_path, exec_model='', cfgdir=None):
 
     If exec_model is set, any agent frontmatter pinning `model: <id>` is
     rewritten to it — a subagent inherits the parent session's
-    ANTHROPIC_BASE_URL (see config.omniroute_env), so a hardcoded model name
+    ANTHROPIC_BASE_URL (see config.provider_env), so a hardcoded model name
     like "sonnet" would otherwise be requested from whatever free-tier proxy
     is configured instead of the real API.
 
@@ -405,7 +405,7 @@ def _new_skill_from_git(project_path):
         default='https://github.com/olsenbrands/fable-foreman')
     if not url:
         return
-    exec_model = _c.load_settings().get('omniroute_exec_model', '')
+    exec_model = _c.load_settings().get('provider_exec_model', '')
     _cls()
     print(f"\n  Cloning {url} ...\n")
     ok, msg = install_from_git(url, project_path, exec_model)

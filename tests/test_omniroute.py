@@ -2,19 +2,31 @@ from claude_sessions import config as c
 from claude_sessions import omniroute
 
 
-def test_omniroute_env_disabled_by_default():
-    assert c.omniroute_env({}) == {}
-    assert c.omniroute_env({'omniroute_exec_model': ''}) == {}
+def test_provider_env_disabled_by_default():
+    assert c.provider_env({}) == {}
+    assert c.provider_env({'provider_exec_model': ''}) == {}
 
 
-def test_omniroute_env_returns_anthropic_override_when_configured():
-    s = {'omniroute_exec_model': 'glm-4.6',
-         'omniroute_base_url': 'http://localhost:20128',
-         'omniroute_api_key': 'secret-token'}
-    env = c.omniroute_env(s)
+def test_provider_env_returns_anthropic_override_when_configured():
+    s = {'provider_exec_model': 'glm-4.6',
+         'provider_base_url': 'http://localhost:20128',
+         'provider_api_key': 'secret-token'}
+    env = c.provider_env(s)
     assert env == {'ANTHROPIC_BASE_URL': 'http://localhost:20128',
                     'ANTHROPIC_AUTH_TOKEN': 'secret-token',
-                    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
+                    'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+                    'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING': '1'}
+
+
+def test_provider_env_leaves_tool_search_alone_unless_asked():
+    """Claude Code disables MCP tool search on a non-first-party base URL and
+    re-enabling it only works if the upstream forwards tool_reference blocks --
+    so it is the user's assertion, never implied by configuring a provider."""
+    s = {'provider_exec_model': 'glm-4.6', 'provider_base_url': 'http://x',
+         'provider_api_key': 'k'}
+    assert 'ENABLE_TOOL_SEARCH' not in c.provider_env(s)
+    s['provider_tool_search'] = True
+    assert c.provider_env(s)['ENABLE_TOOL_SEARCH'] == 'true'
 
 
 def test_omniroute_client_degrades_quietly_when_unreachable():
@@ -376,43 +388,43 @@ def test_cli_strips_ansi_log_preamble_before_json(monkeypatch):
 
 
 if __name__ == '__main__':
-    test_omniroute_env_disabled_by_default()
-    test_omniroute_env_returns_anthropic_override_when_configured()
+    test_provider_env_disabled_by_default()
+    test_provider_env_returns_anthropic_override_when_configured()
     test_omniroute_client_degrades_quietly_when_unreachable()
     print('ok')
 
 
-def test_omniroute_env_with_model_param_bypasses_exec_model_gate():
-    """Passing model='_' forces OmniRoute env even when omniroute_exec_model is
+def test_provider_env_with_model_param_bypasses_exec_model_gate():
+    """Passing model='_' forces OmniRoute env even when provider_exec_model is
     not set — handles the GUI plan-execute modal's via='omniroute' path."""
-    s = {'omniroute_base_url': 'http://localhost:20128',
-         'omniroute_api_key': 'secret-token'}
+    s = {'provider_base_url': 'http://localhost:20128',
+         'provider_api_key': 'secret-token'}
     # without model param: empty because exec_model is not set
-    assert c.omniroute_env(s) == {}
+    assert c.provider_env(s) == {}
     # with model param: env vars are returned
-    env = c.omniroute_env(s, model='_')
+    env = c.provider_env(s, model='_')
     assert env.get('ANTHROPIC_BASE_URL') == 'http://localhost:20128'
     assert env.get('ANTHROPIC_AUTH_TOKEN') == 'secret-token'
 
 
-def test_omniroute_env_includes_disable_traffic_not_subagent_model():
+def test_provider_env_includes_disable_traffic_not_subagent_model():
     """omniroute_env sets CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC but no
     longer forces CLAUDE_CODE_SUBAGENT_MODEL — OmniRoute can't route a bare
     Anthropic model id, so agents must inherit the session's OmniRoute model."""
-    s = {'omniroute_exec_model': 'auto/coding',
-         'omniroute_base_url': 'http://localhost:20128',
-         'omniroute_api_key': 'secret'}
-    env = c.omniroute_env(s)
+    s = {'provider_exec_model': 'auto/coding',
+         'provider_base_url': 'http://localhost:20128',
+         'provider_api_key': 'secret'}
+    env = c.provider_env(s)
     assert 'CLAUDE_CODE_SUBAGENT_MODEL' not in env
     assert env['CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC'] == '1'
 
 
-def test_omniroute_env_filters_empty_values():
+def test_provider_env_filters_empty_values():
     """Empty string values are filtered out so ambient env is never clobbered."""
-    s = {'omniroute_exec_model': 'auto/coding',
-         'omniroute_base_url': '',
-         'omniroute_api_key': ''}
-    env = c.omniroute_env(s)
+    s = {'provider_exec_model': 'auto/coding',
+         'provider_base_url': '',
+         'provider_api_key': ''}
+    env = c.provider_env(s)
     assert 'ANTHROPIC_BASE_URL' not in env
     assert 'ANTHROPIC_AUTH_TOKEN' not in env
 
@@ -424,9 +436,10 @@ def test_prepare_launch_unknown_model_raises_valueerror(monkeypatch, tmp_path):
     from claude_sessions.config import load_settings, save_settings
     monkeypatch.setattr(config, 'settings_file', str(tmp_path / 'claudectl.json'))
     s = load_settings()
-    s['omniroute_base_url'] = 'http://localhost:20128'
-    s['omniroute_api_key'] = ''
-    s['omniroute_exec_model'] = 'free/x'
+    s['provider_base_url'] = 'http://localhost:20128'
+    s['provider_api_key'] = ''
+    s['provider_exec_model'] = 'free/x'
+    s['provider_kind'] = 'omniroute'
     save_settings(s)
     monkeypatch.setattr(omniroute, 'list_models',
                         lambda *a, **k: [('free/x', 'Free Model X'), ('free/y', 'Free Model Y')])
@@ -435,8 +448,8 @@ def test_prepare_launch_unknown_model_raises_valueerror(monkeypatch, tmp_path):
     with pytest.raises(ValueError, match='bogus'):
         omniroute.prepare_launch('bogus')
     # 'auto/coding' is always accepted without validation
-    env = omniroute.prepare_launch('auto/coding')
-    assert isinstance(env, dict)
+    env, warn = omniroute.prepare_launch('auto/coding')
+    assert isinstance(env, dict) and warn == ''
 
 
 def test_prepare_launch_ensure_running_failure_propagates(monkeypatch):
@@ -445,4 +458,51 @@ def test_prepare_launch_ensure_running_failure_propagates(monkeypatch):
                         lambda *a, **k: (False, 'daemon dead'))
     import pytest
     with pytest.raises(RuntimeError, match='OmniRoute'):
-        omniroute.prepare_launch('auto/coding')
+        omniroute.prepare_launch('auto/coding', {'provider_kind': 'omniroute'})
+
+
+def test_prepare_launch_never_autostarts_a_daemon_for_a_generic_provider(monkeypatch):
+    """'generic' means the user already runs the server. Auto-starting the
+    OmniRoute npm daemon for it would be starting the wrong program, and would
+    mask an unreachable endpoint behind a spawn that appears to succeed."""
+    called = []
+    monkeypatch.setattr(omniroute, 'ensure_running',
+                        lambda *a, **k: called.append(1) or (True, 'running'))
+    monkeypatch.setattr(omniroute, 'is_reachable', lambda *a, **k: True)
+    env, _warn = omniroute.prepare_launch('qwen3-coder', {
+        'provider_kind': 'generic', 'provider_base_url': 'http://localhost:11434'})
+    assert called == []
+    assert env['ANTHROPIC_BASE_URL'] == 'http://localhost:11434'
+
+
+def test_prepare_launch_does_not_validate_a_generic_model_id(monkeypatch):
+    """There is no catalogue for a generic Anthropic-shaped server, so a model
+    id is taken on trust. Validating against an empty list would reject every
+    model the user could possibly name."""
+    monkeypatch.setattr(omniroute, 'is_reachable', lambda *a, **k: True)
+    monkeypatch.setattr(omniroute, 'list_models', lambda *a, **k: [])
+    env, _warn = omniroute.prepare_launch('anything-at-all', {
+        'provider_kind': 'generic', 'provider_base_url': 'http://h'})
+    assert env['ANTHROPIC_BASE_URL'] == 'http://h'
+
+
+def test_prepare_launch_fails_before_the_session_opens_when_unreachable(monkeypatch):
+    """Raised BEFORE the terminal spawns, deliberately: a launch that succeeds
+    and only dies once `claude` tries the model leaves the user in a new console
+    with no path back to the setting that was wrong."""
+    monkeypatch.setattr(omniroute, 'is_reachable', lambda *a, **k: False)
+    import pytest
+    with pytest.raises(RuntimeError, match='not reachable'):
+        omniroute.prepare_launch('m', {'provider_kind': 'generic',
+                                       'provider_base_url': 'http://dead'})
+
+
+def test_context_warning_counts_claude_codes_own_system_prompt():
+    """The 10k-token floor is the whole point: a default 4096-token Ollama
+    context is already over budget with an empty repo, and a check that weighed
+    only CLAUDE.md would call that fine."""
+    assert omniroute.context_warning({'provider_context_tokens': 4096}, 1) != ''
+    # no payload measured -> nothing to say
+    assert omniroute.context_warning({'provider_context_tokens': 4096}, 0) == ''
+    # a big window swallows the same payload
+    assert omniroute.context_warning({'provider_context_tokens': 200000}, 4000) == ''

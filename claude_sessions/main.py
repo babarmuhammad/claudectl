@@ -291,7 +291,7 @@ def run():
 
     _EMPTY_OPTS = {'effort': '', 'model': '', 'perm': '', 'name': '', 'worktree': '',
                    'agent': '', 'cfgdir': '', 'max_thinking': '', 'subagent_model': '',
-                   'omniroute': ''}
+                   'provider': ''}
     path = encoded_name = proj_folder = choice = None
     opts = dict(_EMPTY_OPTS)
 
@@ -470,7 +470,7 @@ def run():
         # the selection already matches. Inline --agents is avoided because its
         # JSON overruns the Windows command line for real agents.
         sync_project_agents(path, chosen_refs,
-                            omniroute=opts.get('omniroute'))
+                            routed=bool(opts.get('provider')))
         # Remember per-project launch choices
         if encoded_name:
             settings.setdefault('project_defaults', {})[encoded_name] = {
@@ -480,26 +480,37 @@ def run():
                 'subagent_model': opts.get('subagent_model', ''),
             }
             save_settings(settings)
-        # ── OmniRoute standalone session (optional) ──────────────
-        # Only offer OmniRoute if its base_url is explicitly configured
-        # (different from the default placeholder). This prevents the TUI
-        # from trying to reach localhost:20128 in test or fresh-install
-        # environments where no OmniRoute daemon exists.
-        _or_base = settings.get('omniroute_base_url', '')
-        if _or_base and _or_base != 'http://localhost:20128':
+        # ── routed provider session (optional) ───────────────────
+        # Only offered once a provider kind is chosen in settings. The two
+        # kinds get different pickers because they have different amounts of
+        # truth available: OmniRoute publishes a live catalogue, a generic
+        # Anthropic-shaped server publishes nothing, so offering a menu there
+        # would mean inventing its contents.
+        _pk = settings.get('provider_kind', '')
+        if _pk:
+            _pv_base = settings.get('provider_base_url', '')
             try:
                 from . import omniroute as _om
-                _models = _om.list_models(_or_base, settings.get('omniroute_api_key', ''))
-                if _models:
-                    from .omniroute import AUTO_MODEL
-                    _om_opts = [('○  off (use Anthropic API)', '')]
-                    _om_opts += [(f'◉  auto/coding (dynamic router)', AUTO_MODEL)]
-                    _om_opts += [(f'●  {lbl}', mid) for mid, lbl in _models]
-                    _om_pick = menu(_om_opts, "OMNIROUTE  (free-tier execution)")
-                    if _om_pick is not None:
-                        opts['omniroute'] = _om_pick
+                if _pk == 'omniroute':
+                    _models = _om.list_models(_pv_base, settings.get('provider_api_key', ''))
+                    if _models:
+                        _pv_opts = [('○  off (use Anthropic API)', '')]
+                        _pv_opts += [('◉  auto/coding (dynamic router)', _om.AUTO_MODEL)]
+                        _pv_opts += [(f'●  {lbl}', mid) for mid, lbl in _models]
+                        _pv_pick = menu(_pv_opts, "OMNIROUTE  (free-tier execution)")
+                        if _pv_pick is not None:
+                            opts['provider'] = _pv_pick
+                else:
+                    _pv_opts = [('○  off (use Anthropic API)', ''),
+                                ('●  run on the configured provider', '\x00pick')]
+                    _pv_pick = menu(_pv_opts, f"PROVIDER  ({_pv_base})")
+                    if _pv_pick == '\x00pick':
+                        from .ui import text_input
+                        _pv_pick = text_input("Model id", settings.get('provider_exec_model', ''))
+                    if _pv_pick:
+                        opts['provider'] = _pv_pick
             except Exception:
-                pass   # daemon not reachable or not installed — silently skip
+                pass   # backend not reachable — silently skip, launch stays on Anthropic
         break
 
     if choice == 'terminal':
@@ -508,7 +519,7 @@ def run():
     opts.setdefault('agents_json', '')
     opts.setdefault('max_thinking', '')
     opts.setdefault('subagent_model', '')
-    opts.setdefault('omniroute', '')
+    opts.setdefault('provider', '')
 
     # Persist last session for quick-resume (resume/fork only)
     if choice and choice not in ('terminal', 'new', 'continue'):
@@ -700,23 +711,21 @@ def build_launch_command(path, encoded_name, choice, opts):
         args += ['--effort', opts['effort']]
     if opts['model']:
         args += ['--model', opts['model']]
-    # OmniRoute free-tier session: merge env overrides + use selected model.
-    # CLAUDE_CODE_SUBAGENT_MODEL is set in omniroute_env() so agents/skills
-    # always run on a capable Anthropic model (Sonnet 5), even when the main
-    # session uses a free-tier model that may lack tool_use or have small context.
-    omniroute_model = opts.get('omniroute', '')
-    if omniroute_model:
+    # Routed session: merge the provider env overrides + use the picked model.
+    provider_model = opts.get('provider', '')
+    if provider_model:
         from .omniroute import prepare_launch
-        env.update(prepare_launch(omniroute_model))
-        args += ['--model', omniroute_model]
-    # `auto` is dropped where the classifier cannot run — with OmniRoute in
-    # play the model is whatever the free-tier catalog served, and the
-    # classifier is a SEPARATE request that would go to the same base URL. The
-    # model check reads the OmniRoute model when there is one, because that is
-    # the model the session will actually be on.
+        pv_env, _warn = prepare_launch(provider_model, settings)
+        env.update(pv_env)
+        args += ['--model', provider_model]
+    # `auto` is dropped where the classifier cannot run — with a provider in
+    # play the model is whatever that backend served, and the classifier is a
+    # SEPARATE request that would go to the same base URL. The model check reads
+    # the provider model when there is one, because that is the model the
+    # session will actually be on.
     from .config import effective_perm
-    perm = effective_perm(opts['perm'], omniroute_model or opts['model'],
-                          omniroute_model)
+    perm = effective_perm(opts['perm'], provider_model or opts['model'],
+                          provider_model)
     if perm:
         args += ['--permission-mode', perm]
     # Model fallback chain for an overloaded primary. Unrelated to failover.py,

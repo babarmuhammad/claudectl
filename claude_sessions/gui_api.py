@@ -2082,7 +2082,7 @@ def api_job_start(q, body):
                         lambda: run_review(path, folder, staged=staged, base=base))
     elif kind == 'plan_make':
         from .plan_execute import _plan, write_plan_file, optimize_plan_council
-        from .config import load_settings, omniroute_env
+        from .config import load_settings, provider_env
         s = load_settings()
         model = body.get('model') or s.get('plan_model', '')
         task = body.get('task', '')
@@ -2094,12 +2094,12 @@ def api_job_start(q, body):
         cfgdir = body.get('account') or ''
         # council must route through the SAME channel the user picked for
         # execution (body['via']), not the account-wide default setting --
-        # else a stale omniroute_exec_model default silently routes every
+        # else a stale provider_exec_model default silently routes every
         # council call at an unreachable proxy, _headless swallows the
         # errors, and optimize_plan_council quietly no-ops the plan back
         # unchanged with no error shown.
         via = body.get('via', 'anthropic')
-        omni_env = omniroute_env(s, model='_') if via == 'omniroute' else {}
+        omni_env = provider_env(s, model='_') if via == 'provider' else {}
 
         # Pre-flight: fail fast (~5s) if the endpoint the headless `claude`
         # call will talk to is unreachable, instead of spawning a job that
@@ -2129,7 +2129,7 @@ def api_job_start(q, body):
         # waiver: compared against the account picked for execution, to decide
         # whether a cfgdir override is needed. The ACTIVE account is the right
         # baseline for that comparison.
-        from .config import load_settings, omniroute_env, config_dir
+        from .config import load_settings, provider_env, config_dir
         from . import omniroute, ui
         task = body.get('task', '')
         plan_text = body.get('plan_text', '')
@@ -2144,60 +2144,27 @@ def api_job_start(q, body):
             import subprocess
             s = load_settings()
             via = body.get('via', 'anthropic')
-            omni_env = omniroute_env(s, model='_') if via == 'omniroute' else {}
+            omni_env = provider_env(s, model='_') if via == 'provider' else {}
             # write user-edited plan text before launching
             if plan_text:
                 write_plan_file(path, task, plan_text)
-            if omni_env:
-                ok, msg = omniroute.ensure_running(s.get('omniroute_base_url', ''))
-                ui.flash(f'OmniRoute: {msg}', ok=ok)
-                if not ok:
-                    raise RuntimeError(msg)
-                # catch a stale/renamed omniroute_exec_model here, before
-                # launching -- otherwise the exec session opens fine and only
-                # fails once `claude` itself tries the model, deep inside the
-                # new terminal with no easy path back to fix the setting.
-                _exec_model_check = body.get('model') or s.get('omniroute_exec_model') or omniroute.AUTO_MODEL
-                if _exec_model_check != omniroute.AUTO_MODEL:
-                    available = [mid for mid, _lbl in omniroute.list_models(
-                        s.get('omniroute_base_url', ''), s.get('omniroute_api_key', ''))]
-                    if available and _exec_model_check not in available:
-                        raise RuntimeError(
-                            f"OmniRoute: exec model '{_exec_model_check}' is no longer available — "
-                            "pick a new one in Settings or switch to Auto")
-                # omniroute_env() already repointed ANTHROPIC_BASE_URL at the
-                # failover proxy when candidates are configured, so it has to be
-                # up before claude is handed that URL.
-                from . import failover
-                if failover.enabled(s):
-                    _fok, _fmsg = failover.ensure_running(s)
-                    ui.flash(f'Failover proxy: {_fmsg}', ok=_fok)
-                    if not _fok:
-                        raise RuntimeError(_fmsg)
-                # context-window warning for free-tier OmniRoute models
-                try:
-                    _ctx = 0
-                    _md = os.path.join(path, 'CLAUDE.md') if path else ''
-                    if _md and os.path.isfile(_md):
-                        _ctx += os.path.getsize(_md)
-                    _rd = os.path.join(path, '.claude', 'rules') if path else ''
-                    if _rd and os.path.isdir(_rd):
-                        for _f in os.listdir(_rd):
-                            _fp = os.path.join(_rd, _f)
-                            if os.path.isfile(_fp) and _f.endswith('.md'):
-                                _ctx += os.path.getsize(_fp)
-                    _ctx += len(plan_text or '') * 3
-                    if _ctx // 4 > 8000:
-                        ui.flash(f"OmniRoute: CLAUDE.md + rules + plan ≈ {_ctx // 4 // 1000}k tokens — "
-                                 "small-context model may degrade", ok=False, secs=3)
-                except Exception:
-                    pass
             if body.get('model'):
                 model = body['model']
             elif omni_env:
-                model = s.get('omniroute_exec_model') or omniroute.AUTO_MODEL
+                model = s.get('provider_exec_model') or omniroute.AUTO_MODEL
             else:
                 model = s.get('exec_model', '')
+            if omni_env:
+                # ONE seam: reachability, daemon start, failover proxy, model
+                # validation and the context advisory all live in
+                # prepare_launch. This used to be forty lines duplicated from
+                # plan_execute.run(), and the two copies had already drifted.
+                from .plan_execute import context_bytes
+                _pv_env, _warn = omniroute.prepare_launch(
+                    model, s, ctx_bytes=context_bytes(path, plan_text))
+                omni_env.update(_pv_env)
+                if _warn:
+                    ui.flash(_warn, ok=False, secs=3)
             from .paths import resolve_dir
             if not resolve_dir(path):   # becomes a subprocess cwd below
                 raise RuntimeError('not a directory: %s' % (path or '(empty)'))
@@ -2276,28 +2243,28 @@ def api_job_start(q, body):
         proj = path or None
 
         def _install():
-            exec_model = load_settings().get('omniroute_exec_model', '')
+            exec_model = load_settings().get('provider_exec_model', '')
             ok, msg = skills.install_from_git(url, proj, exec_model)
             if not ok:
                 raise RuntimeError(msg)
             return {'message': msg}
         jid = start_job(f'Installing from {url}', _install)
-    elif kind == 'omniroute_ensure':
+    elif kind == 'provider_ensure':
         from . import omniroute
         from .config import load_settings
 
         def _ensure():
             s = load_settings()
-            ok, msg = omniroute.ensure_running(s.get('omniroute_base_url', ''))
+            ok, msg = omniroute.ensure_running(s.get('provider_base_url', ''))
             return {'ok': ok, 'message': msg}
         jid = start_job('Starting OmniRoute', _ensure)
-    elif kind == 'omniroute_probe':
+    elif kind == 'provider_probe':
         from . import omniroute
         from .config import load_settings
 
         def _probe():
             s = load_settings()
-            base, key = s.get('omniroute_base_url', ''), s.get('omniroute_api_key', '')
+            base, key = s.get('provider_base_url', ''), s.get('provider_api_key', '')
             ids = body.get('models') or []
             if not ids:
                 usable, autos, _ex = omniroute.usable_models(base, key)
@@ -2329,7 +2296,7 @@ def api_job_start(q, body):
             ok, msg = failover.stop_running()
             return {'ok': ok, 'message': msg}
         jid = start_job('Stopping failover proxy', _fstop)
-    elif kind == 'omniroute_test_connection':
+    elif kind == 'provider_test_connection':
         from . import omniroute
         conn_id = body.get('conn_id', '')
 
@@ -2337,7 +2304,7 @@ def api_job_start(q, body):
             ok, msg = omniroute.cli_test_connection(conn_id)
             return {'ok': ok, 'message': msg}
         jid = start_job(f'Testing {conn_id}', _test)
-    elif kind == 'omniroute_live_test':
+    elif kind == 'provider_live_test':
         from . import omniroute
         from .config import load_settings
         model = body.get('model') or omniroute.AUTO_MODEL
@@ -2345,7 +2312,7 @@ def api_job_start(q, body):
         def _live():
             s = load_settings()
             ok, used, msg = omniroute.test_live(
-                s.get('omniroute_base_url', ''), model, s.get('omniroute_api_key', ''))
+                s.get('provider_base_url', ''), model, s.get('provider_api_key', ''))
             return {'ok': ok, 'model_used': used, 'message': msg}
         jid = start_job(f'Sending a real test request via {model}', _live)
     else:
@@ -2405,11 +2372,11 @@ def api_plan_last(q, body):
 # proxy speaking the Anthropic Messages API natively — never returns the raw
 # api_key to the frontend, status/models only.
 
-def api_omniroute_status(q, body):
+def api_provider_status(q, body):
     from . import omniroute
     from .config import load_settings
     s = load_settings()
-    base, key = s.get('omniroute_base_url', ''), s.get('omniroute_api_key', '')
+    base, key = s.get('provider_base_url', ''), s.get('provider_api_key', '')
     # ONE concurrent fetch of both payloads, then everything is derived locally.
     # Each OmniRoute round trip costs ~2s on a loaded instance, so the previous
     # five serial calls made this handler a ~13s page stall.
@@ -2431,7 +2398,7 @@ def api_omniroute_status(q, body):
     }
 
 
-def api_omniroute_models(q, body):
+def api_provider_models(q, body):
     """Models that can actually serve a session, not the whole routable catalog.
 
     Each entry's own ``owned_by`` is cross-referenced against live providerHealth
@@ -2446,8 +2413,8 @@ def api_omniroute_models(q, body):
     from . import omniroute
     from .config import load_settings
     s = load_settings()
-    base = s.get('omniroute_base_url', '')
-    key = s.get('omniroute_api_key', '')
+    base = s.get('provider_base_url', '')
+    key = s.get('provider_api_key', '')
 
     entries, h = omniroute.fetch_both(base, key)
 
@@ -2851,8 +2818,8 @@ GET_ROUTES = {
     '/api/background-agents': api_background_agents,
     '/api/disk': api_disk,
     '/api/loop-md': api_loop_md_get,
-    '/api/omniroute/status': api_omniroute_status,
-    '/api/omniroute/models': api_omniroute_models,
+    '/api/provider/status': api_provider_status,
+    '/api/provider/models': api_provider_models,
     '/api/plan/last': api_plan_last,
 }
 

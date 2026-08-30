@@ -93,12 +93,25 @@ def _rates_for(model, table):
         if pattern in model:
             return rates, True
     if not _is_anthropic_model(model):
-        return _FREE_RATES, False        # OmniRoute free-tier model: costs nothing
+        # No price data, NOT "free" -- a routed model may be a paid OpenRouter or
+        # self-hosted one. The zero contributes nothing to the total and the
+        # False makes fmt_cost say so rather than quote a number.
+        return _FREE_RATES, False
     return _GUESS_RATES, False           # unknown Claude id: opus-tier guess
 
 
+def fmt_cost(cost, exact):
+    """Cost cell text. A zero total that is ALSO inexact means every model in the
+    rollup was unpriced, not that the work was free -- rendering it as `~0.00`
+    told a paid OpenRouter/vLLM user their spend was approximately nothing."""
+    if not exact and not cost:
+        return 'n/a'
+    return f"{'~' if not exact else ''}{cost:.2f}"
+
+
 def estimate_cost(usage_by_model):
-    """Returns (usd: float, exact: bool). exact=False if any model rate was guessed."""
+    """Returns (usd: float, exact: bool). exact=False if any model rate was guessed
+    OR had no price data at all -- see fmt_cost for how the two are told apart."""
     table = _cost_table()
     total = 0.0
     exact = True
@@ -579,7 +592,7 @@ def usage_dashboard(entries):
                 [os.path.basename(p['path']) or p['path'], str(p['sessions']),
                  str(p['msgs']), fmt_tok(u['in']), fmt_tok(u['out']),
                  fmt_tok(u['cache_read']),
-                 f"{'~' if not exact else ''}{cost:.2f}"],
+                 fmt_cost(cost, exact)],
                 [None, 6, 7, 8, 8, 9, 9],
                 aligns=['left', 'right', 'right', 'right', 'right', 'right', 'right'])
             frame.append(render.row(label, selected=(i == nav)))
@@ -631,7 +644,7 @@ def project_usage_screen(proj_folder, project_name):
             label = render.cols(
                 [format_age(mtime).strip(), name, str(count),
                  fmt_tok(u['in']), fmt_tok(u['out']),
-                 f"{'~' if not exact else ''}{cost:.2f}"],
+                 fmt_cost(cost, exact)],
                 [7, None, 6, 8, 8, 8],
                 aligns=['left', 'left', 'right', 'right', 'right', 'right'])
             frame.append(render.row(label, selected=(i == nav)))

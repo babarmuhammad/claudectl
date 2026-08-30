@@ -182,7 +182,7 @@ def test_the_gui_setting_keys_are_derived_from_the_registry():
     src = io.open(gui.__file__, encoding='utf-8').read()
     body = src[src.index('def _api_settings('):src.index('_LOCAL_GET =')]
     for k in ('failover_models', 'nav_collapsed', 'side_w', 'headless_budget_usd',
-              'omniroute_api_key', 'ui_mode'):
+              'provider_api_key', 'ui_mode'):
         assert k in body, '%s is excluded from the generic loop and unhandled' % k
 
 
@@ -199,11 +199,11 @@ def test_every_tui_setting_reaches_the_gui():
 
 
 def test_the_settings_the_gui_saves_are_the_settings_it_renders():
-    """False-positive guard included: omniroute_base_url reaches post() through
+    """False-positive guard included: provider_base_url reaches post() through
     a variable, and must stay green."""
     js = _js()
     for key in ('default_model', 'editor', 'claude_exe', 'claude_config_dir',
-                'headless_budget_usd', 'omniroute_base_url'):
+                'headless_budget_usd', 'provider_base_url'):
         assert re.search(r'\b%s\s*:' % key, js), (
             '%s is a setting the GUI never sends back' % key)
 

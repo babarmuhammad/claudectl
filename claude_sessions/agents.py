@@ -442,16 +442,27 @@ def write_agents_json_tempfile(refs):
 _MANIFEST = '.claudectl-managed.json'
 
 
-def sync_project_agents(project_path, refs, omniroute=False):
+def sync_project_agents(project_path, refs, routed=None):
     """Make <project>/.claude/agents/ contain exactly the selected library
     agents. Claude auto-discovers them at launch — no command-line size limit.
     Only files claudectl previously placed (tracked in a manifest) are removed,
     so the user's own project agents are never touched. Returns count synced.
 
-    When *omniroute* is truthy, the ``model:`` field is stripped from copied
-    agent frontmatter so agents inherit the session model via
-    ``CLAUDE_CODE_SUBAGENT_MODEL`` instead of trying to route to a bare
-    Anthropic model id through OmniRoute (which would fail)."""
+    When the session is *routed* to a non-Anthropic backend, the ``model:``
+    field is stripped from the copied frontmatter: a bare Anthropic id like
+    ``claude-haiku-4-5`` cannot be resolved by that backend, and Claude Code
+    sends it anyway, so the subagent 401s or the proxy answers "Ambiguous
+    model". Stripping it makes agents inherit the session's own model.
+
+    *routed* defaults to reading ``provider_kind`` at call time rather than
+    taking False, because it was a parameter for a while and two of the four
+    call sites simply never passed it — so GUI-launched and suggestion-accepted
+    agents kept their model: field and broke on every routed session. A default
+    that four callers have to remember is a guard in four places; deriving it
+    here is a guard in one."""
+    if routed is None:
+        from .config import load_settings
+        routed = bool(load_settings().get('provider_kind'))
     import json, shutil, re
     if not project_path:
         return 0
@@ -485,14 +496,11 @@ def sync_project_agents(project_path, refs, omniroute=False):
                 except Exception:
                     pass
 
-    # copy selected (strip model: frontmatter when routing via OmniRoute
-    # so agents inherit CLAUDE_CODE_SUBAGENT_MODEL instead of trying to
-    # call a bare Anthropic model id through the OmniRoute proxy)
     written = []
     for fn, src in desired.items():
         try:
             dest_path = os.path.join(dest, fn)
-            if omniroute:
+            if routed:
                 content = open(src, encoding='utf-8').read()
                 # Remove model: line from YAML frontmatter between --- fences
                 if content.startswith('---'):

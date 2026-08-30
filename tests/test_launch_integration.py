@@ -109,20 +109,20 @@ def test_manual_is_expressible(monkeypatch, tmp_path):
     assert '--permission-mode' not in argv
 
 
-def _stub_omniroute(monkeypatch):
+def _stub_provider(monkeypatch):
     """prepare_launch() probes (and would start) the real OmniRoute daemon —
     a blocking network call that has no place in a launch-assembly test."""
     from claude_sessions import omniroute
-    monkeypatch.setattr(omniroute, 'prepare_launch', lambda m: {})
+    monkeypatch.setattr(omniroute, 'prepare_launch', lambda m, s=None, **kw: ({}, ''))
 
 
-def test_auto_is_dropped_for_omniroute(monkeypatch, tmp_path):
+def test_auto_is_dropped_for_a_routed_provider(monkeypatch, tmp_path):
     """The classifier is a separate model request and would follow
     ANTHROPIC_BASE_URL to the free-tier proxy, which does not serve it."""
     sb = Sandbox(monkeypatch, tmp_path)
-    _stub_omniroute(monkeypatch)
+    _stub_provider(monkeypatch)
     call = captured_launch(monkeypatch, sb, 'new',
-                           {'perm': 'auto', 'omniroute': 'auto/coding'})
+                           {'perm': 'auto', 'provider': 'auto/coding'})
     argv = argv_of(call)
     assert '--permission-mode' not in argv
     assert '--model' in argv and 'auto/coding' in argv   # the rest still applies
@@ -140,11 +140,11 @@ def test_only_auto_is_ever_suppressed(monkeypatch, tmp_path):
     model and provider, so none of them may be silently dropped."""
     from claude_sessions.config import PERMS
     sb = Sandbox(monkeypatch, tmp_path)
-    _stub_omniroute(monkeypatch)
+    _stub_provider(monkeypatch)
     for perm in [p for p in PERMS if p and p != 'auto']:
         argv = argv_of(captured_launch(
             monkeypatch, sb, 'new',
-            {'perm': perm, 'model': 'claude-haiku-4-5', 'omniroute': 'auto/coding'}))
+            {'perm': perm, 'model': 'claude-haiku-4-5', 'provider': 'auto/coding'}))
         assert f'--permission-mode {perm}' in ' '.join(argv), perm
 
 

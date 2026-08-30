@@ -127,8 +127,8 @@ class _Proxy:
 
 def _wire(monkeypatch, upstream, models):
     monkeypatch.setattr(_c, 'load_settings', lambda: {
-        'omniroute_base_url': upstream.url,
-        'omniroute_api_key': 'k',
+        'provider_base_url': upstream.url,
+        'provider_api_key': 'k',
         'failover_models': models,
         'failover_port': 20129,
     })
@@ -376,19 +376,19 @@ def test_log_and_lock_live_beside_settings_file():
 
 # ── config wiring ────────────────────────────────────────────
 
-def test_omniroute_env_repoints_base_url_when_candidates_configured():
-    s = {'omniroute_exec_model': 'auto/coding',
-         'omniroute_base_url': 'http://localhost:20128',
-         'omniroute_api_key': 'k',
+def test_provider_env_repoints_base_url_when_candidates_configured():
+    s = {'provider_exec_model': 'auto/coding',
+         'provider_base_url': 'http://localhost:20128',
+         'provider_api_key': 'k',
          'failover_models': ['x'], 'failover_port': 20129}
-    assert _c.omniroute_env(s)['ANTHROPIC_BASE_URL'] == 'http://127.0.0.1:20129'
+    assert _c.provider_env(s)['ANTHROPIC_BASE_URL'] == 'http://127.0.0.1:20129'
 
 
-def test_omniroute_env_leaves_base_url_alone_without_candidates():
-    s = {'omniroute_exec_model': 'auto/coding',
-         'omniroute_base_url': 'http://localhost:20128',
-         'omniroute_api_key': 'k', 'failover_models': []}
-    assert _c.omniroute_env(s)['ANTHROPIC_BASE_URL'] == 'http://localhost:20128'
+def test_provider_env_leaves_base_url_alone_without_candidates():
+    s = {'provider_exec_model': 'auto/coding',
+         'provider_base_url': 'http://localhost:20128',
+         'provider_api_key': 'k', 'failover_models': []}
+    assert _c.provider_env(s)['ANTHROPIC_BASE_URL'] == 'http://localhost:20128'
 
 
 def test_council_calls_bypass_the_proxy(monkeypatch):
@@ -398,10 +398,10 @@ def test_council_calls_bypass_the_proxy(monkeypatch):
     from claude_sessions import plan_execute
 
     real = 'http://localhost:20128'
-    s = {'omniroute_exec_model': 'auto/coding', 'omniroute_base_url': real,
-         'omniroute_api_key': 'k', 'failover_models': ['x'], 'failover_port': 20129}
+    s = {'provider_exec_model': 'auto/coding', 'provider_base_url': real,
+         'provider_api_key': 'k', 'failover_models': ['x'], 'failover_port': 20129}
     monkeypatch.setattr(_c, 'load_settings', lambda: s)
-    omni = _c.omniroute_env(s)
+    omni = _c.provider_env(s)
     assert omni['ANTHROPIC_BASE_URL'] == 'http://127.0.0.1:20129'
 
     seen = {}

@@ -130,11 +130,33 @@ _DEFAULT_SETTINGS = {
     'otel_protocol': 'http/protobuf',
     'otel_headers': '',           # e.g. "Authorization=Bearer <token>"
     'auto_memory_interval': 3600,  # GUI background auto-memory re-check cadence (s)
-    'omniroute_base_url':   'http://localhost:20128',  # local OmniRoute proxy
-    'omniroute_api_key':    '',   # -> ANTHROPIC_AUTH_TOKEN for the exec session
-    'omniroute_exec_model': '',   # Plan→Execute exec model, routed free-tier via
-                                   # OmniRoute instead of the real Anthropic API.
-                                   # '' = disabled (exec_model/real API as usual).
+    # ── alternate model backend ──
+    # ONE active backend at a time, globally — deliberately, not a limitation
+    # waiting to be lifted. failover.py (and gateway.py) resolve their upstream
+    # by re-reading these keys PER REQUEST, so two concurrently-active backends
+    # would hand one session's credential to the other's upstream.
+    'provider_base_url':   'http://localhost:20128',  # Anthropic-shaped endpoint
+    'provider_api_key':    '',   # -> ANTHROPIC_AUTH_TOKEN for the routed session
+    'provider_exec_model': '',   # Plan→Execute exec model, routed through the
+                                  # provider instead of the real Anthropic API.
+                                  # '' = disabled (exec_model/real API as usual).
+    #: '' = Anthropic direct (default, nothing is overridden at all)
+    #: 'omniroute' = daemon auto-start, live /v1/models catalogue, circuit health
+    #: 'generic'   = any already-running Anthropic-shaped URL (Ollama >= 0.14,
+    #:               vLLM, llama.cpp, OpenRouter's Anthropic endpoint, a remote
+    #:               server). No catalogue exists for these, so the model id is
+    #:               free text and health is one real POST /v1/messages.
+    'provider_kind':       '',
+    #: user-entered context window of the routed model. 0 = unknown, no advisory.
+    #: NOT probed from /v1/models: most catalogues omit context_length, and a
+    #: fabricated number is worse than none.
+    'provider_context_tokens': 0,
+    #: -> ENABLE_TOOL_SEARCH=true. Claude Code disables MCP tool search on any
+    #: non-first-party base URL; re-enabling it only works when the upstream
+    #: forwards tool_reference blocks, so this is opt-in rather than implied by
+    #: provider_kind.
+    'provider_tool_search': False,
+    'provider_keys_migrated': False,  # one-time omniroute_* rename, see migrate_settings
     'failover_models': [],        # ordered model ids claudectl's own proxy retries
                                    # when a turn errors before any byte reaches the
                                    # client. [] = feature off (no separate flag —
@@ -154,9 +176,9 @@ _DEFAULT_SETTINGS = {
 INTERNAL_SETTINGS = frozenset({
     '_unknown',                      # the carry-through bucket, not a setting
     'accounts', 'project_defaults', 'cost_table',
-    'perm_default_migrated',
+    'perm_default_migrated', 'provider_keys_migrated',
     'ui_mode',                       # handled first, validated against two values
-    'omniroute_api_key',             # write-only: never echoed back to be resubmitted
+    'provider_api_key',              # write-only: never echoed back to be resubmitted
     'failover_models', 'launch_fallback_models',  # list sanitizers
     'nav_collapsed', 'side_w', 'nav_h',           # geometry clamps
     'headless_budget_usd',                        # float clamp
@@ -202,13 +224,34 @@ def migrate_settings(s):
     path including read-only ones, and a read that writes is a cache with no
     invalidation waiting to happen.
 
-    The only migration so far is the permission default. Bumping
-    _DEFAULT_SETTINGS['default_permission'] to 'auto' reaches nobody who has
-    already run claudectl: load_settings() lets a stored '' win over the default,
-    and a stored per-project '' wins over THAT at launch time. The flag makes it
-    one-time, so a user who later chooses '' back is not overruled on next start.
+    The permission default. Bumping _DEFAULT_SETTINGS['default_permission'] to
+    'auto' reaches nobody who has already run claudectl: load_settings() lets a
+    stored '' win over the default, and a stored per-project '' wins over THAT at
+    launch time. The flag makes it one-time, so a user who later chooses '' back
+    is not overruled on next start.
+
+    The omniroute_* -> provider_* rename. The old names are read out of
+    _UNKNOWN_KEYS, not off the top level: by the time this runs load_settings()
+    has already parked them there (they are no longer in _DEFAULT_SETTINGS), and
+    they are popped rather than left, because save_settings() layers _unknown
+    back over the output and would otherwise rewrite the dead names forever.
     """
     changed = False
+    if not s.get('provider_keys_migrated'):
+        old = s.get(_UNKNOWN_KEYS) or {}
+        for legacy, new in (('omniroute_base_url', 'provider_base_url'),
+                            ('omniroute_api_key', 'provider_api_key'),
+                            ('omniroute_exec_model', 'provider_exec_model')):
+            if legacy in old:
+                v = old.pop(legacy)
+                if v:
+                    s[new] = v
+        # A configured exec model is what "routing was on" meant before there
+        # was a kind to name; anything else stays off, which is the default.
+        if s.get('provider_exec_model'):
+            s['provider_kind'] = 'omniroute'
+        s['provider_keys_migrated'] = True
+        changed = True
     if not s.get('perm_default_migrated'):
         if not (s.get('default_permission') or ''):
             s['default_permission'] = 'auto'
@@ -222,14 +265,14 @@ def migrate_settings(s):
     return s, changed
 
 
-def effective_perm(perm, model='', omniroute=''):
+def effective_perm(perm, model='', routed=''):
     """The --permission-mode value to actually pass, or '' to pass no flag.
 
     Only `auto` is ever suppressed, and only where the classifier cannot work:
 
-    - OmniRoute: prepare_launch() repoints ANTHROPIC_BASE_URL at the free-tier
-      proxy, and the auto-mode classifier is a SEPARATE model request that would
-      be routed there too — to a catalog that does not serve it.
+    - A routed provider: prepare_launch() repoints ANTHROPIC_BASE_URL at it, and
+      the auto-mode classifier is a SEPARATE model request that would be routed
+      there too — to a backend that does not serve it.
     - An unsupported model (AUTO_UNSUPPORTED_MODELS).
 
     In both cases Claude Code would start the session in manual anyway; not
@@ -238,7 +281,7 @@ def effective_perm(perm, model='', omniroute=''):
     """
     if perm != 'auto':
         return perm
-    if omniroute or model in AUTO_UNSUPPORTED_MODELS:
+    if routed or model in AUTO_UNSUPPORTED_MODELS:
         return ''
     return perm
 
@@ -263,13 +306,13 @@ def launch_defaults(enc=''):
     return model, effective_perm(proj.get('permission', s.get('default_permission', '')), model)
 
 
-def perm_note(perm, model='', omniroute=''):
+def perm_note(perm, model='', routed=''):
     """('level', 'message') for the permission row, or ('', '') when there is
     nothing to say. Kept OUT of advise(): the GUI precomputes advise() as a
     model x effort matrix, and a third axis would multiply it."""
-    if perm == 'auto' and not effective_perm(perm, model, omniroute):
-        why = ('OmniRoute routes the classifier at the free-tier proxy'
-               if omniroute else f'{model or "this model"} does not support auto mode')
+    if perm == 'auto' and not effective_perm(perm, model, routed):
+        why = ('the classifier would be routed at the provider too'
+               if routed else f'{model or "this model"} does not support auto mode')
         return ('warn', f'auto is unavailable here ({why}) — this session starts in manual.')
     if perm == 'bypassPermissions':
         return ('warn', 'bypassPermissions skips every check — containers and VMs only.')
@@ -825,44 +868,57 @@ def otel_env(s=None):
     return env
 
 
-def omniroute_env(s=None, model=None):
-    """{} when free-tier exec routing is off; else the ANTHROPIC_BASE_URL/
-    AUTH_TOKEN override that points an interactive ``claude`` launch at
-    OmniRoute (github.com/diegosouzapw/OmniRoute) instead of the real
-    Anthropic API.  Used for both the execution half of Plan→Execute and
-    standalone interactive OmniRoute sessions (see main.py, plan_execute.py).
+def provider_env(s=None, model=None):
+    """{} when the session runs on Anthropic direct; else the environment that
+    points an interactive ``claude`` launch at the configured alternate backend
+    — OmniRoute, a local Ollama/vLLM/llama.cpp server, OpenRouter's Anthropic
+    endpoint, or a remote host.  Used for the execution half of Plan→Execute and
+    for standalone routed sessions (see main.py, plan_execute.py).
 
-    Also sets CLAUDE_CODE_SUBAGENT_MODEL so that agents and skills always
-    run on a capable Anthropic model (Sonnet 5) even when the main session
-    uses a free-tier OmniRoute model that may lack tool_use or have a
-    small context window.
+    Returns ``{}`` when no provider is configured.  Pass *model* to force the
+    provider env even when ``provider_exec_model`` is unset (the GUI
+    plan-execute modal's ``via='provider'`` path uses this).
 
-    Returns ``{}`` when OmniRoute is not configured.  Pass *model* to force
-    the OmniRoute env even when ``omniroute_exec_model`` is not in settings
-    (the GUI plan-execute modal's ``via='omniroute'`` path uses this)."""
+    Beyond the base URL and token this also disables three things that cannot
+    work off Anthropic's own infrastructure — see docs/providers.md for why each
+    one is unfixable rather than merely unimplemented."""
     s = load_settings() if s is None else s
-    if not s.get('omniroute_exec_model') and not model:
+    if not s.get('provider_exec_model') and not model:
         return {}
     # When failover candidates are configured, claude talks to claudectl's own
-    # proxy instead of OmniRoute directly, and the proxy forwards to
-    # omniroute_base_url — see failover.py. Kept a PURE mapping here (no I/O, no
-    # spawning, no raising); starting the daemon belongs where OmniRoute's own
+    # proxy instead of the provider directly, and the proxy forwards to
+    # provider_base_url — see failover.py. Kept a PURE mapping here (no I/O, no
+    # spawning, no raising); starting a daemon belongs where prepare_launch's
     # ensure_running already governs launch failure.
-    _url = s.get('omniroute_base_url') or ''
+    _url = s.get('provider_base_url') or ''
     if [m for m in (s.get('failover_models') or []) if str(m or '').strip()]:
         _url = 'http://127.0.0.1:%d' % int(s.get('failover_port') or 20129)
     env = {
         'ANTHROPIC_BASE_URL': _url,
-        'ANTHROPIC_AUTH_TOKEN': s.get('omniroute_api_key') or '',
+        'ANTHROPIC_AUTH_TOKEN': s.get('provider_api_key') or '',
         'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1',
+        # Extended thinking is Anthropic-only in practice, on EVERY provider
+        # kind including an Anthropic-shaped local server: a thinking block
+        # carries a signature that must round-trip byte-for-byte to the
+        # infrastructure that minted it, so a backend that did not mint it
+        # cannot produce one. Claude Code sends thinking:{"type":"adaptive"}
+        # unconditionally for 4.6+ models and an upstream that does not know
+        # the field answers 400 — i.e. the whole session fails, not just the
+        # thinking. Off by default, opt back in per launch once verified.
+        'CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING': '1',
         # NOTE: CLAUDE_CODE_SUBAGENT_MODEL was previously set to
-        # 'claude-sonnet-5' here, but OmniRoute can't route bare Anthropic
-        # model ids — agent calls go through the same OmniRoute proxy and
-        # fail with "Ambiguous model".  Agents now inherit the session's
-        # OmniRoute model instead, which guarantees routing works.  The
-        # model: field in agent .md files is also stripped by
-        # sync_project_agents(omniroute=True) for the same reason.
+        # 'claude-sonnet-5' here, but a routed backend can't resolve bare
+        # Anthropic model ids — agent calls go through the same proxy and
+        # fail with "Ambiguous model".  Agents inherit the session's own
+        # model instead, which guarantees routing works.  The model: field in
+        # agent .md files is stripped by sync_project_agents(routed=True) for
+        # the same reason.
     }
+    if s.get('provider_tool_search'):
+        # Claude Code turns MCP tool search off on any non-first-party base
+        # URL. Re-enabling it only works if the upstream forwards
+        # tool_reference blocks, so it is the user's assertion, not ours.
+        env['ENABLE_TOOL_SEARCH'] = 'true'
     return {k: v for k, v in env.items() if v}
 
 

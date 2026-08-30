@@ -50,8 +50,6 @@ a handler sees them; a missing or malformed one is a 400.
 | `/api/memory/auto` | `api_memory_auto_get` | Per-project auto-memory state for the management UI. |
 | `/api/memory/progress` | `api_memory_progress` | — |
 | `/api/memory/state` | `api_memory_state` | — |
-| `/api/omniroute/models` | `api_omniroute_models` | Models that can actually serve a session, not the whole routable catalog. |
-| `/api/omniroute/status` | `api_omniroute_status` | — |
 | `/api/output-style/read` | `api_output_style_read` | — |
 | `/api/output-styles` | `api_output_styles` | — |
 | `/api/path-complete` | `api_path_complete` | Live folder auto-completion for the open-project modal: same pure |
@@ -59,6 +57,8 @@ a handler sees them; a missing or malformed one is a 400.
 | `/api/plugins` | `api_plugins` | Marketplaces, installed plugins, and what each one ships — for ONE |
 | `/api/plugins/provenance` | `api_provenance` | {kind: {name: plugin_key}} — which rows in the skill/agent/hook managers |
 | `/api/prompt-history` | `api_prompt_history` | — |
+| `/api/provider/models` | `api_provider_models` | Models that can actually serve a session, not the whole routable catalog. |
+| `/api/provider/status` | `api_provider_status` | — |
 | `/api/recall-preview` | `api_recall_preview` | — |
 | `/api/search-index` | `api_search_index` | — |
 | `/api/session/archived` | `api_archived` | — |
