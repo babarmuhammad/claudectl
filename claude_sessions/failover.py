@@ -26,29 +26,29 @@ CREATE_NO_WINDOW: the original complaint was not "a model died", it was "I could
 not see that a model died", so the routing log is the feature.
 """
 
-import hmac
 import http.client
 import json
 import os
 import threading
 import time
 import urllib.parse
-import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import config as _c
+from . import proxy_base as _proxy
 
 _CONNECT_TIMEOUT = 10      # upstream is loopback; this is a safety net only
 _FIRST_BYTE_TIMEOUT = 45   # per candidate, waiting for status+headers
 _TOTAL_BUDGET = 90         # wall clock across ALL candidates for one request
-_READY_TIMEOUT = 15        # how long ensure_running() waits for the daemon
 _CHUNK = 65536
 _LOG_MAX = 1 << 20
 
-# A bare connectivity check would happily trust any process squatting the port,
-# so readiness is proven by a marker only this server serves.
-_MARKER_PATH = '/__claudectl_failover__/health'
-_MARKER = b'claudectl-failover'
+#: lock file, readiness marker, spawn/stop — shared with gateway.py, which is a
+#: SIBLING and not a mode of this module: it re-serializes response bodies and
+#: this one must never be able to.
+_D = _proxy.Daemon('failover', '--failover-serve', 'failover proxy')
+_MARKER_PATH = _D.marker_path
+_MARKER = _D.marker
 
 _HOP_BY_HOP = frozenset((
     'host', 'content-length', 'connection', 'proxy-connection', 'keep-alive',
@@ -57,10 +57,6 @@ _HOP_BY_HOP = frozenset((
 ))
 
 _print_lock = threading.Lock()
-
-
-def lock_path():
-    return os.path.join(os.path.dirname(_c.settings_file), 'failover.lock')
 
 
 def log_path():
@@ -110,178 +106,27 @@ def base_url(s=None):
 
 # ── lifecycle ────────────────────────────────────────────────
 
-def _pid_alive(pid):
-    """True/False, or None when undeterminable (caller decides)."""
-    from . import proc
-    return proc.pid_alive(pid)
-
-
-def is_ready(port, timeout=2):
-    try:
-        with urllib.request.urlopen(
-                'http://127.0.0.1:%d%s' % (int(port), _MARKER_PATH),
-                timeout=timeout) as r:
-            return r.read(64).strip() == _MARKER
-    except Exception:
-        return False
-
-
-def _read_lock():
-    p = lock_path()
-    if not os.path.isfile(p):
-        return None
-    try:
-        with open(p, encoding='utf-8') as f:
-            data = json.load(f)
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _write_lock(port):
-    p = lock_path()
-    try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        with open(p, 'w', encoding='utf-8') as f:
-            json.dump({'pid': os.getpid(), 'port': int(port),
-                       'started': time.time()}, f)
-    except Exception:
-        pass
-
-
-def _clear_lock():
-    try:
-        os.remove(lock_path())
-    except Exception:
-        pass
-
-
-def _claim_spawn(port):
-    """True if THIS caller may spawn the daemon; False if someone else already is.
-
-    O_EXCL is the whole point: the old code cleared the lock and then spawned, so
-    two callers arriving together (two GUI tabs hitting plan_launch, or the TUI
-    and the GUI at once) could both conclude "not running" and both spawn, and the
-    loser's server then failed to bind the port. The claim is written before the
-    spawn, not by the child after it starts."""
-    p = lock_path()
-    payload = json.dumps({'pid': os.getpid(), 'port': int(port),
-                          'started': time.time()}).encode('utf-8')
-    try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-    except Exception:
-        pass
-    for _attempt in (0, 1):
-        try:
-            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            data = _read_lock()
-            fresh = data and time.time() - (data.get('started') or 0) < _READY_TIMEOUT
-            if fresh or (data and _pid_alive(data.get('pid')) is True):
-                return False            # someone else is on it; go wait
-            _clear_lock()               # stale claim from a dead run — retry once
-            continue
-        except Exception:
-            return True                 # can't lock at all; better to spawn than not
-        try:
-            os.write(fd, payload)
-        finally:
-            os.close(fd)
-        return True
-    return True
+lock_path = _D.lock_path
+is_ready = _D.is_ready
+_read_lock = _D.read_lock
+_write_lock = _D.write_lock
+_clear_lock = _D.clear_lock
+_claim_spawn = _D.claim_spawn
+_pid_alive = _proxy.pid_alive
 
 
 def ensure_running(s=None):
     """(ok, base_url) or (False, message). Never raises. Reuses a live daemon;
     evicts a stale lock and respawns."""
-    import subprocess
-    import sys
     s = _c.load_settings() if s is None else s
-    port = int(s.get('failover_port') or 20129)
-
-    if is_ready(port):
-        return True, base_url(s)
-
-    data = _read_lock()
-    if data and _pid_alive(data.get('pid')) is True and int(data.get('port', 0)) == port:
-        # Alive but not answering the marker yet — give it a moment.
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            if is_ready(port):
-                return True, base_url(s)
-            time.sleep(0.3)
-
-    if not _claim_spawn(port):
-        deadline = time.time() + _READY_TIMEOUT
-        while time.time() < deadline:
-            if is_ready(port):
-                return True, base_url(s)
-            time.sleep(0.3)
-        return False, 'failover proxy did not become ready on port %d' % port
-
-    pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env = os.environ.copy()
-    env['PYTHONPATH'] = pkg_parent + (
-        os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
-    cmd = [sys.executable, '-m', 'claude_sessions', '--failover-serve', str(port)]
-    try:
-        if s.get('failover_quiet'):
-            subprocess.Popen(
-                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, env=env, cwd=pkg_parent,
-                creationflags=(getattr(subprocess, 'DETACHED_PROCESS', 0)
-                               | getattr(subprocess, 'CREATE_NO_WINDOW', 0)))
-        else:
-            # Pass NO std handles: specifying even one sets STARTF_USESTDHANDLES,
-            # which makes the child inherit the PARENT's stdout/stderr and defeats
-            # CREATE_NEW_CONSOLE -- the log would then be written into the TUI's
-            # alternate screen buffer and corrupt it.
-            subprocess.Popen(
-                cmd, env=env, cwd=pkg_parent,
-                creationflags=getattr(subprocess, 'CREATE_NEW_CONSOLE', 0))
-    except Exception as e:
-        _c.log.exception('failover: spawn failed')
-        _clear_lock()           # release the claim, or nothing may ever retry
-        return False, 'could not start failover proxy: %s' % e
-
-    deadline = time.time() + _READY_TIMEOUT
-    while time.time() < deadline:
-        if is_ready(port):
-            return True, base_url(s)
-        time.sleep(0.4)
-    return False, ('failover proxy did not come up on port %d — port may be in '
-                   'use by another process' % port)
+    return _D.ensure(int(s.get('failover_port') or 20129),
+                     quiet=bool(s.get('failover_quiet')),
+                     on_ready=lambda: base_url(s))
 
 
 def stop_running():
     """(ok, message). Terminates the daemon named in the lock file."""
-    data = _read_lock()
-    _clear_lock()
-    pid = (data or {}).get('pid')
-    if not pid:
-        return True, 'no failover proxy recorded'
-    if _pid_alive(pid) is False:
-        return True, 'failover proxy already gone'
-    if os.name == 'nt':
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            h = k32.OpenProcess(0x0001, False, int(pid))  # PROCESS_TERMINATE
-            if not h:
-                return False, 'could not open pid %s' % pid
-            try:
-                ok = bool(k32.TerminateProcess(h, 0))
-            finally:
-                k32.CloseHandle(h)
-            return ok, 'stopped' if ok else 'could not stop pid %s' % pid
-        except Exception as e:
-            return False, str(e)
-    try:
-        import signal
-        os.kill(int(pid), signal.SIGTERM)
-        return True, 'stopped'
-    except Exception as e:
-        return False, str(e)
+    return _D.stop()
 
 
 def serve_cli(port):
@@ -328,50 +173,20 @@ class _Handler(BaseHTTPRequestHandler):
     # ── plumbing ──
 
     def _guard(self):
-        """This proxy forwards on the USER'S upstream key, so an unauthenticated
-        request here spends their quota. The port is fixed and published in the
-        source, so "it's loopback" excludes nobody: any page in any open tab can
-        POST /v1/messages with Content-Type: text/plain — a CORS-simple request,
-        no preflight to block it — and any other local process can too.
-
-        Three checks, cheapest first:
-          Host      — a DNS-rebound request carries the attacker's hostname, so
-                      an allowlist here is the only real rebinding defense.
-          Sec-Fetch/Origin — every browser sends at least one of these on every
-                      fetch; Claude Code's HTTP client sends none. One check
-                      kills the whole browser-origin class, key or no key.
-          bearer    — when a key is configured, require it. config.provider_env
-                      already hands it to the session as ANTHROPIC_AUTH_TOKEN,
-                      which Claude Code sends as `Authorization: Bearer`.
-        """
-        host = (self.headers.get('Host') or '').strip().lower()
-        port = self.server.server_address[1]
-        if host not in ('127.0.0.1:%d' % port, 'localhost:%d' % port,
-                        '[::1]:%d' % port):
-            return self._deny('bad host')
-        for h in ('Origin', 'Sec-Fetch-Site', 'Sec-Fetch-Mode', 'Referer'):
-            if self.headers.get(h):
-                return self._deny('browser-originated request')
-        key = (self._settings().get('provider_api_key') or '').strip()
-        if key and self.path != _MARKER_PATH:
-            got = (self.headers.get('x-api-key')
-                   or (self.headers.get('Authorization') or '').removeprefix('Bearer ')
-                   or '').strip()
-            if not hmac.compare_digest(got, key):
-                return self._deny('bad credentials')
-        return True
+        """See proxy_base.guard — same three checks, same reasons, shared with
+        the gateway daemon so the two cannot drift apart on the one thing that
+        keeps a web page out of the user's upstream quota."""
+        return _proxy.guard(self, self._settings().get('provider_api_key'),
+                            _MARKER_PATH, 'failover')
 
     def _deny(self, why):
-        self._json(403, {'type': 'error', 'error': {
-            'type': 'permission_error',
-            'message': 'claudectl failover: refused (%s)' % why}})
-        return False
+        return _proxy.deny(self, 'failover', why)
 
     def _settings(self):
         return _c.load_settings()
 
     def _upstream(self, s):
-        return (s.get('provider_base_url') or '').rstrip('/')
+        return _c.provider_upstream(s).rstrip('/')
 
     def _fwd_headers(self, length, s):
         h = {k: v for k, v in self.headers.items()

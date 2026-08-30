@@ -210,8 +210,10 @@ def test_no_module_spawns_a_terminal_directly():
                             and any(isinstance(e, ast.Constant) and e.value == 'start'
                                     for e in arg.elts)):
                         offenders.append('%s:%d cmd /c start' % (name, node.lineno))
-    # failover spawns its own detached proxy console and documents why
-    offenders = [o for o in offenders if not o.startswith('failover.py')]
+    # proxy_base spawns the detached proxy consoles and documents why: they must
+    # outlive claudectl, and the routing log IS the feature. ONE spawn shared by
+    # both daemons (failover, gateway) — which is the point this gate is making.
+    offenders = [o for o in offenders if not o.startswith('proxy_base.py')]
     assert not offenders, 'terminal spawned outside proc.py: ' + ', '.join(offenders)
 
 

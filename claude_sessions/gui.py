@@ -197,6 +197,9 @@ def state_payload():
         'provider_has_key': bool(s.get('provider_api_key')),
         'provider_exec_model': s.get('provider_exec_model', ''),
         'provider_kind': s.get('provider_kind', ''),
+        'gateway_kind': s.get('gateway_kind', ''),
+        'gateway_target_base_url': s.get('gateway_target_base_url', ''),
+        'gateway_has_key': bool(s.get('gateway_target_api_key')),
         'failover_models': s.get('failover_models', []),
         'failover_port': s.get('failover_port', 20129),
         'failover_quiet': bool(s.get('failover_quiet')),
@@ -632,6 +635,8 @@ def _api_settings(q, body):
     # never receives the raw key back to resubmit
     if body.get('provider_api_key'):
         s['provider_api_key'] = body['provider_api_key']
+    if body.get('gateway_target_api_key'):
+        s['gateway_target_api_key'] = body['gateway_target_api_key']
     save_settings(s)
     return {'ok': True}
 

@@ -130,6 +130,10 @@ def run():
     if len(sys.argv) >= 2 and sys.argv[1] == '--failover-serve':
         from .failover import serve_cli
         sys.exit(serve_cli(sys.argv[2] if len(sys.argv) > 2 else 0))
+    # detached translating gateway (spawned by gateway.ensure_running)
+    if len(sys.argv) >= 2 and sys.argv[1] == '--gateway-serve':
+        from .gateway import serve_cli as _gw
+        sys.exit(_gw(sys.argv[2] if len(sys.argv) > 2 else 0))
     if len(sys.argv) >= 2 and sys.argv[1] == '--failover-stop':
         from .failover import stop_running
         ok, msg = stop_running()

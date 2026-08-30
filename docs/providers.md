@@ -36,8 +36,32 @@ Backends that do, today:
 | **OmniRoute** | See [Plan → Execute & OmniRoute](plan-execute.md). |
 | A remote/self-hosted box | Any of the above over the network. Use a token. |
 
-An **OpenAI-Chat-Completions-only** endpoint (LM Studio, most bare local servers) does not
-work yet — it needs a translating gateway, which is the next piece of this work.
+## OpenAI-shaped backends
+
+An endpoint that only serves `/v1/chat/completions` — LM Studio, most bare local servers,
+anything "OpenAI-compatible" — is reachable through claudectl's own **translating gateway**.
+Turn it on in the same settings card: set the gateway target to the OpenAI-shaped URL and
+claudectl runs a loopback proxy that speaks Anthropic Messages to `claude` and OpenAI Chat
+Completions upstream.
+
+What the translation cannot carry, and does not pretend to:
+
+- **`cache_control`** has no equivalent. It is dropped and logged once per run, so you find
+  out from a line in the proxy window rather than from a cost change you cannot explain.
+- **Thinking blocks** are dropped from request history unconditionally — including on a
+  session you resume after switching backends, which is the case that otherwise produces
+  `Invalid signature in thinking block` long after the swap and looks unrelated to it.
+- **`count_tokens`** is answered with the same `chars//4` estimate claudectl uses elsewhere.
+  There is no dependency-free exact counter that works across providers.
+
+Two operational notes that are not optional:
+
+- **On vLLM, tool calling needs `--enable-auto-tool-choice --tool-call-parser <parser>`
+  server-side.** "OpenAI-compatible" guarantees the envelope, never the tool behaviour, and
+  without those flags the model answers in prose where a tool call was required.
+- Claude Code aborts a stream that goes quiet for ~90s. The gateway sends keepalive pings
+  for the **whole** stream, not just until the first token, because a local model doing
+  grammar-constrained tool-call decoding goes silent in the middle of a turn.
 
 ## Setup
 

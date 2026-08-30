@@ -3928,6 +3928,15 @@ async function pgSettings(nav){
         <span class="chip" data-v="">Anthropic (direct)</span>
         <span class="chip" data-v="generic">Anthropic-shaped server</span>
         <span class="chip" data-v="omniroute">OmniRoute</span></div></div>
+    <div class="fld"><label>Translating gateway <span style="color:var(--dim);font-weight:normal">— for a backend that only speaks OpenAI Chat Completions (LM Studio, most bare local servers)</span></label>
+      <div class="chips" id="gwKind">
+        <span class="chip" data-v="">Off</span>
+        <span class="chip" data-v="openai">OpenAI-shaped upstream</span></div></div>
+    <div class="grid2">
+      <div class="fld"><label>Gateway target URL</label><input id="gwUrl" placeholder="http://localhost:1234/v1"></div>
+      <div class="fld"><label>Gateway target key</label><input id="gwKey" type="password"
+        placeholder="${ST.gateway_has_key?'set — leave blank to keep':'leave blank if none needed'}"></div>
+    </div>
     <p id="orNeedsProvider" style="color:var(--warn);font-size:12px;margin-bottom:8px;display:none">
       OmniRoute's own per-connection status shows nothing passing below — but that check can be stale/wrong
       (confirmed: it reported a genuinely working no-auth connection as broken). Use <b>Send a live test</b> to know
@@ -4020,6 +4029,8 @@ async function pgSettings(nav){
   $('#orUrl').value=ST.provider_base_url||'';
   $('#pvCtx').value=ST.provider_context_tokens||'';
   chipSet($('#pvKind'),ST.provider_kind||'');
+  chipSet($('#gwKind'),ST.gateway_kind||'');
+  $('#gwUrl').value=ST.gateway_target_base_url||'';
   $('#foModels').value=(ST.failover_models||[]).join('\n');
   $('#foPort').value=ST.failover_port||20129;
   $('#foQuiet').checked=!!ST.failover_quiet;
@@ -4367,7 +4378,10 @@ function orDashboard(){
 async function orSave(){
   const body={provider_base_url:$('#orUrl').value,provider_exec_model:orExecModel(),
               provider_kind:chipVal($('#pvKind')),
-              provider_context_tokens:parseInt($('#pvCtx').value||'0',10)||0};
+              provider_context_tokens:parseInt($('#pvCtx').value||'0',10)||0,
+              gateway_kind:chipVal($('#gwKind')),
+              gateway_target_base_url:$('#gwUrl').value};
+  if($('#gwKey').value)body.gateway_target_api_key=$('#gwKey').value;
   if($('#orKey').value)body.provider_api_key=$('#orKey').value;
   await post('/api/settings',body);
   ST=await api('/api/state');

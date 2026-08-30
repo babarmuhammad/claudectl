@@ -157,6 +157,18 @@ _DEFAULT_SETTINGS = {
     #: provider_kind.
     'provider_tool_search': False,
     'provider_keys_migrated': False,  # one-time omniroute_* rename, see migrate_settings
+    # ── translating gateway (OpenAI-shaped backends) ──
+    #: '' = off. 'openai' = claudectl runs a local proxy that speaks the
+    #: Anthropic Messages API to `claude` and OpenAI Chat Completions upstream,
+    #: for backends that never implemented /v1/messages (LM Studio, most bare
+    #: local servers). When on, provider_base_url points AT the gateway.
+    'gateway_kind': '',
+    'gateway_port': 20130,            # loopback (failover: 20129, OmniRoute: 20128)
+    'gateway_target_base_url': '',    # the OpenAI-shaped upstream
+    #: SEPARATE from provider_api_key on purpose: the gateway's upstream and a
+    #: direct provider connection are not guaranteed to be the same host, let
+    #: alone the same credential.
+    'gateway_target_api_key': '',
     'failover_models': [],        # ordered model ids claudectl's own proxy retries
                                    # when a turn errors before any byte reaches the
                                    # client. [] = feature off (no separate flag —
@@ -179,6 +191,7 @@ INTERNAL_SETTINGS = frozenset({
     'perm_default_migrated', 'provider_keys_migrated',
     'ui_mode',                       # handled first, validated against two values
     'provider_api_key',              # write-only: never echoed back to be resubmitted
+    'gateway_target_api_key',        # same
     'failover_models', 'launch_fallback_models',  # list sanitizers
     'nav_collapsed', 'side_w', 'nav_h',           # geometry clamps
     'headless_budget_usd',                        # float clamp
@@ -868,6 +881,24 @@ def otel_env(s=None):
     return env
 
 
+def provider_upstream(s):
+    """Where the provider actually lives, as far as anything downstream of the
+    failover proxy is concerned.
+
+    With a translating gateway configured that is the gateway, not the real
+    backend: the gateway IS the thing that speaks the Anthropic Messages API,
+    and the OpenAI-shaped host behind it cannot answer `claude` directly. Two
+    readers need this answer (provider_env and failover's upstream resolution),
+    which is exactly why it is a function and not a line copied into both.
+
+    Chain when everything is on:
+        claude -> failover (retries a dead model) -> gateway (translates) -> host
+    """
+    if s.get('gateway_kind'):
+        return 'http://127.0.0.1:%d' % int(s.get('gateway_port') or 20130)
+    return s.get('provider_base_url') or ''
+
+
 def provider_env(s=None, model=None):
     """{} when the session runs on Anthropic direct; else the environment that
     points an interactive ``claude`` launch at the configured alternate backend
@@ -885,12 +916,10 @@ def provider_env(s=None, model=None):
     s = load_settings() if s is None else s
     if not s.get('provider_exec_model') and not model:
         return {}
-    # When failover candidates are configured, claude talks to claudectl's own
-    # proxy instead of the provider directly, and the proxy forwards to
-    # provider_base_url — see failover.py. Kept a PURE mapping here (no I/O, no
-    # spawning, no raising); starting a daemon belongs where prepare_launch's
-    # ensure_running already governs launch failure.
-    _url = s.get('provider_base_url') or ''
+    # Kept a PURE mapping here (no I/O, no spawning, no raising); starting a
+    # daemon belongs where prepare_launch's ensure_running already governs
+    # launch failure.
+    _url = provider_upstream(s)
     if [m for m in (s.get('failover_models') or []) if str(m or '').strip()]:
         _url = 'http://127.0.0.1:%d' % int(s.get('failover_port') or 20129)
     env = {

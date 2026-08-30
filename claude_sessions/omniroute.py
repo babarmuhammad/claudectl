@@ -86,8 +86,16 @@ def prepare_launch(model, s=None, ctx_bytes=0):
         ok, msg = ensure_running(base_url)
         if not ok:
             raise RuntimeError(f'OmniRoute: {msg}')
-    elif not is_reachable(base_url, api_key):
+    elif not s.get('gateway_kind') and not is_reachable(base_url, api_key):
+        # With a gateway in front, `base_url` names an OpenAI-shaped host that
+        # cannot answer /v1/models — probing it would fail every time and block
+        # a working setup. The gateway's own startup check covers that hop.
         raise RuntimeError(f'Provider not reachable at {base_url or "(unset)"}')
+    if s.get('gateway_kind'):
+        from . import gateway
+        gok, gmsg = gateway.ensure_running(s)
+        if not gok:
+            raise RuntimeError(f'Gateway: {gmsg}')
     # provider_env() has already pointed ANTHROPIC_BASE_URL at claudectl's own
     # failover proxy when candidates are configured, so it must actually be up —
     # fail the launch rather than hand claude a dead base URL.

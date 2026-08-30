@@ -61,8 +61,11 @@ Stated plainly, because a comparison page that only lists strengths is not usefu
   actual coding turn is Claude Code doing the work.
 - **It is Windows-first.** macOS and Linux are supported and tested in CI, but Windows gets
   the widest version matrix and by far the most real-world use.
-- **It does not host or proxy a model of its own.** It uses your existing Claude Code
-  authentication and your existing quota.
+- **It hosts no model of its own.** By default it uses your existing Claude Code
+  authentication and quota. It *can* run two small loopback proxies on your behalf — one
+  that retries a dead model, one that translates for an OpenAI-shaped backend — but both
+  forward to a backend you configured, with a credential you supplied. Your Claude
+  subscription credentials are never sent anywhere but Anthropic.
 - **The memory features cost tokens to build.** Extraction and lesson distillation are
   Claude calls. They are routed to a cheap model and run rarely, but they are not free —
   the saving is on the per-message context you stop paying for.
