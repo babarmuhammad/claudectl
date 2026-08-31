@@ -22,7 +22,7 @@ import shutil
 
 from .config import W, get_claude_exe, open_in_editor
 from .ui import (menu, text_input, flash, pause, confirm, multiselect,
-                 run_with_progress, pager, _cls)
+                 pager, _cls)
 from . import config as _c
 from . import render
 
@@ -460,14 +460,13 @@ def _new_skill_ai(project_path):
     role = text_input("What should this skill do? (one line):") or name
 
     from .claude_md import _pager_confirm
-    from .memory import extract_model
+    from . import memory
     prompt = build_ai_prompt(name, role, project_path)
-    _mf = ['--model', extract_model()] if extract_model() else []
-    out, cancelled = run_with_progress(
-        [claude, *_mf, '--print', prompt, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
-        ('CLAUDECTL', 'SKILLS', _slug(name)),
-        f'Authoring skill {_slug(name)} with Claude...  (15-60s)', timeout=120)
-    if cancelled:
+    out = memory._claude_stdin(
+        prompt, project_path or None, timeout=120,
+        crumbs=('CLAUDECTL', 'SKILLS', _slug(name)),
+        label=f'Authoring skill {_slug(name)} with Claude...  (15-60s)')
+    if memory.last_call_cancelled:
         flash("Cancelled", ok=False); return
     content = (out or '').strip()
     if not content:

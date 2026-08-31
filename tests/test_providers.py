@@ -223,3 +223,92 @@ def test_older_choice_lines_still_parse():
     assert (path, enc, choice) == ('C:/p', 'C--p', 'new')
     assert opts['model'] == 'claude-sonnet-5'
     assert opts['provider'] == ''
+
+
+# ── claudectl's OWN headless calls ───────────────────────────────
+
+def _headless_call(monkeypatch, sb, **settings):
+    """Run _claude_stdin in silent mode against a fake exe and return the
+    (argv, env) it built. Returns env=None when the call stayed on Anthropic."""
+    import json
+    from claude_sessions import gui_api, memory, omniroute
+    s = dict(c._DEFAULT_SETTINGS)
+    s.update(settings)
+    sb.settings.write_text(json.dumps(s), encoding='utf-8')
+    seen = {}
+
+    def fake_cancel(args, **kw):
+        seen['args'], seen['env'] = args, kw.get('env')
+        return '{}'
+
+    monkeypatch.setattr(c, 'get_claude_exe', lambda: r'C:\fake\claude.exe')
+    monkeypatch.setattr(gui_api, '_run_cancellable', fake_cancel)
+    monkeypatch.setattr(omniroute, 'is_reachable', lambda *a, **k: True)
+    memory._tls.silent = True
+    try:
+        memory._claude_stdin('hello', cwd='.')
+    finally:
+        memory._tls.silent = False
+    return seen.get('args', []), seen.get('env')
+
+
+def test_headless_calls_stay_on_anthropic_by_default(monkeypatch, tmp_path):
+    """A configured provider is for SESSIONS. Memory extraction and code review
+    run unattended, from a hook and from background threads, so moving them to
+    another model -- and another bill -- has to be asked for."""
+    from harness import Sandbox
+    sb = Sandbox(monkeypatch, tmp_path)
+    args, env = _headless_call(monkeypatch, sb, provider_kind='generic',
+                               provider_base_url='http://localhost:11434',
+                               provider_exec_model='qwen3-coder:30b')
+    assert env is None                      # inherit claudectl's own environment
+    assert args[args.index('--model') + 1] == c._DEFAULT_SETTINGS['extract_model']
+
+
+def test_headless_provider_routes_the_call_and_swaps_the_model(monkeypatch, tmp_path):
+    """The model has to move WITH the base URL: extract_model names an
+    Anthropic model, and a local backend answers 404 for it."""
+    from harness import Sandbox
+    sb = Sandbox(monkeypatch, tmp_path)
+    args, env = _headless_call(monkeypatch, sb, headless_provider=True,
+                               provider_kind='generic',
+                               provider_base_url='http://localhost:11434',
+                               provider_exec_model='qwen3-coder:30b')
+    assert env['ANTHROPIC_BASE_URL'] == 'http://localhost:11434'
+    assert env['CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING'] == '1'
+    assert 'PATH' in env                      # merged onto the real environment
+    assert args[args.index('--model') + 1] == 'qwen3-coder:30b'
+
+
+def test_headless_provider_without_a_provider_model_stays_on_anthropic(monkeypatch, tmp_path):
+    """provider_exec_model is what a routed call would ASK for. Without it
+    there is nothing to send, and inheriting extract_model would send an
+    Anthropic id to a local server."""
+    from harness import Sandbox
+    sb = Sandbox(monkeypatch, tmp_path)
+    _args, env = _headless_call(monkeypatch, sb, headless_provider=True,
+                                provider_kind='generic', provider_exec_model='')
+    assert env is None
+
+
+def test_an_unreachable_provider_fails_the_call_instead_of_billing_anthropic(monkeypatch, tmp_path):
+    """Falling back would spend the account the user just routed away from,
+    silently. The seam raises; _claude_stdin returns '' and the caller reports
+    no output."""
+    from harness import Sandbox
+    from claude_sessions import gui_api, memory, omniroute
+    import json
+    sb = Sandbox(monkeypatch, tmp_path)
+    s = dict(c._DEFAULT_SETTINGS, headless_provider=True, provider_kind='generic',
+             provider_base_url='http://127.0.0.1:1', provider_exec_model='m')
+    sb.settings.write_text(json.dumps(s), encoding='utf-8')
+    called = []
+    monkeypatch.setattr(c, 'get_claude_exe', lambda: r'C:\fake\claude.exe')
+    monkeypatch.setattr(gui_api, '_run_cancellable', lambda *a, **k: called.append(1) or '{}')
+    monkeypatch.setattr(omniroute, 'is_reachable', lambda *a, **k: False)
+    memory._tls.silent = True
+    try:
+        assert memory._claude_stdin('hello', cwd='.') == ''
+    finally:
+        memory._tls.silent = False
+    assert not called

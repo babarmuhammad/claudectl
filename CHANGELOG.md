@@ -20,8 +20,21 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   what a backend swap genuinely costs — subagents, prompt caching, extended thinking and
   `web_search` are affected, and three of the four cannot be fixed from outside Claude Code.
 
+- **Run claudectl's own Claude calls on the configured provider too.** Memory extraction,
+  lesson distillation, code review and the CLAUDE.md / agent / skill / hook / system-prompt
+  generators always went to Anthropic, whatever the provider card said — they are the
+  cheapest, highest-volume calls claudectl makes and the best fit for a local model. Opt in
+  with **Run claudectl's own calls here too**; off by default, because these run unattended
+  and moving them changes which account is billed. An unreachable backend fails the call
+  rather than quietly falling back to the account you routed away from.
+
 ### Fixed
 
+- **Four generators bypassed the one headless-call helper.** Authoring an agent, a skill or a
+  system prompt, and analysing an MCP server, each rebuilt the same `claude --print` command
+  by hand — so none of them honoured the `--max-budget-usd` cap, and all four passed the whole
+  prompt as a command-line argument, which is the Windows length limit the shared helper exists
+  to avoid. They call it now, and a test fails a fifth copy.
 - **Subagents kept a model id a routed backend cannot resolve.** The frontmatter-stripping
   that makes agents work on a non-Anthropic model was a parameter three of its four callers
   never passed, so agents synced from the GUI or accepted from a suggestion still carried

@@ -81,6 +81,23 @@ claudectl checks the backend is reachable **before** the session opens. A launch
 succeeds and only dies once `claude` tries the model leaves you in a new console with no
 path back to the setting that was wrong.
 
+## claudectl's own calls
+
+Separately from your sessions, claudectl makes its own headless `claude -p` calls — memory
+extraction, lesson distillation, code review, and the CLAUDE.md / agent / skill / hook /
+system-prompt generators. Those keep running on **Anthropic** even when this card points
+everywhere else, because they run unattended (from a hook, from background threads) and quietly
+moving them to another model — and another bill — is a surprise rather than a feature.
+
+**Run claudectl's own calls here too** switches them over. They then ask for the model id above
+rather than the economy model, because that is the only id the backend can resolve. If the backend
+is unreachable the call fails and says so; it does not fall back to the account you routed away
+from.
+
+These are the cheapest calls claudectl makes and the best fit for a local model: short prompts,
+no tool use, structured output. Extraction quality does drop on a small model — the memory graph
+is only as good as what read the transcript.
+
 ## What does not survive the swap
 
 Stated plainly, because a feature page that only lists what works is not useful. None of

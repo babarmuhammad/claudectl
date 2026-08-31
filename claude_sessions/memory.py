@@ -278,6 +278,39 @@ def _budget_args():
     return ['--max-budget-usd', f'{cap:g}'] if cap > 0 else []
 
 
+def _provider_headless(model):
+    """(env, model) for one of claudectl's OWN headless calls when the user has
+    asked for them to run on the configured provider, else (None, model).
+
+    Routed through `omniroute.prepare_launch`, the same seam an interactive
+    launch uses — so the gateway gets started, the failover proxy gets started,
+    and an unreachable backend fails here with a reason instead of returning an
+    empty answer that reads as "the model said nothing".
+
+    The model is replaced, not kept: `extract_model()` names an Anthropic model
+    that a local backend cannot resolve, so a routed call has to ask for the
+    provider's own model id.  Raises whatever prepare_launch raises."""
+    from .config import load_settings
+    s = load_settings()
+    if not s.get('headless_provider') or not s.get('provider_kind'):
+        return None, model
+    pm = (s.get('provider_exec_model') or '').strip()
+    if not pm:
+        return None, model
+    from . import omniroute
+    env = os.environ.copy()
+    env.update(omniroute.prepare_launch(pm, s)[0])
+    return env, pm
+
+
+#: True when the LAST _claude_stdin call ended because the user pressed ESC,
+#: rather than because the model returned nothing. Same shape as
+#: `last_call_cost` below and for the same reason: the callers that care about
+#: the distinction are few, and widening the return type would touch every
+#: caller that does not.
+last_call_cancelled = False
+
+
 def _claude_stdin(prompt, cwd, timeout=EXTRACT_TIMEOUT,
                   crumbs=('CLAUDECTL', 'MEMORY'), label='Working with Claude...',
                   model=None, extra_args=()):
@@ -288,12 +321,27 @@ def _claude_stdin(prompt, cwd, timeout=EXTRACT_TIMEOUT,
     `extra_args` is how _claude_json adds the structured-output flags without
     becoming a second spawn site.
     Returns stdout text or ''."""
+    global last_call_cancelled
+    last_call_cancelled = False
     from .config import get_claude_exe
     exe = get_claude_exe()
     if not exe:
         return ''
     args = [exe, '-p', '--max-turns', '20', '--disallowedTools', 'Write,Edit,NotebookEdit,Bash']
     m = extract_model() if model is None else (model or '').strip()
+    try:
+        env, m = _provider_headless(m)
+    except Exception as e:
+        # backend down, gateway refused to start, model not in the catalogue —
+        # all of which are the user's setting being wrong, so say so instead of
+        # silently spending the Anthropic account they routed away from.
+        if not getattr(_tls, 'silent', False):
+            try:
+                from .ui import flash
+                flash(f'Provider unavailable: {e}', ok=False, secs=1.8)
+            except Exception:
+                pass
+        return ''
     if m:
         args += ['--model', m]
     args += _budget_args()
@@ -301,12 +349,13 @@ def _claude_stdin(prompt, cwd, timeout=EXTRACT_TIMEOUT,
     if getattr(_tls, 'silent', False):
         from .gui_api import _run_cancellable
         try:
-            return _run_cancellable(args, input_text=prompt, cwd=cwd, timeout=timeout)
+            return _run_cancellable(args, input_text=prompt, cwd=cwd, timeout=timeout, env=env)
         except Exception:
             return ''
     from .ui import run_with_progress_stdin
-    out, _cancelled = run_with_progress_stdin(
-        args, prompt, crumbs, label, timeout=timeout, cwd=cwd)
+    out, cancelled = run_with_progress_stdin(
+        args, prompt, crumbs, label, timeout=timeout, cwd=cwd, env=env)
+    last_call_cancelled = bool(cancelled)
     return out or ''
 
 

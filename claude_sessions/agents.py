@@ -10,7 +10,7 @@ import re
 
 from .config import W, get_claude_exe, open_in_editor
 from .ui import (menu, text_input, flash, pause, confirm, multiselect,
-                 run_with_progress, pager, _cls)
+                 pager, _cls)
 from . import config as _c
 from . import render
 
@@ -211,13 +211,12 @@ def _new_agent_ai(project_path):
         "Do NOT create or write any files and do not use any tools — return the "
         "markdown text directly. No preamble, no code fences."
     )
-    from .memory import extract_model
-    _mf = ['--model', extract_model()] if extract_model() else []
-    out, cancelled = run_with_progress(
-        [claude, *_mf, '--print', prompt, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
-        ('CLAUDECTL', 'AGENTS', name), f'Authoring agent {name} with Claude...  (15-60s)',
-        timeout=120)
-    if cancelled:
+    from . import memory
+    out = memory._claude_stdin(
+        prompt, project_path or None, timeout=120,
+        crumbs=('CLAUDECTL', 'AGENTS', name),
+        label=f'Authoring agent {name} with Claude...  (15-60s)')
+    if memory.last_call_cancelled:
         flash("Cancelled", ok=False); return
     content = (out or '').strip()
     if not content:

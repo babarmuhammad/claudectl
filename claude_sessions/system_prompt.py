@@ -4,7 +4,7 @@ import time
 
 from .config import W, get_claude_exe, open_in_editor, find_editor
 from . import config as _c
-from .ui import text_input, menu, _cls, pause, run_with_progress, flash
+from .ui import text_input, menu, _cls, pause, flash
 
 
 def merged_system_prompt(sp_file, pointer, out_path):
@@ -85,17 +85,12 @@ def ai_generate_system_prompt(sp_path, project_name, project_path, proj_folder):
         f"Output ONLY the system prompt text. No preamble, no explanation, no code fences."
     )
 
-    # prompt BEFORE --disallowedTools: the flag is variadic and would
-    # otherwise swallow the prompt as tool names
-    from .memory import extract_model
-    _mf = ['--model', extract_model()] if extract_model() else []
-    out, cancelled = run_with_progress(
-        [claude_exe, *_mf, '--print', prompt,
-         '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
-        ('CLAUDECTL', project_name, 'AI SYSTEM PROMPT'),
-        'Generating system prompt with Claude...  (15-60s)',
-        timeout=120)
-    if cancelled:
+    from . import memory
+    out = memory._claude_stdin(
+        prompt, project_path or None, timeout=120,
+        crumbs=('CLAUDECTL', project_name, 'AI SYSTEM PROMPT'),
+        label='Generating system prompt with Claude...  (15-60s)')
+    if memory.last_call_cancelled:
         flash("Generation cancelled", ok=False)
         return
     content = (out or '').strip()

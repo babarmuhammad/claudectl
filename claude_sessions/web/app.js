@@ -3949,6 +3949,12 @@ async function pgSettings(nav){
         non-Anthropic endpoint. Re-enabling it only works if your backend forwards
         <code>tool_reference</code> blocks — if it does not, the turn fails outright, which is why this is
         your assertion rather than something a provider setting implies.</div></div>
+    <div class="fld"><label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="pvHeadless" style="width:auto;margin:0"> Run claudectl's own calls here too</label>
+      <div style="color:var(--dim);font-size:12px;margin-top:4px">Memory extraction, lessons, code review and
+        the CLAUDE.md / agent / skill / hook generators normally run on Anthropic whatever this card says —
+        they are unattended, so moving them costs money you did not watch being spent. Turned on, they use
+        the model id above instead of <code>${(ST.extract_model||'the economy model')}</code>.</div></div>
     <p id="orNeedsProvider" class="orOnly" style="color:var(--warn);font-size:12px;margin-bottom:8px;display:none">
       OmniRoute's own per-connection status shows nothing passing below — but that check can be stale/wrong
       (confirmed: it reported a genuinely working no-auth connection as broken). Use <b>Send a live test</b> to know
@@ -4051,6 +4057,7 @@ async function pgSettings(nav){
   chipSet($('#gwKind'),ST.gateway_kind||'');
   $('#gwUrl').value=ST.gateway_target_base_url||'';
   $('#pvTools').checked=!!ST.provider_tool_search;
+  $('#pvHeadless').checked=!!ST.headless_provider;
   $('#foModels').value=(ST.failover_models||[]).join('\n');
   $('#foPort').value=ST.failover_port||20129;
   $('#foQuiet').checked=!!ST.failover_quiet;
@@ -4467,6 +4474,7 @@ async function orSave(){
               provider_kind:chipVal($('#pvKind')),
               provider_context_tokens:parseInt($('#pvCtx').value||'0',10)||0,
               provider_tool_search:$('#pvTools').checked,
+              headless_provider:$('#pvHeadless').checked,
               gateway_kind:chipVal($('#gwKind')),
               gateway_target_base_url:$('#gwUrl').value};
   if($('#gwKey').value)body.gateway_target_api_key=$('#gwKey').value;

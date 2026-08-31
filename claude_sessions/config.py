@@ -91,6 +91,14 @@ _DEFAULT_SETTINGS = {
     'launch_autocompact': '',      # --autocompact: 'auto' | '200k' | ... ('' = unset)
     'headless_budget_usd': 0,      # --max-budget-usd cap on claudectl's OWN
                                    # `claude -p` calls (0 = no cap)
+    #: run claudectl's OWN headless calls (memory, lessons, review, CLAUDE.md,
+    #: agent/skill/hook/system-prompt generation) on the configured provider
+    #: instead of Anthropic. Off by default on purpose: these run unattended,
+    #: from a hook and from background threads, and quietly moving them to a
+    #: different model — and a different bill — is a surprise rather than a
+    #: feature. Needs provider_kind AND provider_exec_model set to do anything,
+    #: because extract_model names an Anthropic model no local backend resolves.
+    'headless_provider': False,
     'ui_mode': 'tui',              # default interface: 'tui' | 'gui' (desktop app)
     'gui_shell': 'auto',          # GUI window: 'auto' | 'qt' | 'edge' | 'browser'
     #: 'notify' = say so in the banner | 'auto' = also install it on quit |

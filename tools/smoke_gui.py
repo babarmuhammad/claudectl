@@ -841,7 +841,7 @@ def main():
         pg.evaluate("go('settings')")
         pg.wait_for_timeout(700)
         for cid in ('pvKind', 'gwKind', 'gwUrl', 'gwKey', 'pvCtx', 'pvTools',
-                    'orUrl', 'orKey', 'gwRow'):
+                    'pvHeadless', 'orUrl', 'orKey', 'gwRow'):
             check('control #' + cid + ' exists',
                   pg.evaluate("!!document.getElementById('" + cid + "')"))
         kinds = pg.evaluate(

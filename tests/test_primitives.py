@@ -283,3 +283,26 @@ def test_the_debug_dump_into_temp_is_gone():
     unguarded os.environ['TEMP'] and never closed on the error path."""
     src = io.open(os.path.join(SRC, 'claude_md.py'), encoding='utf-8').read()
     assert 'ai_analyze_debug' not in src
+
+
+def test_no_module_builds_its_own_headless_claude_call():
+    """Four modules hand-rolled `claude --print <prompt>` instead of calling
+    memory._claude_stdin. Each was a place the provider env, the
+    --max-budget-usd cap and the Windows command-line length limit had to be
+    remembered separately -- and none of the four remembered any of them."""
+    offenders = []
+    for name, src in _modules():
+        for node in ast.walk(ast.parse(src)):
+            if not (isinstance(node, ast.List) and node.elts):
+                continue
+            flags = {e.value for e in node.elts
+                     if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+            if flags & {'-p', '--print'}:
+                offenders.append('%s:%d' % (name, node.lineno))
+    # memory.py IS the seam. The other two stream their output as it arrives
+    # (--output-format stream-json / a live progress pane), which is a different
+    # contract from "give me the finished text", not a second copy of one.
+    waived = ('memory.py', 'claude_md.py', 'plan_execute.py')
+    offenders = [o for o in offenders if not o.startswith(waived)]
+    assert not offenders, ('headless claude spawned outside memory._claude_stdin: '
+                           + ', '.join(offenders))

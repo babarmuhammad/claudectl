@@ -5,7 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harness import Sandbox, run_flow, typed, ENTER, ESC
 
-from claude_sessions import claude_md, system_prompt, ui
+from claude_sessions import claude_md, memory, system_prompt, ui
 from claude_sessions.config import (_AUTOGEN_START, _AUTOGEN_END,
                                     _SESSIONS_START, _SESSIONS_END, _AI_MARKER)
 
@@ -119,8 +119,8 @@ def test_system_prompt_generate_writes(monkeypatch, tmp_path):
     _, enc, folder, _ = sb.add_project('alpha', n_sessions=0)
     proj = str(sb.root / 'work' / 'alpha')
     monkeypatch.setattr(system_prompt, 'get_claude_exe', lambda: r'C:\fake.exe')
-    monkeypatch.setattr(system_prompt, 'run_with_progress',
-                        lambda *a, **k: ('You are a test assistant.', False))
+    monkeypatch.setattr(memory, '_claude_stdin',
+                        lambda *a, **k: 'You are a test assistant.')
     sp = os.path.join(folder, 'system-prompt.txt')
     # menu: 'ai' first → ENTER select, ENTER skip extra prompt, ENTER approve diff
     keys = flat(ENTER, ENTER, ENTER)
@@ -134,8 +134,8 @@ def test_system_prompt_generate_cancel(monkeypatch, tmp_path):
     _, enc, folder, _ = sb.add_project('alpha', n_sessions=0)
     proj = str(sb.root / 'work' / 'alpha')
     monkeypatch.setattr(system_prompt, 'get_claude_exe', lambda: r'C:\fake.exe')
-    monkeypatch.setattr(system_prompt, 'run_with_progress',
-                        lambda *a, **k: (None, True))   # cancelled
+    monkeypatch.setattr(memory, '_claude_stdin', lambda *a, **k: '')
+    monkeypatch.setattr(memory, 'last_call_cancelled', True)   # ESC during the call
     sp = os.path.join(folder, 'system-prompt.txt')
     keys = flat(ENTER, ENTER)
     run_flow(monkeypatch, keys, system_prompt.edit_system_prompt, folder, 'alpha', proj)

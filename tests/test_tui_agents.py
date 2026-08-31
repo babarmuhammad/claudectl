@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from harness import Sandbox, run_flow, typed, UP, DOWN, RIGHT, ENTER, ESC
 
-from claude_sessions import agents
+from claude_sessions import agents, memory
 
 
 def flat(*parts):
@@ -230,7 +230,7 @@ def test_new_ai_agent(monkeypatch, tmp_path):
     _seed(sb, '01-core', 'x')
     monkeypatch.setattr(agents, 'get_claude_exe', lambda: r'C:\fake.exe')
     body = "---\nname: sec\ndescription: security\n---\n\nYou review security."
-    monkeypatch.setattr(agents, 'run_with_progress', lambda *a, **k: (body, False))
+    monkeypatch.setattr(memory, '_claude_stdin', lambda *a, **k: body)
     keys = flat(DOWN, DOWN, ENTER,           # New AI (3rd selectable)
                 ENTER,                       # category 01-core
                 typed('sec'), ENTER,         # name
