@@ -81,6 +81,39 @@ def list_agents(scope_dir):
     return out
 
 
+#: what an agent with no `category:` is filed under. A word, not an empty
+#: string, because it is a heading the reader sees.
+NO_CATEGORY = 'Uncategorised'
+
+
+def category_of(path):
+    """The agent's category, from its own frontmatter.
+
+    The library gets its categories from the folder tree, but a user or project
+    agent lives flat in `.claude/agents/` — Claude Code reads that one
+    directory, so a subfolder per category would hide every agent in it. The
+    category rides in the frontmatter instead, where an unknown key is simply
+    ignored by Claude Code and preserved by `write_agent`.
+    """
+    meta, _ = parse_agent(path)
+    return (meta.get('category') or '').strip() or NO_CATEGORY
+
+
+def installed_categories():
+    """Every category name actually in use by an installed agent, sorted.
+
+    Offered beside the library's folder names when you file a new agent, so the
+    second agent in a category you invented lands in the same one rather than
+    in "Reviewers" beside "reviewers".
+    """
+    seen = set()
+    for r in all_installed():
+        c = r.get('category') or ''
+        if c and c != NO_CATEGORY:
+            seen.add(c)
+    return sorted(seen)
+
+
 def _slug(name):
     return re.sub(r'[^a-z0-9-]+', '-', name.lower()).strip('-') or 'agent'
 
@@ -622,7 +655,7 @@ def write_routing_block(project_path):
     """Refresh the CLAUDECTL:AGENTS block in <project>/CLAUDE.md from what is
     actually installed. Removes it when no agents are. Returns the row count."""
     from .claude_md import upsert_block
-    from .config import _AGENTS_START, _AGENTS_END
+    from .config import _AGENTS_START, _AGENTS_END, generated_note
     rows = routing_table(project_path)
     if not rows:
         upsert_block(project_path, _AGENTS_START, _AGENTS_END, '')
@@ -631,7 +664,8 @@ def write_routing_block(project_path):
                       for n, t in rows)
     section = (
         f"{_AGENTS_START}\n## Subagents available here (claudectl — auto-maintained)\n"
-        "<!-- Generated from .claude/agents/; edits here are overwritten -->\n\n"
+        + generated_note('the agents installed in .claude/agents/',
+                         'the Agents page, or any change to those files') + "\n\n"
         "Delegate to one of these with the Agent tool when the work matches — "
         "prefer a specialist over doing it inline, and say which one you used.\n\n"
         f"{lines}\n{_AGENTS_END}\n")
@@ -709,7 +743,8 @@ def all_installed():
         for name, desc, _model, path in list_agents(d):
             out.append({'scope': scope, 'dir': d, 'project_path': project_path,
                         'account': account, 'name': name,
-                        'desc': desc or '', 'path': path})
+                        'desc': desc or '', 'path': path,
+                        'category': category_of(path)})
 
     try:
         for acct, cfgdir in _c.all_config_dirs():

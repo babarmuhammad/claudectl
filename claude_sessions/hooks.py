@@ -63,6 +63,50 @@ EVENT_MATCHERS = {
 
 EVENTS = set(EVENT_MATCHERS)
 
+#: When each event fires, said the way a person would say it.
+#:
+#: `PreToolUse` is Claude Code's vocabulary, not the reader's, and a hooks
+#: screen that lists nothing but those names cannot be read by someone who has
+#: not already memorised them. The raw name still shows — it is what the
+#: documentation and settings.json use — but the phrase leads.
+#:
+#: A missing key degrades to the raw event name at every call site, so a new
+#: Claude Code event never renders as a blank.
+EVENT_WHEN = {
+    'PreToolUse': 'before Claude runs a tool',
+    'PostToolUse': 'after a tool has run',
+    'PostToolUseFailure': 'after a tool failed',
+    'PostToolBatch': 'after a batch of tools has run',
+    'UserPromptSubmit': 'when you send a message',
+    'UserPromptExpansion': 'when you type a slash command',
+    'Stop': 'when Claude finishes a turn',
+    'StopFailure': 'when a turn ends in an error',
+    'SubagentStart': 'when a subagent starts',
+    'SubagentStop': 'when a subagent finishes',
+    'SessionStart': 'when a session starts',
+    'SessionEnd': 'when a session ends',
+    'Setup': 'on first setup, and on maintenance runs',
+    'Notification': 'when Claude Code notifies you',
+    'MessageDisplay': 'when a message is shown to you',
+    'PreCompact': 'before the context is compacted',
+    'PostCompact': 'after the context is compacted',
+    'InstructionsLoaded': 'after CLAUDE.md and the rules are loaded',
+    'PermissionRequest': 'when Claude asks you for permission',
+    'PermissionDenied': 'when a permission is refused',
+    'ConfigChange': 'when a settings file changes',
+    'CwdChanged': 'when the working directory changes',
+    'DirectoryAdded': 'when a directory joins the session',
+    'WorktreeCreate': 'when a git worktree is created',
+    'WorktreeRemove': 'when a git worktree is removed',
+    'TaskCreated': 'when a task is created',
+    'TaskCompleted': 'when a task completes',
+    'TeammateIdle': 'when a teammate agent goes idle',
+    'FileChanged': 'when a watched file changes',
+    'Elicitation': 'when an MCP server asks you something',
+    'ElicitationResult': 'after you answer an MCP server',
+}
+
+
 def _py_hook(script):
     """Absolute `"<python>" "<claude_sessions/script>"` — runs regardless of the
     hook shell (bash/cmd/pwsh) and doesn't depend on $-expansion."""

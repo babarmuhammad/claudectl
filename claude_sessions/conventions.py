@@ -235,7 +235,10 @@ def sync_to_global(cfgdir=None):
         else:
             return False
     else:
-        section = f"{_CONV_START}\n{block_body}\n{_CONV_END}\n"
+        from .config import generated_note
+        note = generated_note('conventions that recur across your projects',
+                              "claudectl's Global CLAUDE.md page")
+        section = f"{_CONV_START}\n{note}\n{block_body}\n{_CONV_END}\n"
         if _CONV_START in old and _CONV_END in old:
             new = (old[:old.index(_CONV_START)] + section
                    + old[old.index(_CONV_END) + len(_CONV_END):])

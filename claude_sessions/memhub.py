@@ -14,6 +14,64 @@ from . import render
 from .config import C_DIM, C_RESET, C_OK, C_WARN
 
 
+def _newest(paths):
+    """Newest mtime among `paths`, or None when none of them exist."""
+    best = None
+    for p in paths:
+        try:
+            t = os.path.getmtime(p)
+        except OSError:
+            continue
+        if best is None or t > best:
+            best = t
+    return best
+
+
+def last_written(project_path, proj_folder):
+    """When each machine-written artifact was last written, as epoch seconds.
+
+    "Is this stale?" is the second question a reader asks after "who wrote
+    this?", and the memory tab could not answer it for a single row: the graph
+    carries ONE `generated_at`, while the worklog, the rule files and the two
+    logs are each written on their own schedule by a different code path.
+
+    The answer is the file's own mtime rather than a stamp inside it. A stamp
+    is a second thing to keep in step with the write — one `save()` that
+    forgets it and the row lies confidently — whereas an mtime cannot disagree
+    with what is on disk. Only artifacts that ARE exactly one file appear here;
+    the CLAUDE.md blocks share a file with your own prose, so dating them off
+    that file would call the digest fresh because you fixed a typo. Those rows
+    stay bare and the build time is stated once, on the group.
+    """
+    from . import recall as _recall
+    from .diffview import _candidate_dirs as _snap_dirs
+    from .workspace import _candidate_paths as _manifest_paths
+    from .worklog import worklog_path
+    rules_dir = os.path.join(project_path or '', '.claude', 'rules')
+    try:
+        rules = [os.path.join(rules_dir, n) for n in os.listdir(rules_dir)
+                 if n.startswith('claudectl-mem-')]
+    except OSError:
+        rules = []
+    snaps = []
+    for d in _snap_dirs(project_path, proj_folder):
+        try:
+            snaps += [os.path.join(d, n) for n in os.listdir(d)]
+        except OSError:
+            pass
+    out = {
+        'graph': _newest(os.path.join(d, memory.GRAPH_NAME)
+                         for d in memory._mem_dirs(project_path, proj_folder)),
+        'rules': _newest(rules),
+        'worklog': _newest([worklog_path(project_path)]) if project_path else None,
+        'hits': _newest([_recall.hits_log_path(project_path, proj_folder)]),
+        'dirty': _newest([memory.dirty_log_path(project_path)]) if project_path else None,
+        'manifest': _newest(_manifest_paths(project_path, proj_folder)),
+        'snapshots': _newest(snaps),
+    }
+    return {k: v for k, v in out.items() if v}
+
+
 def _state(project_path, proj_folder):
     from .config import load_settings
     from .paths import encode_component

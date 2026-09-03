@@ -518,9 +518,12 @@ def write_journal_block(row):
         lines.append('- %s — %s%s' % (when, mark, ' '.join(str(e.get('text') or '').split())[:220]))
     section = (
         f"{_LOOP_START}\n## Background loop — recent runs (claudectl — auto-maintained)\n"
-        "<!-- Rewritten after every run; the last %d are kept -->\n\n"
+        "%s\n\n"
         "This project has a scheduled loop (`%s`). What it did, newest first — "
         "continue from here rather than starting over:\n\n%s\n%s\n"
-        % (JOURNAL_IN_MD, row.get('text') or 'loop', '\n'.join(lines), _LOOP_END))
+        % (_c.generated_note("this project's background loop, after every run "
+                             "(the last %d are kept)" % JOURNAL_IN_MD,
+                             'the Loops page'),
+           row.get('text') or 'loop', '\n'.join(lines), _LOOP_END))
     upsert_block(path, _LOOP_START, _LOOP_END, section)
     return True

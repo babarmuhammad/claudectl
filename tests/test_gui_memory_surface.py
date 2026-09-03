@@ -49,6 +49,10 @@ SURFACE = {
         # string 'folding in', derived from the graph's top-hits list, which
         # is a different thing and never changed.
         'hits_pending',
+        # "is this stale?" per artifact. The graph carries ONE build time while
+        # the worklog, the rules and the two logs are each written by a
+        # different code path, so no row could answer it.
+        'written',
         # est.* — what memory costs a session, the reason this gate exists
         'digest_tokens', 'hook_budget',
         # /api/lessons — decay needs all three numbers, not just confidence

@@ -356,7 +356,13 @@ function ask(title,fields,sub){return new Promise(res=>{
     :f.type==='multi'
     ?`<div class="fld"><label>${esc(f.label)}</label><div class="chips multi" id="pf${i}">${f.options.map(o=>
         `<span class="chip${(f.value||[]).includes(o[0]||o)?' on':''}" data-v="${esc(o[0]||o)}">${esc(o[1]||o)}</span>`).join('')}</div></div>`
-    :`<div class="fld"><label>${esc(f.label)}</label><input id="pf${i}" value="${esc(f.value||'')}" placeholder="${esc(f.ph||'')}"></div>`).join('');
+    /* `list` = pick an existing one OR type a new one, in ONE control. A chip
+       row cannot express "or something you have not thought of yet", and the
+       two-field workaround (a select plus an "only if you picked New" box) is
+       a puzzle. <datalist> is the native answer and needs no JS at all. */
+    :`<div class="fld"><label>${esc(f.label)}</label><input id="pf${i}" value="${esc(f.value||'')}" placeholder="${esc(f.ph||'')}"${
+        f.list?` list="pfl${i}" autocomplete="off"`:''}>${
+        f.list?`<datalist id="pfl${i}">${f.list.map(o=>`<option value="${esc(o)}">`).join('')}</datalist>`:''}</div>`).join('');
   document.querySelectorAll('#pBody .chips').forEach(box=>
     box.querySelectorAll('.chip').forEach(c=>c.onclick=()=>{
       if(!box.classList.contains('multi'))
@@ -918,12 +924,16 @@ function bindFilter(inputSel,rowSel,countId,extra){
       el.style.display=hit?'':'none';
       if(hit)shown++;
     });
-    document.querySelectorAll('#content details').forEach(dt=>{
+    /* A container whose rows are all hidden must go too, or the filter leaves
+       a category heading standing over nothing. `.fgrp` is the plain version
+       of the same idea as <details> — a group header plus its rows — and it
+       gets the identical treatment minus the open/closed state. */
+    document.querySelectorAll('#content details, #content .fgrp').forEach(dt=>{
       const rows=[...dt.querySelectorAll(rowSel)];
       if(!rows.length)return;
       const any=rows.some(el=>el.style.display!=='none');
       dt.style.display=any?'':'none';
-      if(q&&any)dt.open=true;
+      if(q&&any&&dt.tagName==='DETAILS')dt.open=true;
     });
     const c=countId&&$('#'+countId);
     if(c)c.textContent=q?`${shown} of ${total}`:'';
@@ -2039,9 +2049,23 @@ function rch(k){const r=REACH[k]||REACH.never;
    The sentence is inline and never a tooltip — a tooltip is for a glossary, not
    for the thing that makes the row comprehensible at all. The file path IS a
    tooltip, because nobody asks it first. */
-function invRow(name,does,where,size,action){
+/* "Is this stale?" is the second question, right after "who wrote it?", and no
+   row could answer it: the graph carries one build time while the worklog, the
+   rules and the two logs are each written by a different code path on its own
+   schedule. `when` is the artifact's own mtime, in epoch seconds — sent by
+   /api/memory/state only for the artifacts that ARE one file, so a row that
+   cannot honestly be dated shows nothing rather than a plausible lie. */
+function ago(sec){
+  if(!sec)return '';
+  const s=Math.max(0,Date.now()/1000-sec);
+  for(const [u,n] of [['d',86400],['h',3600],['m',60]])
+    if(s>=n)return Math.floor(s/n)+u+' ago';
+  return 'just now';
+}
+function invRow(name,does,where,size,action,when){
   return `<tr><td title="${esc(where)}"><b>${name}</b>
-      <div style="color:var(--dim2);font-size:11px">${does}</div></td>
+      <div style="color:var(--dim2);font-size:11px">${does}</div>
+      ${when?`<div style="color:var(--dim2);font-size:11px" title="${esc(new Date(when*1000).toLocaleString())}">updated ${ago(when)}</div>`:''}</td>
     <td class="num" style="white-space:nowrap">${size}</td>
     <td style="white-space:nowrap">${action||''}</td></tr>`;}
 function invTable(rows){
@@ -2136,24 +2160,27 @@ async function drawMemory(){
   // The bookkeeping bucket: never sent to Claude, so it collapses behind one
   // summary line. Built as a list so the count in that line cannot drift from
   // the rows it is counting.
+  const W=st.written||{};
   const stored=[
     invRow('Semantic graph','Everything claudectl has learned about the code. Nothing reads it directly — every surface above is written from it.',
       '.claudectl/memory/graph.json',`${st.n_entities||0}+${st.n_lessons||0}`,
-      `<button class="btn sm" onclick="go('graph')">${ic('share')} Graph</button>`),
+      `<button class="btn sm" onclick="go('graph')">${ic('share')} Graph</button>`,W.graph),
     invRow('Reinforcement log','Which facts recall actually injected. Folded into the graph on the next build; it is what makes useful facts survive.',
       '.claudectl/memory/hits.log',
-      st.hits_pending?`<span class="tag">${st.hits_pending} to fold in</span>`:'folded in',''),
+      st.hits_pending?`<span class="tag">${st.hits_pending} to fold in</span>`:'folded in','',W.hits),
     invRow('Edit log','Files Claude changed, so the next cycle knows what to re-read instead of rescanning everything.',
       '.claudectl/memory/dirty.log',
       st.dirty?`<span class="tag warn">${st.dirty} queued</span>`:'0',
-      st.dirty_hook?'':`<span class="hlink" onclick="go('hooks')">install hook</span>`),
+      st.dirty_hook?'':`<span class="hlink" onclick="go('hooks')">install hook</span>`,W.dirty),
     invRow('Workspace manifest','What memory was built from — commit, file hashes, session count — so staleness is a fact rather than a guess.',
       '.claudectl/workspace-manifest.json',
       '<span id="wsScore" style="color:var(--dim2)">checking…</span>',
-      `<span class="hlink" onclick="showDetail('wsBox')">show ↓</span>`),
+      `<span class="hlink" onclick="showDetail('wsBox')">show ↓</span>`,W.manifest),
+    // "12 kept" was the CAP read as a count — it said twelve whether there
+    // were twelve or none. The honest pair is the limit and the last write.
     invRow('Version snapshots','A copy of everything claudectl was about to overwrite. Nothing it shrinks is gone until it falls off this list.',
-      '.claudectl/snapshots/','12 kept',
-      `<span class="hlink" onclick="TAB='claudemd';drawProject()">History</span>`)];
+      '.claudectl/snapshots/','up to 12 each',
+      `<span class="hlink" onclick="TAB='claudemd';drawProject()">History</span>`,W.snapshots)];
   paint(nav,`
     <div class="card"><h3>What claudectl knows <span class="sp"></span>
       <button class="btn sm" onclick="askMem()">${ic('chat')} Ask</button>
@@ -2209,7 +2236,8 @@ async function drawMemory(){
         ${est.hook_budget!=null?`up to <b>${est.hook_budget} tok</b> more per prompt`:'no per-prompt recall'} ·
         <b>~${ruleTok} tok</b> across ${rules.length} rule file(s), read only when Claude opens a matching path</p>
       <div id="memInv">
-      ${bucket('Always on','always',`~${est.digest_tokens||0} tok · ${pctWin} of the context window`)}
+      ${bucket('Always on','always',`~${est.digest_tokens||0} tok · ${pctWin} of the context window${
+        st.generated_at?` · rebuilt ${esc(String(st.generated_at).slice(0,16))}`:''}`)}
       ${invTable(
         invRow('CLAUDE.md digest','What this project is, its modules, and the lessons worth carrying into every session.',
           'the CLAUDECTL:MEMORY block in CLAUDE.md',`~${est.digest_tokens||0} tok`,
@@ -2223,7 +2251,7 @@ async function drawMemory(){
        +invRow('Recent work','A one-line summary of what each session changed, put back when the next one starts.',
           '.claudectl/memory/worklog.json',
           `${(wl.entries||[]).length} entr${(wl.entries||[]).length===1?'y':'ies'}`,
-          `<span class="hlink" onclick="showDetail('memWork')">show ↓</span>`))}
+          `<span class="hlink" onclick="showDetail('memWork')">show ↓</span>`,W.worklog))}
       ${bucket('Every prompt','prompt','the only one that grows with how much you talk')}
       ${invTable(invRow('Recall','The slice of the graph matching what you just typed, added to the message before it is sent.',
         'the UserPromptSubmit recall hook',
@@ -2235,7 +2263,8 @@ async function drawMemory(){
         <input type="number" id="memBudget" min="0" max="20000" step="50"
           value="${st.budget==null?600:st.budget}" onchange="memToggle({budget:+this.value})">
         <div style="color:var(--dim2);font-size:12px;margin-top:4px">0 turns injection off. Try it with Recall preview.</div></div>
-      ${bucket('When relevant','lazy',`${rules.length} rule file(s) · ~${ruleTok} tok, none of it loaded until it matches`)}
+      ${bucket('When relevant','lazy',`${rules.length} rule file(s) · ~${ruleTok} tok, none of it loaded until it matches${
+        W.rules?` · rewritten ${ago(W.rules)}`:''}`)}
       <details><summary style="cursor:pointer;padding:6px 0">
         <b>Path-scoped rules</b> — one file per module. Claude loads the one whose
         <code>paths:</code> cover the file it just opened, and no others ·
@@ -2252,7 +2281,7 @@ async function drawMemory(){
           <span>${ic('folder')} Keep the rule files in sync</span></label></details>
       ${invTable(invRow('Lessons','Things this project learned the hard way — a bug and its fix, a decision, a preference you corrected. Recall injects one when it applies.',
         'entities inside the graph',`${st.n_lessons||0}`,
-        `<span class="hlink" onclick="showDetail('memLessons')">show ↓</span>`))}
+        `<span class="hlink" onclick="showDetail('memLessons')">show ↓</span>`,W.graph))}
       ${bucket('Stored, not loaded','source',`${stored.length} records · 0 tokens — read only when you or Claude ask`)}
       <details id="memKeep"><summary style="cursor:pointer;padding:6px 0;color:var(--dim);font-size:13px">
         What claudectl keeps for itself, so it knows what to rebuild and can undo it</summary>
@@ -2421,7 +2450,21 @@ const CMFIX={
         'Fence a section so AI compression can never reword, shorten or drop it.'],
   autogen:['Rebuild','cmScaffold()','Re-derive the repo and commit block.'],
   sessions:['Prune','cmPrune()','Drop session entries past the cap. Transcripts are untouched.'],
-  memory:['Rebuild','buildMemory()','Re-extract the project memory this digest is built from.']};
+  memory:['Rebuild','buildMemory()','Re-extract the project memory this digest is built from.'],
+  agents:['Agents',"go('agents')",'Written from the agents installed here — manage them on the Agents page.'],
+  loop:['Loops',"go('loops')",'Written by the background loop — start, watch or end one on the Loops page.']};
+/* WHAT each block is, in one line, and WHO writes it. Two questions, and the
+   row answered neither: "maintained by claudectl" says who and not what, and
+   was the same six words on three different blocks. A subtitle, never a
+   tooltip — the row has to be readable without hovering it. */
+const CMWHAT={
+  manual:['What you wrote — the instructions you want in every session here.','you'],
+  keep:['Sections you fenced off. AI compression is not even shown this text.','you'],
+  autogen:['Which repos this is, and what has been committed lately.','claudectl'],
+  sessions:['What your past sessions in this project were about.','claudectl'],
+  memory:['The project memory digest — modules, dependencies, hard-won lessons.','claudectl'],
+  agents:['The subagents installed here and when to delegate to each. Claude Code only picks an agent it has been told about.','claudectl'],
+  loop:['What a background /loop has done lately, rewritten on every run.','claudectl']};
 async function drawClaudeMd(){
   const nav=paintNow('<div class="empty"><span class="spin"></span></div>');
   const c=C();
@@ -2433,18 +2476,21 @@ async function drawClaudeMd(){
       <button class="btn sm" onclick="cmScaffold()">${ic('doc')} Scaffold</button>
       <button class="btn sm" onclick="inlineJob('#jban','ai_scaffold',C(),{label:'AI-analyzing project',redraw:()=>drawClaudeMd()})">${ic('ai')} AI analyze</button>
       <button class="btn sm" onclick="post('/api/open-editor',{file:CUR.path+'\\\\CLAUDE.md'})">${ic('edit')} Edit</button></h3>
-      <p style="color:var(--dim);font-size:13px;margin:0 0 10px">Claude reads this whole file on every turn. It is five things stacked in one document —
-        your own prose, regions you have fenced off, and three blocks claudectl maintains.
-        Each row below is one of them, with what it costs and the one button that rewrites it.</p>
+      <p class="secthint">Claude reads this whole file on <b>every turn</b> of every session in this project — it is the one place an instruction is guaranteed to be seen, and the one place a wasted paragraph is paid for over and over.</p>
+      <p class="secthint">It is not one document but several stacked in one file: your own prose, the regions you have fenced off, and the blocks claudectl regenerates. Each row says what it is, <b>who writes it</b>, what it costs, and the one button that rebuilds it.</p>
       ${md.exists?`
-      <div id="cmBlocks">${blocks.map(b=>{const f=CMFIX[b.key]||null;return `
-        <div class="hrow">
-          <span style="min-width:210px">${b.present?ic('check'):'<span style="color:var(--dim2)">—</span>'} ${esc(b.label)}</span>
-          <span class="info" style="flex:1;color:var(--dim);font-size:12px">${
-            b.key==='sessions'&&b.entries?`${b.entries} entr${b.entries===1?'y':'ies'}`
-            :b.key==='manual'?'yours — claudectl never rewrites it unprompted'
-            :b.key==='keep'?'AI compression is not even shown this text'
-            :b.present?'maintained by claudectl':'not present'}</span>
+      <div id="cmBlocks">${blocks.map(b=>{
+        const f=CMFIX[b.key]||null,w=CMWHAT[b.key]||['',''];
+        const who=w[1]==='you'
+          ?'<span class="tag ok" title="claudectl never rewrites this unprompted.">you write it</span>'
+          :'<span class="tag" title="Rewritten by claudectl. Hand edits here are replaced on the next pass.">claudectl writes it</span>';
+        return `
+        <div class="agrow">
+          <div class="agmain">
+            <b>${b.present?ic('check'):'<span style="color:var(--dim2)">—</span>'} ${esc(b.label)}</b>
+            ${who}${b.present?'':'<span class="tag" style="color:var(--dim2)">not present</span>'}
+            ${b.key==='sessions'&&b.entries?`<span class="tag">${b.entries} entr${b.entries===1?'y':'ies'}</span>`:''}
+            <div class="agdesc">${esc(w[0])}</div></div>
           <span class="num" style="min-width:70px;color:var(--dim2)">~${b.tokens||0} tok</span>
           ${f?`<button class="btn sm" title="${esc(f[2])}" onclick="${f[1]}">${esc(f[0])}</button>`:''}
         </div>${b.text?`<details style="margin:0 0 6px 12px"><summary style="cursor:pointer;color:var(--dim2);font-size:12px">show</summary>
@@ -3250,36 +3296,45 @@ async function pgClient(nav){
   const diskRows=(disk.accounts||[]).map(a=>
     `<tr><td><b>${esc(a.account)}</b></td><td class="num">${mb(a.bytes)}</td>
       <td style="color:var(--dim);font-size:12px">${(a.stores||[]).map(s=>esc(s.name)+' '+mb(s.bytes)).join(' · ')}</td></tr>`).join('');
+  /* Settings FIRST. The page opened on three diagnostic cards and buried the
+     editor fifth, which is backwards: "what did it record about itself" is a
+     question you ask occasionally, "change how Claude behaves" is why you came.
+     Everything below the editor is read-mostly and stays in that order. */
   if(!paint(nav,`
+    <div class="card"><h3>${ic('settings')} How Claude Code behaves</h3>
+      <p class="secthint">These are Claude Code's own preferences — the same ones you would otherwise hand-edit in <code>settings.json</code>. Each account keeps its own file, and a change applies to <b>sessions you start after it</b>, not the one already running.</p>
+      <p class="secthint">A dash (<b>—</b>) means <b>not set</b>: Claude Code falls back to its own built-in default. Clearing a field removes the key rather than writing a default in, because <i>off</i> and <i>absent</i> are not the same thing to it.</p>
+      <div class="fld" style="margin:0 0 10px"><input id="ccQ" placeholder="Find a setting — type what you want to change…" spellcheck="false">
+        <div style="color:var(--dim2);font-size:12px;margin-top:4px" id="ccCount"></div></div>
+      ${ccTable(cc)}</div>
+    ${autoModeCard(am)}
     <div class="card"><h3>${ic('ai')} What is actually being used</h3>
-      <p style="color:var(--dim);font-size:13px;margin-bottom:10px">Straight from Claude Code's own counters — the only record of which skills, plugins and agents are live rather than dead weight.</p>
+      <p class="secthint">Straight from Claude Code's own counters — the only record of which skills, plugins and agents are live rather than dead weight.</p>
       <div class="cols3">
         <div>${useRows('skills','Skill')}</div>
         <div>${useRows('plugins','Plugin')}</div>
         <div>${useRows('agents','Agent')}</div></div></div>
-    <div class="card"><h3>${ic('robot')} Background agents</h3>${bgCard}
+    <div class="card"><h3>${ic('robot')} Background agents</h3>
+      <p class="secthint">Work Claude Code is running outside your session — a long job you sent to the background, and the teams it splits one into.</p>
+      ${bgCard}
       <h3 style="margin-top:14px">Agent teams</h3>${teamCard}</div>
     <div class="card"><h3>${ic('folder')} Disk</h3>
+      <p class="secthint">What Claude Code has stored for each account: transcripts, file snapshots for <code>/rewind</code>, and its caches. Preview first — cleanup lists what it would delete before it deletes anything.</p>
       <table class="tbl"><tr><th>Account</th><th class="num">Total</th><th>Stores</th></tr>${diskRows}</table>
       <div class="gcbar">
         <div class="fld" style="width:110px"><label for="gcDays">Keep days</label>
           <input id="gcDays" type="number" min="1" value="30"></div>
         <button class="btn sm" onclick="gcRun(false)">Preview cleanup</button>
         <span id="gcOut"></span></div></div>
-    ${autoModeCard(am)}
-    <div class="card"><h3>${ic('settings')} Claude Code settings</h3>
-      <p style="color:var(--dim);font-size:13px;margin-bottom:12px">
-        Written into each account's own <code>settings.json</code>. Leaving a field empty
-        <b>removes</b> the key rather than writing a default — Claude Code treats
-        <i>off</i> and <i>absent</i> differently.</p>
-      ${ccTable(cc)}</div>
     <div class="card"><h3>${ic('search')} Prompt history</h3>
+      <p class="secthint">Every prompt you have typed into Claude Code, on any account. Useful for finding the phrasing that worked last time.</p>
       <div class="gcbar">
         <div class="fld" style="flex:1;min-width:220px">
           <input id="phQ" placeholder="search every prompt you have typed"
             onkeydown="if(event.key==='Enter')phSearch()"></div>
         <button class="btn sm" onclick="phSearch()">Search</button></div>
       <div id="phOut"></div></div>`))return;
+  bindFilter('ccQ','.ccrow[data-f]','ccCount');
 }
 /* ── auto mode ──
    In auto mode a classifier reviews each action instead of you. It trusts your
@@ -3357,26 +3412,37 @@ async function amRules(which){
    rows are grouped under headings so the list is scannable, and each row says
    whether it is set anywhere and whether the accounts agree. */
 function ccTable(cc){
-  const accts=cc.accounts||[],sch=cc.schema||{},groups=cc.groups||[];
+  const accts=cc.accounts||[],sch=cc.schema||{},groups=cc.groups||[],
+        ghelp=cc.group_help||{};
   if(!accts.length)return '<div class="empty">No accounts configured.</div>';
   const head=`<div class="ccrow cchead"><div></div>`
     +accts.map(a=>`<div title="${esc(a.dir)}">${esc(a.name)}</div>`).join('')
     +`<div></div></div>`;
+  /* A group name tells someone who already knows Claude Code where to look and
+     tells everybody else nothing, so each carries the sentence saying what it
+     is FOR. The `.fgrp` wrapper is what lets the filter take a whole heading
+     away with its rows instead of leaving it standing over nothing; inside a
+     grid it has to be display:contents, like `.ccrow` itself. */
   const body=groups.map(g=>{
     const keys=Object.keys(sch).filter(k=>sch[k].group===g);
     if(!keys.length)return '';
-    return `<div class="ccgrp">${esc(g)}</div>`+keys.map(k=>ccRow(k,sch[k],accts)).join('');
+    return `<div class="fgrp"><div class="ccgrp">${esc(g)}
+      ${ghelp[g]?`<div class="cchelp">${esc(ghelp[g])}</div>`:''}</div>`
+      +keys.map(k=>ccRow(k,sch[k],accts,g)).join('')+'</div>';
   }).join('');
   return `<div class="cctable" style="--cc-accts:${accts.length}">${head}${body}</div>`;
 }
-function ccRow(k,s,accts){
+function ccRow(k,s,accts,group){
   const vals=accts.map(a=>a.values[k]);
   const set=vals.filter(v=>v!==undefined).length;
   const differ=set>0&&new Set(vals.map(v=>JSON.stringify(v))).size>1;
-  const state=!set?'<span class="ccdot off" title="not set anywhere"></span>'
+  const state=!set?'<span class="ccdot off" title="not set anywhere — Claude Code uses its own default"></span>'
     :differ?'<span class="ccdot warn" title="the accounts disagree"></span>'
     :'<span class="ccdot on" title="set, and the same everywhere"></span>';
-  return `<div class="ccrow${differ?' differ':''}">
+  // the raw key is in the haystack because it is what the docs and settings.json
+  // call it — someone arriving from either searches for that, not for the label
+  return `<div class="ccrow${differ?' differ':''}"
+      data-f="${esc(k+' '+ccName(k)+' '+(s.help||'')+' '+(group||''))}">
     <div class="cclbl">${state}<div><b>${esc(ccName(k))}</b>
       <code>${esc(k)}</code>
       <div class="cchelp">${esc(s.help)}</div></div></div>`
@@ -3861,38 +3927,72 @@ async function mcpRemove(name){
   toast(r.ok?'Removed':'Failed: '+(r.error||''),r.ok?'ok':'err');drawPage('mcp');
 }
 
+/* `user` and `project · claudectl` are the storage scopes; the reader's
+   question is who can call the thing. Same move as the hook events: say the
+   answer, keep the raw word only where it is the identifier. */
+/* `01-core-development` is a sort key wearing a heading's clothes. The number
+   orders the folders on disk and means nothing to a reader; the words do. The
+   raw name stays in each row's filter haystack, so searching for it still
+   works. */
+function agCat(c){
+  const s=String(c||'').replace(/^\d+[-_]/,'').replace(/[-_]/g,' ');
+  return s.charAt(0).toUpperCase()+s.slice(1);
+}
+const NO_CAT='Uncategorised';
+/* Group installed agents the way the library is grouped — by category, with
+   the unfiled ones last. `.fgrp` so the filter can take a heading away with
+   the rows under it. */
+function agByCat(rows,render){
+  const by={};
+  rows.forEach(r=>{const c=r.category||NO_CAT;(by[c]=by[c]||[]).push(r);});
+  const names=Object.keys(by).sort((a,b)=>
+    a===NO_CAT?1:b===NO_CAT?-1:a.localeCompare(b));
+  return names.map(c=>`<div class="fgrp"><div class="hkwhen">
+      <span>${esc(agCat(c))}</span><code>${by[c].length}</code></div>
+    ${by[c].map(render).join('')}</div>`).join('');
+}
+function agScope(sc){
+  const s=String(sc||'');
+  if(s==='user')return 'every project';
+  if(s.startsWith('project'))return 'only '+(s.split('·')[1]||'this project').trim();
+  return s;
+}
 async function pgAgents(nav){
   await loadProv();
   const d=await api('/api/agents/library');
-  const own=(d.own||[]).map(a=>`
-    <div class="agrow" data-f="${esc(a.name+' '+a.desc+' '+a.scope)}">
-      <b style="min-width:160px">${esc(a.name)}</b>${provTag('agent',a.name)}
-      <span class="tag">${esc(a.scope)}</span>
-      <span class="skdesc">${esc(a.desc)}</span>
-      <button class="btn sm" onclick='agView(${JSON.stringify(a.path)})'>view</button>
-      <button class="btn sm" onclick='post("/api/open-editor",{file:${JSON.stringify(a.path)}})'>edit</button>
-      <button class="btn sm danger" onclick='agDel(${JSON.stringify(a.path)})'>${ic('del')}</button></div>`).join('');
+  const agRow=(a,extra,scope,raw)=>`
+    <div class="agrow" data-f="${esc([a.name,a.desc,scope||'',raw||'',a.category||'',agCat(a.category||'')].join(' '))}">
+      <div class="agmain"><b>${esc(a.name)}</b>${provTag('agent',a.name)}
+        ${scope?`<span class="tag">${esc(scope)}</span>`:''}
+        <div class="agdesc">${esc(a.desc)||'<span style="color:var(--dim2)">No description — Claude can only reach this one if you name it.</span>'}</div></div>
+      <button class="btn sm" onclick='agView(${JSON.stringify(a.path)})'>view</button>${extra||''}</div>`;
+  /* Divided by category, both lists. A flat roll of everything installed is
+     the same wall the library would be without its folders, and it gets worse
+     with every agent you write. `Uncategorised` is a real heading rather than
+     a gap, and it sorts LAST so it never leads the page. */
+  const own=agByCat(d.own||[],a=>agRow(a,
+    `<button class="btn sm" onclick='post("/api/open-editor",{file:${JSON.stringify(a.path)}})'>edit</button>
+     <button class="btn sm danger" onclick='agDel(${JSON.stringify(a.path)})'>${ic('del')}</button>`,
+    agScope(a.scope)));
   const nLib=(d.categories||[]).reduce((n,c)=>n+c.agents.length,0);
   const lib=(d.categories||[]).map(c=>`
-    <details style="margin-bottom:6px"><summary style="cursor:pointer;font-weight:600">${esc(c.category)} (${c.agents.length})</summary>
-    ${c.agents.map(a=>`<div class="agrow" data-f="${esc(a.name+' '+a.desc+' '+c.category)}" style="padding-left:16px">
-      <b style="min-width:170px">${esc(a.name)}</b>
-      <span class="skdesc">${esc(a.desc)}</span>
-      <button class="btn sm" onclick='agView(${JSON.stringify(a.path)})'>view</button></div>`).join('')}
+    <details style="margin-bottom:6px"><summary style="cursor:pointer;font-weight:600">${esc(agCat(c.category))} <span class="tag">${c.agents.length}</span></summary>
+    ${c.agents.map(a=>agRow(a,'',agCat(c.category),c.category)).join('')}
     </details>`).join('');
   if(!paint(nav,`
-    <div class="card"><h3>My agents <span class="tag">${(d.own||[]).length}</span><span class="sp"></span>
-      <button class="btn sm" onclick="agNew()">${ic('add')} New agent</button>
-      <button class="btn sm" onclick="agAI()">${ic('ai')} AI-generate</button>
+    <div class="card"><h3>${ic('robot')} Your agents <span class="tag">${(d.own||[]).length}</span><span class="sp"></span>
+      <button class="btn sm" onclick="agNew()">${ic('add')} Write one</button>
+      <button class="btn sm" onclick="agAI()">${ic('ai')} Have Claude write one</button>
       <button class="btn sm" title="Rewrite every agent's description into trigger form (Use PROACTIVELY when …) — across every account, every project and the library. You approve the whole diff first; bodies and every other frontmatter field are untouched."
         onclick="agSharpen('all')">${ic('ai')} Sharpen descriptions</button></h3>
-      <p style="color:var(--dim);font-size:12.5px;margin:0 0 8px">Claude Code picks a subagent by matching your task against its <b>description</b> — nothing reads the body. Sharpening rewrites that one field everywhere the agent is installed, so a fix lands once instead of per project.</p>
-      ${own||'<div style="color:var(--dim)">No user/project agents yet.</div>'}</div>
-    <div class="card"><h3>Agent library <span class="tag">${nLib}</span></h3>
-      <p style="color:var(--dim);font-size:12.5px;margin:0 0 8px">Too many to read down: type to narrow. The filter covers both lists and opens the categories that match.</p>
-      <div class="fld"><input id="agQ" placeholder="Filter agents…" spellcheck="false">
+      <p class="secthint">An agent is a <b>second Claude</b> with its own instructions, its own tools and its own context window. Claude hands it a job, it works in that separate window, and only its answer comes back — so a long search never fills up the conversation you are having.</p>
+      <p class="secthint">It gets picked by matching your task against its <b>description</b>, and nothing reads the body to decide. That is why a vague description means the agent never runs: <i>Sharpen descriptions</i> rewrites that one field everywhere the agent is installed, so the fix lands once instead of per project.</p>
+      ${own||'<div class="empty">No agents of your own yet. Write one, or install one from the library below.</div>'}</div>
+    <div class="card"><h3>${ic('folder')} Ready-made agents <span class="tag">${nLib}</span></h3>
+      <p class="secthint">Specialists that ship with claudectl, by trade. Too many to read down — type to narrow, and the filter opens the categories that match and covers your own list above too.</p>
+      <div class="fld" style="margin:0 0 8px"><input id="agQ" placeholder="Filter by name, description or trade…" spellcheck="false">
         <div style="color:var(--dim2);font-size:12px;margin-top:4px" id="agQCount"></div></div>
-      ${lib||'<div style="color:var(--dim)">Library is empty.</div>'}</div>`))return;
+      ${lib||'<div class="empty">Library is empty.</div>'}</div>`))return;
   bindFilter('agQ','.agrow','agQCount');
 }
 /* the existing #drawer, shown with plain text. Everything that used to have no
@@ -3915,15 +4015,18 @@ async function agView(path){
 async function agNew(){
   const d=await api('/api/agents/library'+(CUR?'?'+qs({path:CUR.path}):''));
   const v=await ask('New agent',[{label:'Name'},{label:'Description'},
+    {label:'Category — pick one, or type a new name',
+     list:d.category_names||[],ph:NO_CAT},
     {label:'Scope',type:'select',options:[['user','user (all projects)'],['project','this project']]},
     {label:'Tools — none selected inherits all of them',type:'multi',
      options:(d.known_tools||[]).map(t=>[t,t])},
     {label:'Model',type:'select',
      options:[['','inherit'],...(d.models||[]).map(m=>[m.id,m.label])]},
-    {label:'System prompt / instructions',type:'textarea'}]);
+    {label:'System prompt / instructions',type:'textarea'}],
+    'The category is claudectl’s own filing, not something Claude Code reads — it only decides which heading the agent appears under here.');
   if(v===null||!v[0].trim())return;
   const r=await post('/api/agents/create',{name:v[0],description:v[1],
-    scope:v[2],tools:v[3],model:v[4],path:CUR?CUR.path:'',body:v[5]});
+    category:v[2],scope:v[3],tools:v[4],model:v[5],path:CUR?CUR.path:'',body:v[6]});
   toast(r.ok?'Agent created':'Failed','ok');drawPage('agents');
 }
 async function agAI(){
@@ -4480,7 +4583,8 @@ async function pgSkills(nav){
       <code class="skcmd">/${esc(r.command)}</code>
       <span class="tag">${esc(r.scope)}</span>${provTag('skill',r.name)}
       ${usage(r)}${warn(r)}
-      <span class="skdesc" title="${esc(r.desc)}">${esc(r.desc)}</span>${act(r)}</div>`;
+      <span class="sp"></span>${act(r)}
+      <span class="skdesc">${esc(r.desc)||'<span style="color:var(--dim2)">No description — Claude can only reach this one if you type it.</span>'}</span></div>`;
 
   const chip=(id,label)=>`<span class="chip skchip${SKSCOPE===id?' on':''}"
       data-sc="${id}" onclick='skScope(${JSON.stringify(id)})'>${label} ${n(id)}</span>`;
@@ -4492,15 +4596,18 @@ async function pgSkills(nav){
   if(!paint(nav,`
     <div class="card"><h3>${ic('ai')} Skills <span class="sp"></span>
       <span class="tag">${all.length} loadable</span></h3>
-      <p style="color:var(--dim);font-size:13px;margin:0 0 8px">Everything Claude Code can load here, in the order it resolves them — <b>personal</b> (every project on an account) beats <b>project</b>, plugins are namespaced, and the bundled ones live inside Claude Code. The command is the folder name.</p>
+      <p class="secthint">A skill is a folder of instructions Claude loads <b>only when it needs it</b> — you type <code>/name</code>, or Claude reads the descriptions and picks one itself. That is why it costs almost nothing to have many of them, and why the description matters more than the body.</p>
+      <p class="secthint">Everything Claude Code can load here, in the order it resolves them: <b>personal</b> (every project on an account) beats <b>project</b> (this one only), plugins are namespaced, and the built-in ones live inside Claude Code. The command is the folder name.</p>
       ${acctChips}
-      <div class="chips" style="margin:0 0 8px">${chip('all','all')}${chip('personal','personal')}${
-        path?chip('project','project'):''}${chip('plugin','plugin')}${chip('bundled','built-in')}</div>
+      <div class="chips" style="margin:0 0 8px">${chip('all','all')}${chip('personal','personal — every project')}${
+        path?chip('project','project — '+esc(P.name)):''}${chip('plugin','from a plugin')}${chip('bundled','built into Claude Code')}</div>
       <div class="fld" style="margin:0"><input id="skQ" placeholder="Filter by name, description or scope…" spellcheck="false">
         <div style="color:var(--dim2);font-size:12px;margin-top:4px" id="skCount"></div></div></div>
 
     <div class="card">${all.length?all.map(row).join(''):'<div class="empty">No skills anywhere yet — add one below.</div>'}
-      <p style="color:var(--dim2);font-size:12px;margin:10px 0 0">Personal: <code>${esc(d.personal_dir||'')}</code>${
+      <p class="secthint" style="margin:10px 0 0">Two counters, and the gap between them is the point. <b>typed N×</b> is Claude Code's own tally of the times <i>you</i> wrote <code>/name</code>. <b>in N/M sessions</b> is measured from your transcripts — how often something by that name actually ran, including the times Claude loaded it on its own. A skill can read as "never typed" and still be live in most of your sessions.</p>
+      <p class="secthint" style="margin:6px 0 0">The amber tags are the three ways a skill quietly never runs: <b>manual only</b> — it has opted out of Claude loading it, so only you can; <b>thin description</b> — too little for Claude to match a task against, so it is reachable by name alone; <b>shadowed</b> — a personal skill of the same name wins, and this copy is dead.</p>
+      <p style="color:var(--dim2);font-size:12px;margin:6px 0 0">Personal: <code>${esc(d.personal_dir||'')}</code>${
         path?` · Project: <code>${esc(d.project_dir||'')}</code>`:''} · session counts from your last ${d.sessions_scanned||0} sessions across every account.</p></div>
 
     <div class="card"><h3>${ic('add')} Add a skill</h3>
@@ -4617,9 +4724,27 @@ async function skAI(){
    fans out to EVERY account by default — the reader narrows, the writer does
    not, because what you provision is a property of you. */
 let HKACCT='';
+/* Plain English leads, the API name follows. `PreToolUse` is Claude Code's
+   vocabulary, not the reader's; a list of nothing but those names can only be
+   read by someone who has already memorised them. Served by /api/hooks from
+   `hooks.EVENT_WHEN` so the phrasing has one home, and an event with no phrase
+   degrades to its raw name rather than to a blank. */
+let HKWHEN={};
+function hkWhen(ev){return HKWHEN[ev]||ev||'anywhere';}
+/* The trigger is stated ONCE per group instead of as a badge repeated on every
+   row — the same move that turned the memory tab's 12-row wall into four
+   groups. Order follows first appearance, so it is the payload's order and
+   never a second list to keep in step. */
+function hkGroup(items,render){
+  const order=[],by={};
+  items.forEach(it=>{const e=it.event||'';if(!by[e]){by[e]=[];order.push(e);}by[e].push(it);});
+  return order.map(e=>`<div class="fgrp"><div class="hkwhen"><span>${esc(hkWhen(e))}</span>
+      <code>${esc(e)}</code></div>${by[e].map(render).join('')}</div>`).join('');
+}
 async function pgHooks(nav){
   await loadProv();
   const d=await api('/api/hooks?'+qs(HKACCT?{cfgdir:HKACCT}:{}));
+  HKWHEN=d.events||{};
   const accts=(d.accounts||[]);
   /* Only a real SKEW is worth a warning: a template missing from EVERY account
      is simply one you never installed, and tagging those turned fourteen clean
@@ -4634,36 +4759,43 @@ async function pgHooks(nav){
       <input type="checkbox" ${h.enabled?'checked':''}
         title="${h.enabled?'Disable':'Enable'} this hook"
         onchange='hookToggle(${JSON.stringify(h.event)},${h.index},this.checked)'>
-      <span class="tag">${esc(h.event)}</span>
       <span style="flex:1">${esc(h.label)}${h.enabled?'':' <span style="color:var(--dim2);font-size:11px">(disabled)</span>'}</span>
-      ${h.matcher?`<code style="color:var(--dim2);font-size:11px">${esc(h.matcher)}</code>`:''}
+      ${h.matcher?`<code style="color:var(--dim2);font-size:11px" title="Only runs for this: ${esc(h.matcher)}">${esc(h.matcher)}</code>`:''}
       <button class="btn sm danger" onclick='hookRm(${JSON.stringify(h.event)},${h.index},${h.enabled?'true':'false'})'>${ic('del')}</button></div>`;
-  const active=(d.hooks||[]).map(hookRow).join('');
-  const tmpl=(d.templates||[]).map(t=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:4px 0">
+  const active=hkGroup(d.hooks||[],hookRow);
+  /* NOT `.hrow`: that class means "an installed hook", and the smoke tool
+     counts one checkbox per `.hrow` to prove every hook can be turned off.
+     A template is an offer, not a hook — it has nothing to toggle. */
+  const tmplRow=t=>`
+    <div class="trow" data-f="${esc(t.key+' '+t.desc+' '+hkWhen(t.event)+' '+t.event)}">
       <b style="min-width:170px">${esc(t.key)}</b>
       <span style="flex:1;color:var(--dim);font-size:12px">${esc(t.desc)}</span>
       ${skew(t.missing)}
       ${t.installed&&!(t.missing||[]).length?`<span class="tag ok">${ic('check')} installed</span>`
-        :`<button class="btn sm" onclick='hookAdd(${JSON.stringify(t.key)})'>${ic('add')} Install</button>`}</div>`).join('');
+        :`<button class="btn sm" onclick='hookAdd(${JSON.stringify(t.key)})'>${ic('add')} Install</button>`}</div>`;
+  const tmpl=hkGroup(d.templates||[],tmplRow);
   const picker=accts.length>1?`<div class="chips" style="margin-bottom:10px">
       ${accts.map(a=>`<span class="chip${(HKACCT||'')===(a.dir||'')?' on':''}"
         onclick='hookAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)} <b>${a.count}</b></span>`).join('')}
     </div>`:'';
-  paint(nav,`
-    <div class="card"><h3>Active hooks <span class="sp"></span>
+  if(!paint(nav,`
+    <div class="card"><h3>${ic('link')} Hooks <span class="sp"></span>
       <button class="btn sm" onclick="hookEditFile()">${ic('edit')} Edit settings.json</button>
       <button class="btn sm" onclick="hookPurge()">${ic('del')} Purge broken</button>
-      <button class="btn sm" onclick="hookAI()">${ic('ai')} AI-generate</button></h3>
+      <button class="btn sm" onclick="hookAI()">${ic('ai')} Have Claude write one</button></h3>
+      <p class="secthint">A hook is a command <b>your machine</b> runs at a fixed moment — before a tool, after an edit, when a session starts. It is not a suggestion Claude may ignore: it always runs, and a hook that exits with an error can refuse the action outright. Each heading below says when its hooks fire.</p>
       ${picker}
-      <p style="color:var(--dim);font-size:12px;margin:0 0 8px">${HKACCT
+      <p class="secthint">${HKACCT
         ?'Acting on this account only.'
         :'Turning one off or deleting it applies to <b>every</b> account, the same as installing. Pick an account above to act on that one alone.'}</p>
-      ${active||'<div style="color:var(--dim)">No hooks installed.</div>'}
+      ${active||'<div class="empty">No hooks installed. Pick one from the ready-made list below.</div>'}
       <div style="color:var(--dim2);font-size:12px;margin-top:8px">${esc(d.settings_path||'')}</div></div>
-    <div class="card"><h3>Templates</h3>
-      <p style="color:var(--dim);font-size:13px;margin-bottom:8px">Installing adds the hook to <b>every</b> account. A hook you disabled counts as installed, so it is never silently re-added beside itself.</p>
-      ${tmpl}</div>`);
+    <div class="card"><h3>${ic('add')} Ready-made hooks <span class="tag">${(d.templates||[]).length}</span></h3>
+      <p class="secthint">Installing adds the hook to <b>every</b> account. A hook you disabled still counts as installed, so it is never silently re-added beside itself.</p>
+      <div class="fld" style="margin:0 0 8px"><input id="hkQ" placeholder="Filter by name, what it does, or when it fires…" spellcheck="false">
+        <div style="color:var(--dim2);font-size:12px;margin-top:4px" id="hkCount"></div></div>
+      ${tmpl}</div>`))return;
+  bindFilter('hkQ','.trow','hkCount');
 }
 function hookAcct(dir){HKACCT=dir;drawPage('hooks');}
 async function hookEditFile(){

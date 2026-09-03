@@ -1123,10 +1123,16 @@ def api_hooks_get(q, body):
     per = [(n, dd, hooks._load(dd)) for n, dd in hooks.account_dirs()]
     return {'hooks': out,
             'settings_path': hooks.settings_path_for(cfgdir),
+            # the plain-English phrase for every event, so the screen can lead
+            # with "before Claude runs a tool" instead of `PreToolUse`
+            'events': hooks.EVENT_WHEN,
             'accounts': [{'name': n, 'dir': dd,
                           'count': sum(len(b or []) for b in (a.get('hooks') or {}).values())}
                          for n, dd, a in per],
+            # `event` rides along so the template list can be grouped by WHEN a
+            # hook fires, the same way the installed list is
             'templates': [{'key': k, 'desc': v.get('desc', ''),
+                           'event': v.get('event', ''),
                            'installed': _template_installed(hooks, d, v),
                            'missing': [n for n, _dd, a in per
                                        if not _template_installed(hooks, a, v)]}
@@ -1228,26 +1234,33 @@ def api_agents_library(q, body):
     # `path` was supplied, that one project's. The global Agents page has no
     # path, so it listed a fraction of what is installed — and the page that
     # now offers a machine-wide Sharpen has to show what it is about to touch.
-    from .agents import all_installed
+    from .agents import all_installed, category_of, installed_categories
     mine = []
     if q.get('path'):
         for scope, d in (('user', user_agents_dir()),
                          ('project', project_agents_dir(q['path']))):
             for n, desc, model, path in list_agents(d):
                 mine.append({'name': n, 'desc': (desc or '')[:140], 'model': model,
-                             'path': path, 'scope': scope})
+                             'path': path, 'scope': scope,
+                             'category': category_of(path)})
     else:
         for r in all_installed():
             if r['scope'] == 'library':
                 continue          # already listed below, by category
             mine.append({'name': r['name'], 'desc': r['desc'][:140], 'model': '',
-                         'path': r['path'],
+                         'path': r['path'], 'category': r['category'],
                          'scope': (r['scope'] if not r['project_path'] else
                                    'project · ' + os.path.basename(r['project_path']))})
     from .agents import KNOWN_TOOLS
     from .config import models
     vals, labels = models()
     return {'categories': cats, 'own': mine,
+            # every category name you can file a new agent under: the library's
+            # folders plus the ones your own agents already use, so the second
+            # agent in an invented category joins it instead of starting
+            # "Reviewers" beside "reviewers"
+            'category_names': sorted(set(list_categories())
+                                     | set(installed_categories())),
             # api_agent_create already accepted `tools` and `model`; the form
             # simply never had anything to offer for them.
             'known_tools': list(KNOWN_TOOLS),
@@ -1265,10 +1278,15 @@ def api_agent_create(q, body):
     d = project_agents_dir(body['path']) if body.get('scope') == 'project' else user_agents_dir()
     os.makedirs(d, exist_ok=True)
     p = os.path.join(d, f"{_slug(body['name'])}.md")
+    # `category` is claudectl's own frontmatter key — Claude Code ignores what
+    # it does not recognise, and `write_agent` preserves any key not in its
+    # fixed order, so filing an agent costs nothing at load time.
+    cat = (body.get('category') or '').strip()
     write_agent(p, {'name': body['name'],
                     'description': body.get('description', ''),
                     **({'tools': body['tools']} if body.get('tools') else {}),
-                    **({'model': body['model']} if body.get('model') else {})},
+                    **({'model': body['model']} if body.get('model') else {}),
+                    **({'category': cat} if cat else {})},
                 body.get('body', ''))
     return {'ok': True, 'file': p}
 
@@ -1696,7 +1714,7 @@ def api_memory_state(q, body):
     reinforcement counters and the outcome of the last automatic cycle. None of
     it left this handler, so the Memory tab could only ever show entity counts —
     it could not say what memory costs, what it dropped, or what it is doing."""
-    from .memhub import _state
+    from .memhub import _state, last_written
     from .lessons import pending_sids
     from . import hooks, memory, recall as _recall
     folder = _folder(q.get('cfgdir'), q['enc'])
@@ -1752,6 +1770,11 @@ def api_memory_state(q, body):
             # what a capped cycle actually means for the user: the rest waits
             # this long. Without it "still queued" has no answer to "until when".
             'auto_interval': int((st['settings'] or {}).get('auto_memory_interval', 3600)),
+            # "is this stale?" per artifact — epoch seconds, so the wire carries
+            # no formatting decision. Only the artifacts that are exactly one
+            # file are in here; see memhub.last_written for why the CLAUDE.md
+            # blocks deliberately are not.
+            'written': last_written(q['path'], folder),
             'est': st['est']}
 
 
@@ -2153,6 +2176,14 @@ def api_claude_md_get(q, body):
         {'key': 'memory', 'label': 'MEMORY — the digest claudectl builds',
          'present': bool(b['memory']), 'tokens': tokens_estimate(b['memory']),
          'text': b['memory']},
+        # Both used to be invisible here and counted as "Your prose" — the one
+        # row that promises claudectl never rewrites it. See split_blocks.
+        {'key': 'agents', 'label': 'AGENTS — the subagents installed here',
+         'present': bool(b['agents']), 'tokens': tokens_estimate(b['agents']),
+         'text': b['agents']},
+        {'key': 'loop', 'label': 'LOOP — what the background loop did',
+         'present': bool(b['loop']), 'tokens': tokens_estimate(b['loop']),
+         'text': b['loop']},
     ]
     return {'text': text, 'exists': bool(text), 'path': p, 'blocks': blocks,
             'tokens': tokens_estimate(text)}
@@ -2184,6 +2215,7 @@ def api_cc_settings_get(q, body):
                            'group': v[3]}
                        for k, v in ccsettings.SCHEMA.items()},
             'groups': ccsettings.GROUPS,
+            'group_help': ccsettings.GROUP_HELP,
             'accounts': [{'name': n, 'dir': d, 'values': ccsettings.read(d)}
                          for n, d in _c.all_config_dirs()]}
 

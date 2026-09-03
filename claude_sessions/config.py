@@ -1002,3 +1002,25 @@ _LOOP_END       = '<!-- CLAUDECTL:LOOP:END -->'
 
 _GMCP_START = '<!-- MCP:{name}:START -->'
 _GMCP_END   = '<!-- MCP:{name}:END -->'
+
+
+def generated_note(source, how):
+    """The one-line notice that opens every machine-written block.
+
+    A bare `<!-- AUTOGEN:START -->` names no tool, states no prohibition and
+    offers no way back — so a hand edit inside it looks safe and is silently
+    replaced on the next pass. Every convention with independent precedent
+    (Ansible `blockinfile`, all-contributors, doctoc, conda) puts the tool, the
+    prohibition and the regeneration route in the notice.
+
+    It goes INSIDE the block rather than into the sentinel itself, and that is
+    deliberate: about twenty readers match the opener as a literal string, so
+    changing it would stop matching an existing file and append a SECOND copy
+    of every block. A line after the opener is regenerated with the content, so
+    old files gain it on their next write with no migration at all.
+
+    Free, in context terms: Anthropic strips block-level HTML comments before
+    injection, so this text costs the session nothing.
+    """
+    return (f"<!-- Written by claudectl from {source}. Do not edit here — the "
+            f"next pass replaces it. Rebuild: {how} -->")

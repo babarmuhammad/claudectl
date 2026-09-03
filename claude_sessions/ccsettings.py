@@ -111,6 +111,27 @@ SCHEMA = {
 #: display order, taken from SCHEMA rather than repeated
 GROUPS = list(dict.fromkeys(v[3] for v in SCHEMA.values()))
 
+#: One line per group, saying what the group is FOR in the reader's words.
+#:
+#: A group name alone ("Teams & extensions") tells someone who already knows
+#: Claude Code where to look and tells everybody else nothing. The per-key help
+#: below is written against the key; this is written against the question the
+#: reader arrived with, which is the layer that was missing.
+GROUP_HELP = {
+    'Model & reasoning': 'Which model answers you, and how hard it thinks '
+                         'before it does.',
+    'Permissions & auto mode': 'What Claude may do without stopping to ask you.',
+    'Context & memory': 'What Claude carries through a long conversation, and '
+                        'what it remembers for next time.',
+    'Editing & interface': 'How the terminal looks, and how you type into it.',
+    'Sessions & maintenance': 'How much history is kept on disk, and how Claude '
+                              'Code updates itself.',
+    'Teams & extensions': 'What Claude Code is allowed to load and run '
+                          'alongside itself.',
+    'Advanced': 'Raw JSON, for the few settings with no simpler shape. Invalid '
+                'syntax is refused rather than saved.',
+}
+
 
 #: sentinel for "this key is not set" — None and '' are both legal VALUES for
 #: some keys, so absence needs its own marker

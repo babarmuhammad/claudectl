@@ -33,28 +33,6 @@ writes are a second source of it.
 
 ## 1. Still open
 
-### `updated <n> ago` on each machine-written row (research P1 #10)
-Answers "is this stale?", the second question after "who wrote it?". Blocked on
-data, not design: `/api/memory/state` carries `generated_at` (the graph build)
-and `auto_updated` (the last cycle), but there is **no per-artifact timestamp** —
-the worklog, the conventions block and the rule files are each written on their
-own schedule. Either stamp each write, or state the one build time on the
-`Always on` bucket header and leave the rows bare.
-
-### CLAUDE.md sentinel markers should name the tool and how to regenerate (P3 #15–17)
-Currently bare: `<!-- AUTOGEN:START -->`, `<!-- SESSIONS:START -->`,
-`<!-- CLAUDECTL:MEMORY:START -->` (`config.py:932`). The convention with four
-independent precedents (Ansible `blockinfile`, all-contributors, doctoc, conda)
-puts the tool name, the prohibition and the regeneration command *inside* the
-marker — and Anthropic strips block-level HTML comments before injection, so
-**the marker text is free**. There is no budget argument for terse sentinels.
-
-**This one needs a migration, which is why it is not done.** `_swap_blocks`
-matches the literal string; changing it means an old CLAUDE.md no longer matches,
-so the block is *appended again* and every project ends up with two. Any change
-must accept the old markers for reading and write the new ones — a tuple of
-accepted openers, not a replaced constant.
-
 ### AGENTS.md (research disagreement E)
 AGENTS.md is the cross-tool standard Claude Code deliberately does not read; it
 recommends `@AGENTS.md` as CLAUDE.md's first line instead. If claudectl's
@@ -65,6 +43,38 @@ change.**
 ---
 
 ## 2. Landed since the handoff
+
+### `updated <n> ago` on each machine-written row (P1 #10) — done
+It was called "blocked on data", and that was the wrong reading: the data was
+already on disk. The answer is each artifact's own **mtime** (`memhub.last_written`,
+on the wire as `written`), not a stamp written into the payload — a stamp is a
+second thing to keep in step with the write, and one `save()` that forgets it
+makes the row lie confidently, whereas an mtime cannot disagree with the file.
+
+Only artifacts that ARE exactly one file are dated. A CLAUDE.md block shares a
+file with your own prose, so dating it off that file would call the digest fresh
+because you fixed a typo — those rows stay bare and the build time is stated
+once, on the `Always on` group, which is what this note originally proposed as
+the fallback. Gate: `test_only_an_artifact_that_is_one_file_gets_dated`.
+
+### The generated-block notice (P3 #15–17) — done, with no migration
+The migration this note feared is avoided entirely by putting the notice on the
+line *after* the opener rather than inside it. Every writer already rewrites the
+block's content, so an old CLAUDE.md gains the notice on its next write and the
+~20 readers that match the opener as a literal string are untouched.
+`config.generated_note(source, how)` is the one wording — tool name, prohibition,
+route back — and `test_every_generated_block_says_who_wrote_it_and_how_to_rebuild`
+makes it structural: a module that opens a machine block must also write a notice.
+
+### Two blocks were being reported as your own prose
+Not in the research, found while making the tab honest. `ctxaudit.split_blocks`
+knew three sentinels; `CLAUDECTL:AGENTS` and `CLAUDECTL:LOOP` fell into
+`manual`, so the token audit charged them to your prose, the CLAUDE.md tab
+labelled them *"yours — claudectl never rewrites it unprompted"* while claudectl
+rewrote them on every agent change, and AI compression was handed claudectl's
+own generated tables to reword. Splitting them out required carrying them across
+a rewrite in the same change (`_preserve_machine_blocks`), or compress would
+have deleted them — the two halves are one change, and one gate each.
 
 ### The bucket restructure (the thing that was interrupted)
 The interrupted edit had rewritten `invRow` from six parameters to five and added

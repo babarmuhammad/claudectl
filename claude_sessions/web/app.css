@@ -537,15 +537,28 @@ html.mo-off .tchart .omnibg{animation:none}
 .hs{color:var(--dim);font-size:13.5px;margin-top:1px}
 .hrow{display:flex;align-items:center;gap:10px;padding:7px 0;border-top:1px solid var(--line)}
 .hrow .info{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* An offer, not an installed hook — see the note at `tmplRow`. Lighter than
+   `.hrow` on purpose: nothing here is live yet. */
+.trow{display:flex;align-items:center;gap:10px;padding:5px 0}
 /* One skill row. Same idea as .hrow, but what may shrink is different: the
    COMMAND is the thing you type, so it never truncates — the description is
    what gives way, and the actions stay reachable at any width. */
 .skrow{display:flex;align-items:center;gap:8px;padding:6px 0;flex-wrap:wrap;
   border-top:1px solid var(--line)}
 .skcmd{font-family:var(--mono);font-size:12.5px;color:var(--cyan);flex:none}
-.agrow{display:flex;align-items:center;gap:10px;padding:4px 0}
-.skdesc{flex:1;min-width:100px;color:var(--dim);font-size:12px;
-  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* The description is the ONE field Claude matches on, so it gets a line of its
+   own instead of a nowrap span squeezed between the name and three buttons —
+   ellipsised at 100px it was unreadable exactly where it matters most. */
+.agrow{display:flex;align-items:flex-start;gap:10px;padding:6px 0;
+  border-top:1px solid var(--line)}
+.agrow:first-of-type{border-top:0}
+.agmain{flex:1;min-width:0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.agdesc{flex-basis:100%;color:var(--dim);font-size:12px;line-height:1.5}
+/* Same reason as `.agdesc`: this is the field Claude matches a skill on, and
+   ellipsised into whatever the tags and buttons left over it read as nothing.
+   It takes the row's second line, so its length never squeezes the actions. */
+.skdesc{flex-basis:100%;color:var(--dim);font-size:12px;line-height:1.5}
+.skrow .sp{flex:1}
 .hlink{color:var(--cyan);cursor:pointer;font-weight:600;font-size:13.5px}
 .hlink:hover{text-decoration:underline}
 .tstat{font-size:18px;font-weight:700;margin-top:6px}
@@ -644,9 +657,14 @@ table.tbl{width:100%;border-collapse:collapse;font-size:13px}
 .cchead>*{position:sticky;top:0;z-index:2;background:var(--panel);
   color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.7px;
   border-bottom:1px solid var(--line);padding-bottom:6px}
+/* the filter's group wrapper is a pass-through, or it would become one grid
+   cell and collapse every row inside it into a single column */
+.cctable .fgrp{display:contents}
 .ccgrp{grid-column:1/-1;margin-top:14px;padding:6px 0 4px;
   color:var(--txt);font-size:11px;font-weight:600;text-transform:uppercase;
   letter-spacing:.9px;border-bottom:1px solid var(--line)}
+.ccgrp .cchelp{font-weight:400;text-transform:none;letter-spacing:0;
+  font-size:12px;margin-top:3px}
 .cclbl{display:flex;gap:8px;align-items:flex-start;padding-right:8px}
 .cclbl code{color:var(--dim2);font:var(--fs-micro)/1.5 var(--mono);margin-left:6px}
 .cchelp{color:var(--dim);font-size:12px;margin-top:1px}
@@ -1104,6 +1122,14 @@ details.adv>summary:hover{color:var(--txt)}
   padding:10px 12px}
 .amrules:empty{display:none}
 .secthint{color:var(--dim);font-size:12.5px;margin-bottom:9px}
+/* A trigger stated once over the rows it governs — hooks group by when they
+   fire, and the phrase leads while the API name follows in mono, because the
+   phrase is what a reader understands and the name is what the docs use. */
+.hkwhen{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;
+  margin:14px 0 4px;padding-top:8px;border-top:1px solid var(--line)}
+.fgrp:first-child .hkwhen{margin-top:2px;padding-top:0;border-top:0}
+.hkwhen span{color:var(--txt);font-weight:600;font-size:13px}
+.hkwhen code{color:var(--dim2);font:11px var(--mono)}
 /* a run of "cd ×272 · py ×93 · …" in monospace is one unbreakable line to the
    eye; a chip per command gives the count somewhere to live */
 .cmdchips{display:flex;flex-wrap:wrap;gap:6px}

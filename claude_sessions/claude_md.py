@@ -9,13 +9,23 @@ import shutil
 from itertools import islice
 
 from .config import (W, _AUTOGEN_START, _AUTOGEN_END, _SESSIONS_START, _SESSIONS_END,
-                     _AI_MARKER, _MEMORY_START, _MEMORY_END)
+                     _AI_MARKER, _MEMORY_START, _MEMORY_END,
+                     _AGENTS_START, _AGENTS_END, _LOOP_START, _LOOP_END)
 from .config import get_claude_exe, open_in_editor
 from . import config as _cfg
 from . import config as _c
 from .repos import _git      # pins encoding='utf-8' — see repos._git docstring
 from .sessions import get_session_info, get_session_rich_summary, read_extra_paths, format_age
 from .ui import text_input, _cls, wait_event, poll_event
+
+#: Every block in a PROJECT CLAUDE.md that claudectl writes and therefore owns.
+#: AUTOGEN and SESSIONS are absent on purpose: they are rebuilt from scratch on
+#: the same pass that rewrites the file, so carrying the old ones across would
+#: put back exactly what was just regenerated. (Conventions live in the GLOBAL
+#: file and never appear here.)
+_MACHINE_BLOCKS = ((_MEMORY_START, _MEMORY_END),
+                   (_AGENTS_START, _AGENTS_END),
+                   (_LOOP_START, _LOOP_END))
 
 
 #: wall-clock ceiling for the streaming `claude -p` analysis. Generous — the
@@ -71,8 +81,10 @@ def upsert_block(project_path, start, end, section):
 def write_memory_block(project_path, digest):
     """Insert/replace the CLAUDECTL:MEMORY sentinel block in <project>/CLAUDE.md.
     Returns (ok, old_content, new_content)."""
+    note = _c.generated_note("this project's semantic memory graph",
+                             "the project's Memory tab -> Build with Claude")
     section = (f"{_MEMORY_START}\n## Project memory (claudectl — auto-maintained)\n"
-               f"<!-- Generated from the semantic graph; edits here are overwritten -->\n\n"
+               f"{note}\n\n"
                f"{digest}\n{_MEMORY_END}\n")
     return upsert_block(project_path, _MEMORY_START, _MEMORY_END, section)
 
@@ -99,6 +111,22 @@ def _preserve_block(final, existing, start=_MEMORY_START, end=_MEMORY_END):
     if start in final and end in final:  # drop any stray block the model emitted
         final = final[:final.index(start)] + final[final.index(end) + len(end):]
     return final.rstrip('\n') + '\n\n' + block.rstrip('\n') + '\n'
+
+
+def _preserve_machine_blocks(final, existing):
+    """Carry EVERY block claudectl maintains across a rewrite.
+
+    Only MEMORY was carried, because only MEMORY was known here. The subagent
+    delegation table and the loop log are written by `agents.write_routing_block`
+    and the loop runner into the same file, and both landed in the "manual"
+    remainder — so AI compression was shown claudectl's own generated tables,
+    reworded them, and the CLAUDE.md tab labelled them *your prose*. Splitting
+    them out of `manual` without carrying them across would have deleted them
+    instead, which is why the two changes are one change.
+    """
+    for start, end in _MACHINE_BLOCKS:
+        final = _preserve_block(final, existing, start, end)
+    return final
 
 
 def resolve_memory_files(project_path):
@@ -191,6 +219,16 @@ def _parse_existing_sessions(text):
     return entries
 
 
+#: The notice that opens each generated block — see `config.generated_note`
+#: for why it lives inside the block rather than inside the sentinel.
+_SESSIONS_NOTE = _c.generated_note(
+    "your past sessions in this project",
+    "the project's CLAUDE.md tab, or automatically on the next pass")
+_AUTOGEN_NOTE = _c.generated_note(
+    "this project's git repos and their recent commits",
+    "the project's CLAUDE.md tab -> Rebuild")
+
+
 def _build_sessions_block(proj_folder, existing_entries, cap=None):
     """Merge fresh session scan with existing entries. Returns full sessions
     block text. Kept to the most recent `cap` entries (claude_md_sessions_cap,
@@ -219,7 +257,8 @@ def _build_sessions_block(proj_folder, existing_entries, cap=None):
         if existing_entries:
             kept = list(existing_entries.values())
             kept = kept[:cap] if cap else kept
-            return "## Session topics\n" + '\n'.join(kept) + "\n\n"
+            return (_SESSIONS_NOTE + "\n## Session topics\n"
+                    + '\n'.join(kept) + "\n\n")
         return ''
 
     merged = dict(existing_entries)  # key -> line, preserves all old entries
@@ -276,7 +315,8 @@ def _build_sessions_block(proj_folder, existing_entries, cap=None):
     if cap:
         ordered = ordered[:cap]              # newest survive, oldest drop
 
-    return "## Session topics\n" + '\n'.join(merged[k] for k in ordered) + "\n\n"
+    return (_SESSIONS_NOTE + "\n## Session topics\n"
+            + '\n'.join(merged[k] for k in ordered) + "\n\n")
 
 
 def _build_autogen_block(project_path, proj_folder, commits=None):
@@ -288,7 +328,7 @@ def _build_autogen_block(project_path, proj_folder, commits=None):
         except Exception:
             commits = 7
     commits = int(commits or 7)
-    block = ''
+    block = _AUTOGEN_NOTE + '\n'
 
     extra_paths = read_extra_paths(proj_folder)
     search_roots = [(project_path, None)]
@@ -524,7 +564,7 @@ def ai_compress_claude_md(project_path, proj_folder=None):
                     if sessions_content else '')
     final = replace_machine_blocks(compressed.rstrip('\n') + '\n',
                                    new_autogen, new_sessions)
-    final = _preserve_block(final, existing)
+    final = _preserve_machine_blocks(final, existing)
     if _AI_MARKER in existing and _AI_MARKER not in final:
         lines = final.split('\n')
         insert_at = 1
@@ -1092,7 +1132,7 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
     final = replace_machine_blocks(ai_content, new_autogen, new_sessions)
 
     # Never drop the semantic-memory block — reinject it verbatim from the old file
-    final = _preserve_block(final, existing_for_sessions)
+    final = _preserve_machine_blocks(final, existing_for_sessions)
 
     # Preview the DIFF (old → proposed) so the user approves/rejects based on
     # what actually changed. 'f' toggles to the full proposed content.

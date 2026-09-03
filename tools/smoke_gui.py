@@ -195,6 +195,12 @@ ROUTES = {
                              'error': ''},
     '/api/cc-settings': {
         'groups': ['Model & reasoning', 'Context & memory', 'Advanced'],
+        'group_help': {
+            'Model & reasoning': 'Which model answers you, and how hard it '
+                                 'thinks before it does.',
+            'Context & memory': 'What Claude carries through a long '
+                                'conversation, and what it remembers for next time.',
+            'Advanced': 'Raw JSON, for the few settings with no simpler shape.'},
         'schema': {
             'model': {'kind': 'str', 'choices': [], 'group': 'Model & reasoning',
                       'help': 'Default model id for new sessions'},
@@ -271,6 +277,13 @@ ROUTES = {
         'last_error': 'claude exited 1: rate limit reached',
         'hits_pending': 12,
         'auto_interval': 1800,
+        # per-artifact mtimes, epoch seconds. Spread out on purpose so
+        # "updated N ago" renders a real range instead of one value seven
+        # times, and one of them is old enough to read as stale.
+        'written': {'graph': _NOW - 5400, 'rules': _NOW - 90000,
+                    'worklog': _NOW - 600, 'hits': _NOW - 120,
+                    'dirty': _NOW - 60, 'manifest': _NOW - 5400,
+                    'snapshots': _NOW - 172800},
         'est': {'digest_tokens': 232, 'hook_budget': 600, 'rules': [
             {'file': 'claudectl-mem-app-api.md', 'tokens': 372,
              'unit': 'app/api', 'glob': 'api/**'},
@@ -385,7 +398,13 @@ ROUTES = {
              'text': '## Session topics\n- **a1b2c3d4** (44 msgs): checkout retries\n'},
             {'key': 'memory', 'label': 'MEMORY — the digest claudectl builds',
              'present': True, 'tokens': 232,
-             'text': '## Project memory\n- **app/api** — checkout, retries\n'}]},
+             'text': '## Project memory\n- **app/api** — checkout, retries\n'},
+            # both used to be invisible here and counted as "Your prose"
+            {'key': 'agents', 'label': 'AGENTS — the subagents installed here',
+             'present': True, 'tokens': 140,
+             'text': '## Subagents available here\n- **reviewer** — reviews diffs\n'},
+            {'key': 'loop', 'label': 'LOOP — what the background loop did',
+             'present': False, 'tokens': 0}]},
     # one import is BROKEN — the case the row exists to surface
     '/api/memory-map': {'files': [
         {'label': 'user (default)', 'path': 'C:/Users/x/.claude/CLAUDE.md',
@@ -427,8 +446,18 @@ ROUTES = {
         {'label': 'MCP servers (2) — rough estimate', 'tokens': None, 'lazy': False,
          'warnings': [], 'path': None}]},
     '/api/agents/library': {'own': [
+        # two categories AND one unfiled row: the grouping, its sort (the
+        # unfiled heading goes last) and the category picker all need more
+        # than one bucket to be exercised at all
         {'name': 'reviewer', 'desc': 'reviews diffs', 'scope': 'user',
-         'path': 'C:/x/agents/reviewer.md', 'model': ''}],
+         'path': 'C:/x/agents/reviewer.md', 'model': '',
+         'category': 'Quality security'},
+        {'name': 'migrator', 'desc': 'moves schemas', 'scope': 'user',
+         'path': 'C:/x/agents/migrator.md', 'model': '',
+         'category': 'Core development'},
+        {'name': 'scratch', 'desc': 'odd jobs', 'scope': 'user',
+         'path': 'C:/x/agents/scratch.md', 'model': '', 'category': ''}],
+        'category_names': ['Core development', 'Quality security'],
         'categories': [
             {'category': '01-core-development', 'agents': [
                 {'name': 'backend-developer', 'desc': 'server-side APIs',
@@ -448,8 +477,17 @@ ROUTES = {
         {'event': 'PreToolUse', 'index': 0, 'enabled': False,
          'label': 'block-rm-rf', 'matcher': 'Bash'}],
         'settings_path': 'C:/x/settings.json',
+        'events': {'Stop': 'when Claude finishes a turn',
+                   'PreToolUse': 'before Claude runs a tool',
+                   'SessionStart': 'when a session starts'},
         'accounts': [{'name': 'default', 'dir': '', 'count': 2}],
-        'templates': []},
+        # two templates on two DIFFERENT events, so the grouped list and its
+        # filter are exercised rather than rendered as one degenerate group
+        'templates': [
+            {'key': 'block-rm-rf', 'desc': 'Refuse rm -rf', 'event': 'PreToolUse',
+             'installed': True, 'missing': []},
+            {'key': 'inject-memory', 'desc': 'Inject project memory at startup',
+             'event': 'SessionStart', 'installed': False, 'missing': []}]},
     '/api/omniroute/status': {'ok': False}, '/api/failover/status': {'running': False},
     '/api/memory/auto-list': {'projects': []},
     '/api/plugins': {'dir': 'C:/x/plugins', 'marketplaces': [
@@ -1110,15 +1148,40 @@ def main():
         pg.wait_for_timeout(900)
         check('the agent library has a filter',
               pg.evaluate("!!document.querySelector('#agQ')"))
-        pg.evaluate("(()=>{const i=document.querySelector('#agQ');i.value='security';"
+        # your own agents are divided by category too — a flat roll of
+        # everything installed is the wall the library would be without folders
+        heads=pg.evaluate("[...document.querySelectorAll('#content .fgrp .hkwhen span')]"
+                          ".map(e=>e.textContent.trim())")
+        check('your agents are grouped by category, unfiled last',
+              heads==['Core development','Quality security','Uncategorised'],heads)
+        pg.evaluate("(()=>{const i=document.querySelector('#agQ');i.value='migrat';"
                     "i.dispatchEvent(new Event('input'));})()")
         pg.wait_for_timeout(200)
         vis=pg.evaluate("[...document.querySelectorAll('#content .agrow')]"
                         ".filter(e=>e.style.display!=='none').length")
+        grps=pg.evaluate("[...document.querySelectorAll('#content .fgrp')]"
+                         ".filter(e=>e.style.display!=='none').length")
+        check('the agent filter drops the categories it emptied',
+              vis==1 and grps==1,f'{vis} rows in {grps} groups')
+        pg.evaluate("(()=>{const i=document.querySelector('#agQ');i.value='security';"
+                    "i.dispatchEvent(new Event('input'));})()")
+        pg.wait_for_timeout(200)
         opened=pg.evaluate("[...document.querySelectorAll('#content details')]"
                            ".filter(d=>d.open&&d.style.display!=='none').length")
-        check('the agent filter narrows and opens the matching category',
-              vis==1 and opened==1,f'{vis} rows, {opened} open')
+        check('the agent filter opens the matching library category',opened==1,opened)
+        # filing a new agent must offer the categories that exist AND accept a
+        # name that does not — one control, not a select plus an escape hatch
+        # NOT `pg.evaluate("agNew()")`: evaluate awaits what the expression
+        # returns, and this one returns a promise that resolves on OK/Cancel —
+        # the tool would wait for a click that is never coming
+        pg.evaluate("agNew();0")
+        pg.wait_for_timeout(900)
+        opts=pg.evaluate("[...document.querySelectorAll('#pBody datalist option')]"
+                         ".map(o=>o.value)")
+        check('the new-agent form offers the existing categories and takes a new one',
+              opts==['Core development','Quality security'],opts)
+        pg.evaluate("document.querySelector('#pCancel').click()")
+        pg.wait_for_timeout(300)
         # go(<global page>) clears CUR; the project-tab checks below need it back
         pg.evaluate("openProject(ST.projects[0])")
         pg.wait_for_timeout(500)
@@ -1232,6 +1295,17 @@ def main():
               wsr and wsr['head'])
         check('memory history is on the memory tab',
               pg.evaluate("!!document.querySelector('#histOut')"))
+        # "is this stale?" is the second question after "who wrote it?", and no
+        # row could answer it — one build time for artifacts written by five
+        # different code paths on five different schedules
+        inv = pg.evaluate(
+            "(()=>{const h=document.querySelector('#memInv');"
+            "return h?h.innerText:'';})()")
+        check('each machine-written row says when it was last written',
+              inv.count('updated ') >= 5, inv.count('updated '))
+        check('a row that cannot honestly be dated is left bare',
+              'CLAUDE.md digest' in inv
+              and 'updated' not in inv.split('CLAUDE.md digest')[1].split('AUTOGEN')[0])
         # a name and a hit count says a fact matters without saying what it is
         pg.evaluate("entDetail('CheckoutHandler')")
         pg.wait_for_timeout(600)
@@ -1255,11 +1329,20 @@ def main():
         pg.wait_for_timeout(900)
         blk = pg.evaluate(
             "(()=>{const h=document.querySelector('#cmBlocks');if(!h)return null;"
-            "return {rows:h.querySelectorAll('.hrow').length,txt:h.innerText};})()")
-        check('CLAUDE.md is shown as its blocks', bool(blk) and blk['rows'] == 5,
+            "return {rows:h.querySelectorAll('.agrow').length,txt:h.innerText};})()")
+        check('CLAUDE.md is shown as its blocks', bool(blk) and blk['rows'] == 7,
               blk and blk['rows'])
         check('each block carries its token cost',
-              bool(blk) and blk['txt'].count('tok') >= 5)
+              bool(blk) and blk['txt'].count('tok') >= 7)
+        # who wrote it is the FIRST question a reader has, and the row used to
+        # make them infer it. The subagent table is the one that was labelled
+        # "your prose" while claudectl rewrote it on every agent change.
+        check('every block says who writes it',
+              bool(blk) and blk['txt'].count('claudectl writes it') == 5
+              and blk['txt'].count('you write it') == 2, blk and blk['txt'][:0])
+        check('every block says what it IS, not just who wrote it',
+              bool(blk) and 'when to delegate to each' in blk['txt']
+              and 'what has been committed lately' in blk['txt'])
         check('each machine block has the button that regenerates it',
               pg.evaluate("document.querySelectorAll('#cmBlocks .btn').length") >= 4)
         cm = pg.evaluate("document.querySelector('#content').innerText")
@@ -1316,6 +1399,47 @@ def main():
         rows = pg.evaluate("document.querySelectorAll('#content .hrow').length")
         check('every hook row can be enabled or disabled', rows == 0 or boxes == rows,
               f'{boxes} controls on {rows} rows')
+        # both lists group by WHEN a hook fires, and the heading says it in
+        # English — `PreToolUse` alone is unreadable to anyone who has not
+        # already learnt Claude Code's vocabulary
+        check('hooks are grouped under a plain-English trigger',
+              pg.evaluate("document.querySelector('#content').innerText"
+                          ".includes('before Claude runs a tool')"))
+        # a filtered-away group must take its heading with it, or a search
+        # leaves headings standing over nothing
+        pg.evaluate("(()=>{const i=document.querySelector('#hkQ');"
+                    "i.value='inject';i.dispatchEvent(new Event('input'));})()")
+        pg.wait_for_timeout(200)
+        vis_rows = pg.evaluate(
+            "[...document.querySelectorAll('#content .trow')]"
+            ".filter(e=>e.style.display!=='none').length")
+        # only the groups this filter GOVERNS: the installed-hooks groups hold
+        # `.hrow`, so bindFilter leaves them alone, which is correct
+        vis_grps = pg.evaluate(
+            "[...document.querySelectorAll('#content .fgrp')]"
+            ".filter(e=>e.querySelector('.trow')&&e.style.display!=='none').length")
+        check('the hook filter narrows the list and drops the empty groups',
+              vis_rows == 1 and vis_grps == 1, f'{vis_rows} rows in {vis_grps} groups')
+
+        pg.evaluate("go('client')")
+        pg.wait_for_timeout(900)
+        check('each settings group says what it is for',
+              pg.evaluate("document.querySelector('#content').innerText"
+                          ".includes('how hard it thinks')"))
+        # the settings grid is display:contents all the way down — a group
+        # wrapper that becomes a grid CELL collapses every row inside it
+        cols = pg.evaluate(
+            "(()=>{const t=document.querySelector('.cctable');"
+            "return t?getComputedStyle(t).gridTemplateColumns.split(' ').length:0;})()")
+        check('the settings grid keeps a column per account plus label and action',
+              cols == 4, f'{cols} columns')
+        pg.evaluate("(()=>{const i=document.querySelector('#ccQ');"
+                    "i.value='compact';i.dispatchEvent(new Event('input'));})()")
+        pg.wait_for_timeout(200)
+        vis = pg.evaluate(
+            "[...document.querySelectorAll('#content .ccrow[data-f]')]"
+            ".filter(e=>e.style.display!=='none').length")
+        check('the settings filter finds one setting by what it does', vis == 1, vis)
 
         pg.evaluate("go('home')")
         pg.wait_for_timeout(500)

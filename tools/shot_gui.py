@@ -294,7 +294,11 @@ def main():
             pg.evaluate(f"go('{page}')")
             pg.wait_for_timeout(700)
             audit_page(pg, page)
-            if page in ('plugins', 'ostyles', 'client'):
+            # agents/skills/hooks are three of the densest pages in the app and
+            # each groups its rows under a heading now; the overflow audit sees
+            # a card that fits, not a list that reads
+            if page in ('plugins', 'ostyles', 'client',
+                        'agents', 'skills', 'hooks'):
                 pg.screenshot(path=os.path.join(OUT, f'_shot_{page}.png'))
         # ── project tabs ──
         # The page walk above only drives the GLOBAL pages; the project side is

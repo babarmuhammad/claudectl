@@ -67,13 +67,23 @@ def protect_section(md_path, needle):
 
 def split_blocks(text):
     """Split CLAUDE.md text into its sentinel machine blocks and the manual
-    rest. Returns {'autogen','sessions','memory','manual'} ('' when absent)."""
+    rest. Returns {'autogen','sessions','memory','agents','loop','manual'}
+    ('' when absent).
+
+    `agents` and `loop` were missing, so claudectl's own generated tables — the
+    subagent delegation table and the loop log — counted as MANUAL everywhere
+    this is used: the token audit attributed them to your prose, the CLAUDE.md
+    tab labelled them "yours — claudectl never rewrites it unprompted", and AI
+    compression was handed them to reword. See `_MACHINE_BLOCKS`.
+    """
     manual = text or ''
     out = {}
     for key, (start, end) in (
             ('autogen',  (_c._AUTOGEN_START, _c._AUTOGEN_END)),
             ('sessions', (_c._SESSIONS_START, _c._SESSIONS_END)),
-            ('memory',   (_c._MEMORY_START, _c._MEMORY_END))):
+            ('memory',   (_c._MEMORY_START, _c._MEMORY_END)),
+            ('agents',   (_c._AGENTS_START, _c._AGENTS_END)),
+            ('loop',     (_c._LOOP_START, _c._LOOP_END))):
         if start in manual and end in manual:
             i, j = manual.index(start), manual.index(end) + len(end)
             out[key] = manual[i:j]
@@ -156,6 +166,12 @@ def audit_items(project_path, proj_folder, settings=None):
                 tokens_estimate(blocks['sessions']), md_path, warnings=w)
         if blocks['memory']:
             add('CLAUDE.md · memory digest', tokens_estimate(blocks['memory']), md_path)
+        # both were counted inside "manual content" until split_blocks learnt
+        # them, which is the one number on this screen you cannot act on
+        if blocks['agents']:
+            add('CLAUDE.md · subagent table', tokens_estimate(blocks['agents']), md_path)
+        if blocks['loop']:
+            add('CLAUDE.md · loop log', tokens_estimate(blocks['loop']), md_path)
     else:
         add('CLAUDE.md', 0, md_path or None,
             warnings=['missing — press c in the sessions menu to scaffold'])
