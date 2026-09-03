@@ -101,9 +101,14 @@ def _walk_source_files(root, max_files):
 
 
 def _discover_repos(root, proj_folder):
-    """Absolute repo paths under the project + linked extra paths."""
+    """Absolute cluster paths under the project + linked extra paths.
+
+    A cluster is a git repo OR a directory with its own manifest: a subproject
+    you drop into a project has to become its own section of the graph the same
+    day, and most of them (a Next.js app, a Go service) never carry a `.git`.
+    """
     try:
-        from .repos import find_git_repos
+        from .repos import find_git_repos, find_subprojects
         from .sessions import read_extra_paths
     except Exception:
         return []
@@ -117,7 +122,7 @@ def _discover_repos(root, proj_folder):
         try:
             # depth 4 and submodules included: a submodule genuinely IS its own
             # cluster, and attributing its files to the parent was wrong
-            for repo in find_git_repos(r):
+            for repo in find_git_repos(r) + find_subprojects(r):
                 rp = os.path.abspath(repo)
                 if rp not in seen:
                     seen.append(rp)

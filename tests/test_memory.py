@@ -52,6 +52,51 @@ def test_refresh_covers_every_unit(monkeypatch, tmp_path):
     assert mem['summaries']                           # per-unit summaries stored
 
 
+def test_a_subproject_with_its_own_manifest_is_its_own_section(monkeypatch, tmp_path):
+    """A section of the graph was a git repo, so a Next.js app dropped into a
+    project was folded into the parent's cluster and flattened into its module
+    keys — no summary of its own, no rule file, no digest bullet."""
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    os.makedirs(os.path.join(actual, '.git'))            # the PARENT is the repo
+    _mkfile(actual, 'web/package.json', '{}\n')
+    _mkfile(actual, 'web/app/page.ts')
+    _mkfile(actual, 'srv/x.py')
+    _stub(monkeypatch)
+    mem = memory.refresh_memory(actual, folder, 'alpha')
+
+    units = {(r, m) for r, m, _fs in memory._units(actual, folder)}
+    assert ('web', 'app') in units, 'modules are relative to the subproject'
+    assert ('alpha', 'srv') in units, 'the rest still belongs to the parent repo'
+    assert 'web' in mem['repo_summaries']
+    assert '**web**' in memory.build_digest_micro(mem)
+
+
+def test_a_one_file_directory_is_not_a_module_of_its_own(monkeypatch, tmp_path):
+    """A unit costs a Claude call and a rule file. Once a subproject became its
+    own cluster its module keys turned relative to IT, and an app-router tree —
+    one directory per page — split into twenty units of one file each."""
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'web/package.json', '{}\n')
+    for page in ('about', 'faq', 'download'):
+        _mkfile(actual, f'web/app/{page}/page.ts')
+    for i in range(3):
+        _mkfile(actual, f'web/lib/m{i}.ts')
+    units = {m: len(fs) for r, m, fs in memory._units(actual, folder) if r == 'web'}
+    assert units == {'app': 3, 'lib': 3}, 'the page dirs fold, the module stays'
+
+
+def test_a_manifest_at_the_project_root_does_not_recluster_it(monkeypatch, tmp_path):
+    """A subproject is UNDER the root. Counting the root itself would relabel
+    every file of a non-git project from its top-level dir to the root's name."""
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'pyproject.toml', '[project]\n')
+    _mkfile(actual, 'mod1/a.py')
+    assert {r for r, _m, _fs in memory._units(actual, folder)} == {'mod1'}
+
+
 def test_incremental_only_changed_unit(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     actual, enc, folder, _ = sb.add_project('alpha')
@@ -789,6 +834,53 @@ def test_a_capped_cycle_actually_uses_the_priority_order(monkeypatch, tmp_path):
     memory.refresh_memory(actual, folder, 'alpha', auto_cap=1)
     assert calls == ['core/(root)'], \
         'one call must go to the important unit, not the largest one'
+
+
+def test_the_more_recently_touched_module_goes_first(monkeypatch, tmp_path):
+    """The last tiebreak was file COUNT, so a module written this afternoon lost
+    to an equally-ranked one that merely had more files in it."""
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    _mkfile(actual, 'aold/a.py')                         # first alphabetically…
+    _mkfile(actual, 'aold/b.py')                         # …and the bigger one
+    _mkfile(actual, 'znew/a.py')
+    _stub(monkeypatch)
+    memory.refresh_memory(actual, folder, 'alpha')
+
+    for rel in ('aold/a.py', 'aold/b.py', 'znew/a.py'):
+        _mkfile(actual, rel, 'changed = 1\n')
+    stale = os.path.getmtime(os.path.join(actual, 'znew', 'a.py')) - 86400
+    for rel in ('aold/a.py', 'aold/b.py'):
+        os.utime(os.path.join(actual, rel.replace('/', os.sep)), (stale, stale))
+
+    calls = []
+    _stub(monkeypatch, calls)
+    memory.refresh_memory(actual, folder, 'alpha', auto_cap=1)
+    assert calls == ['znew/(root)']
+
+
+def test_a_new_unit_is_not_starved_by_what_you_are_editing(monkeypatch, tmp_path):
+    """Never-covered units rank above covered ones but BELOW what you just
+    edited, and the edit log is refilled by every turn you work — so a
+    subproject added to a project under active development never landed."""
+    from claude_sessions import memdirty_hook
+    sb = Sandbox(monkeypatch, tmp_path)
+    actual, enc, folder, _ = sb.add_project('alpha')
+    for i in range(4):
+        _mkfile(actual, f'known{i}/a.py')
+    _stub(monkeypatch)
+    memory.refresh_memory(actual, folder, 'alpha')
+
+    for i in range(4):                                   # everything you edited
+        _mkfile(actual, f'known{i}/a.py', f'changed = {i}\n')
+        memdirty_hook.record(actual, os.path.join(actual, f'known{i}', 'a.py'))
+    _mkfile(actual, 'brandnew/a.py')                     # the thing you just added
+
+    calls = []
+    _stub(monkeypatch, calls)
+    memory.refresh_memory(actual, folder, 'alpha', auto_cap=2)
+    assert 'brandnew/(root)' in calls, 'half the budget is reserved for new units'
+    assert any(c.startswith('known') for c in calls), 'and the rest still moves'
 
 
 # ── the staleness sweep has to be cheap ──────────────────────

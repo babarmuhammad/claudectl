@@ -124,6 +124,48 @@ def find_git_repos(root, max_depth=4):
     return found
 
 
+#: a directory holding one of these is its own project, git or not
+SUBPROJECT_MARKERS = {'package.json', 'pyproject.toml', 'go.mod', 'Cargo.toml',
+                      'composer.json', 'Gemfile', 'pom.xml', 'build.gradle'}
+
+
+def find_subprojects(root, max_depth=4):
+    """Directories UNDER `root` holding their own manifest.
+
+    A subproject dropped into a project is a section of that project's memory
+    even when it has no `.git` of its own — without this it is folded into the
+    parent's cluster and its directories are flattened into the parent's module
+    keys, so it never gets a summary, a rule file or a digest bullet.
+
+    `root` itself is never returned: a subproject is *under* the root, and
+    returning the root would relabel every file of a non-git project from its
+    top-level directory to the root's basename.
+    """
+    from .connections import SKIP_DIRS
+    found, budget = [], [MAX_DIRS]
+
+    def walk(d, depth):
+        if budget[0] <= 0 or depth >= max_depth:
+            return
+        try:
+            entries = sorted(os.scandir(d), key=lambda e: e.name)
+        except OSError:
+            return
+        for e in entries:
+            if not (e.is_dir(follow_symlinks=False) and e.name not in SKIP_DIRS
+                    and not e.name.startswith('.')):
+                continue
+            budget[0] -= 1
+            if budget[0] <= 0:
+                return
+            if any(os.path.isfile(os.path.join(e.path, m)) for m in SUBPROJECT_MARKERS):
+                found.append(e.path)
+            walk(e.path, depth + 1)
+
+    walk(os.path.abspath(root), 0)
+    return found
+
+
 def owner_of(path):
     """The repo a path sits in, walking up. '' when there is none.
 

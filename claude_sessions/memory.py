@@ -33,6 +33,7 @@ GRAPH_NAME = 'graph.json'
 PER_FILE_CHARS = 4000    # cap content per file
 PER_BATCH_CHARS = 40000  # cap corpus per repo/module Claude call
 MODULE_MAX_FILES = 24    # representative files per module
+MIN_UNIT_FILES = 3       # below this a nested directory folds into its parent
 EXTRACT_TIMEOUT = 300
 _INVALID_CAP = 150       # max invalidated (superseded) facts kept as history
 
@@ -619,6 +620,15 @@ def _units(project_path, proj_folder):
         repo = connections._cluster_of(f, root, rsorted)
         module = _module_of(root, rsorted, f, repo_label=repo)
         groups.setdefault((repo, module), []).append(f)
+    # A nested directory holding a file or two is part of its parent, not a
+    # module: a unit costs a Claude call and a rule file, and an app-router tree
+    # is one directory per page. Once a subproject became its own cluster the
+    # module keys turned relative to IT, so `www/app` split into twenty units of
+    # one file each — this folds them back and leaves the real modules alone.
+    for (repo, module), fs in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        if '/' in module and len(fs) < MIN_UNIT_FILES:
+            groups.setdefault((repo, module.rsplit('/', 1)[0]), []).extend(fs)
+            del groups[(repo, module)]
     units = sorted(groups.items(), key=lambda kv: len(kv[1]), reverse=True)
     return [(r, m, fs) for (r, m), fs in units]
 
@@ -858,7 +868,7 @@ def _stamp_fresh(project_path, proj_folder):
         _c.log.exception('memory: freshness stamp failed')
 
 
-def _prioritise(todo, mem, edited=()):
+def _prioritise(todo, mem, edited=(), sigs=None, root=''):
     """Order the units a cycle will extract, most valuable first.
 
     Two problems with taking them in `_units` order, which is by file COUNT:
@@ -870,6 +880,11 @@ def _prioritise(todo, mem, edited=()):
     and the same signal Aider's repo map ranks on — with never-covered units
     first because a unit with no entities at all contributes nothing until it
     is extracted once.
+
+    Recency breaks the remaining tie, ahead of size: a module written this
+    afternoon is what a session is about, and file count is not a proxy for it.
+    The mtimes come from the signatures `_changed_units` already stat'ed, so
+    this costs no syscall; an unknown file sorts as oldest.
     """
     rank = {}
     covered = set()
@@ -878,6 +893,11 @@ def _prioritise(todo, mem, edited=()):
         covered.add(key)
         rank[key] = max(rank.get(key, 0), e.get('rank', 0) or 0)
     edited = {os.path.abspath(p) for p in (edited or ())}
+    sigs = sigs or {}
+
+    def _mtime(f):
+        sig = (sigs.get(_rel(root, f)) or {}).get('sig') or ()
+        return sig[0] if sig else 0
 
     def _key(u):
         repo, module, fs = u
@@ -885,9 +905,28 @@ def _prioritise(todo, mem, edited=()):
         return (not just_edited,                          # what you just touched
                 (repo, module) in covered,                # then never-covered
                 -rank.get((repo, module), 0),             # then most-depended-on
+                -max((_mtime(f) for f in fs), default=0),  # then most recent
                 -len(fs))                                 # then biggest
 
     return sorted(todo, key=_key)
+
+
+def _reserve_for_new(todo, budget, mem):
+    """Move up to half a cycle's budget worth of never-covered units to the front.
+
+    `_prioritise` puts them ahead of covered units, but BEHIND what you just
+    edited — and the edit log is refilled by every turn you work. So a project
+    under active development spent all six calls an hour on units it already
+    knew, and a subproject added to it stayed absent from the graph indefinitely
+    while auto-memory reported itself as working. Half the budget is reserved so
+    the new thing lands and the thing you are editing still stays current.
+    """
+    covered = {(e.get('repo'), e.get('module')) for e in mem.get('entities', [])}
+    keep = max(1, budget // 2)
+    head, rest = [], []
+    for u in todo:
+        (head if (u[0], u[1]) not in covered and len(head) < keep else rest).append(u)
+    return head + rest
 
 
 def is_stale(project_path, proj_folder):
@@ -969,7 +1008,7 @@ def _refresh_locked(project_path, proj_folder, project_name, auto_cap=None):
         # switched on and working perfectly. Costs no Claude call.
         _stamp_fresh(project_path, proj_folder)
         return mem
-    todo = _prioritise(todo, mem, edited)
+    todo = _prioritise(todo, mem, edited, cur_hashes, root)
 
     # How much this cycle may do. `auto_cap` used to be all-or-nothing: more
     # changed units than the cap and the whole run returned having done NOTHING,
@@ -981,7 +1020,7 @@ def _refresh_locked(project_path, proj_folder, project_name, auto_cap=None):
     skipped_units = 0
     if budget:
         skipped_units = max(0, len(todo) - budget)
-        todo = todo[:budget]
+        todo = _reserve_for_new(todo, budget, mem)[:budget]
 
     touched_units = {(r, m) for r, m, _ in todo}
     current_units = {(r, m) for r, m, _ in units}          # units that still exist
