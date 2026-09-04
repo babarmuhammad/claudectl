@@ -1,13 +1,20 @@
 
 'use strict';
 const $=s=>document.querySelector(s);
-// Per-run secret, substituted into this page by gui._Handler when it is served.
-// `/` is token-gated, so the launcher had to put the token in the query string —
-// a top-level navigation cannot carry a header. Take it out of the address bar
-// immediately: the page already has the value, and what is left in history is
-// then a URL that no longer names a secret.
+/* Per-run secret, substituted into this page by gui._Handler when it is served.
+   `/` is token-gated, so the launcher puts the token in the query string — a
+   top-level navigation cannot carry a header, which is the same reason /graph
+   has always taken it that way.
+
+   It STAYS in the address bar, and that is deliberate. Stripping it with
+   history.replaceState looked strictly better and broke reload: F5 re-requests
+   whatever the address bar holds, which was then a bare `/`, and the answer to
+   that is 403 {"error":"missing or bad token"} — a dead page with no way back
+   except relaunching claudectl. A cookie is not the escape hatch either;
+   cookies ignore the port, so any other loopback server the user visits would
+   be sent it. The exposure left is a URL in this machine's own browser history,
+   holding a secret that dies with the process. */
 const CK='__CLAUDECTL_TOKEN__';
-if(location.search)history.replaceState(null,'',location.pathname);
 const api=(p,opt={})=>fetch(p,{...opt,headers:{'X-Claudectl':CK,
   'Content-Type':'application/json',...(opt.headers||{})}}).then(r=>r.json());
 const post=(p,body)=>api(p,{method:'POST',body:JSON.stringify(body||{})});
@@ -5210,12 +5217,18 @@ async function pgSettings(nav){
   chipsFill($('#sPerm'),o.perms,o.perm_labels,ST.defaults.perm);
   chipsFill($('#sThink'),o.thinking,o.thinking_labels,ST.defaults.max_thinking);
   chipsFill($('#sSub'),o.models,o.model_labels,ST.defaults.subagent_model);
-  chipsFill($('#sOtel'),['off','on'],['off','on'],
-    ST.otel_enabled?'on':'off');
+  /* /api/state used to nest these under `otel`, so every read here was
+     undefined: the panel showed its defaults however OTEL was configured, and
+     Save then wrote those defaults back over the real values. */
+  chipsFill($('#sOtel'),['off','on'],['off','on'],ST.otel_enabled?'on':'off');
   chipsFill($('#sOtelProto'),['http/protobuf','grpc'],['http/protobuf','grpc'],
     ST.otel_protocol||'http/protobuf');
   if($('#sOtelUrl'))$('#sOtelUrl').value=ST.otel_endpoint||'';
-  if($('#sOtelHdr'))$('#sOtelHdr').value=ST.otel_headers||'';
+  /* write-only: the value is a bearer token and never comes back down, so the
+     field reports whether one is set and blank means "keep it". */
+  if($('#sOtelHdr')){$('#sOtelHdr').value='';
+    $('#sOtelHdr').placeholder=ST.otel_has_headers
+      ?'set — leave blank to keep, or type to replace':'leave blank for none';}
   if($('#sEditor'))$('#sEditor').value=ST.editor||'';
   if($('#sClaudeExe'))$('#sClaudeExe').value=ST.claude_exe||'';
   if($('#sCfgDir'))$('#sCfgDir').value=ST.claude_config_dir||'';
@@ -5733,10 +5746,14 @@ async function setPathsSave(){
   ST=await api('/api/state');toast('Saved','ok');
 }
 async function setOtelSave(){
-  await post('/api/settings',{otel_enabled:chipVal($('#sOtel'))==='on',
+  const hdr=(($('#sOtelHdr')||{}).value||'').trim();
+  const body={otel_enabled:chipVal($('#sOtel'))==='on',
     otel_endpoint:($('#sOtelUrl')||{}).value||'',
-    otel_protocol:chipVal($('#sOtelProto')),
-    otel_headers:($('#sOtelHdr')||{}).value||''});
+    otel_protocol:chipVal($('#sOtelProto'))};
+  // omit, do not blank: the field is write-only, so an untouched save must keep
+  // the headers rather than erase them
+  if(hdr)body.otel_headers=hdr;
+  await post('/api/settings',body);
   ST=await api('/api/state');toast('OTEL settings saved','ok');
 }
 async function slRefresh(){

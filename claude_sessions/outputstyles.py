@@ -205,7 +205,7 @@ def _slug(name):
     """A style name is a FILENAME, and it arrives off the wire.
 
     `save` has always slugged it; `read` and `delete` joined it raw, so
-    `?name=../../../../Users/mab/Documents/notes` read that file and delete
+    `?name=../../../../Users/you/Documents/notes` read that file and delete
     removed any .md on the volume. One sanitiser, three callers.
     """
     return re.sub(r'[^A-Za-z0-9_.-]+', '-', str(name or '')).strip('-.')

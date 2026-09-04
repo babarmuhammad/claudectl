@@ -30,6 +30,14 @@ The parts worth reporting are:
 - **Credential handling.** claudectl reads Claude Code's own state and never writes
   `.credentials.json`. Anything that leaks a token, an API key or a session id into a
   log, an error message, a generated file or an outbound request is in scope.
+
+  Two exposures are deliberate, so that they are not reported as surprises. The
+  per-run GUI token rides in the address bar (`/?k=…`), because a top-level
+  navigation cannot carry a header and stripping it would break reload; it is
+  per-process and inert once claudectl exits. And the Claude Code settings editor
+  shows that account's `env` block, which is where an `ANTHROPIC_API_KEY` would
+  live — it is an editor for your own file, behind the same token as everything
+  else. A way to read either *without* the token is in scope.
 - **Path handling.** Project paths, config directories and transcript names come from
   disk and from Claude Code. A traversal out of an account's config directory is in scope.
 - **Anything claudectl writes to a file another program parses** — `settings.json`

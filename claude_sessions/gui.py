@@ -19,10 +19,15 @@ served on the Host check alone, and `/` is the page the token is substituted
 into — so any process that could open a socket to the port could just ask for it,
 which on Windows includes a process running as a DIFFERENT user, because loopback
 is not a user-identity boundary. `/` now takes the token in its query string, the
-way `/graph` always has; the launcher puts it there and app.js strips it out of
-the address bar with history.replaceState on boot. The trade is one inert entry
-in browser history (the token dies with the process) against handing the secret
-to anyone who asks.
+way `/graph` always has, and the launcher puts it there.
+
+The token therefore stays in the address bar, and the obvious tidy-up is a trap:
+having app.js strip it with history.replaceState breaks RELOAD, because F5
+re-requests whatever the address bar holds and the answer to a bare `/` is 403.
+A cookie does not rescue it either — cookies ignore the port, so any other
+loopback server the user visits would be handed it. What is left is a URL in the
+user's own browser history carrying a secret that dies with the process, which
+is the cheaper half of the trade against giving it to anyone who asks.
 """
 
 import hmac
@@ -231,10 +236,19 @@ def state_payload():
         'stage': _stage_tier(s),
         # 0 = follow whatever the look asks for; 40..100 = an explicit override
         'surface': _surface(s),
-        'otel': {'enabled': bool(s.get('otel_enabled')),
-                 'endpoint': s.get('otel_endpoint', ''),
-                 'protocol': s.get('otel_protocol', 'http/protobuf'),
-                 'headers': s.get('otel_headers', '')},
+        # Flat, and named exactly as /api/settings takes them back. Nested under
+        # an 'otel' key they did not match what the settings page read
+        # (`ST.otel_enabled`), so every field showed its default however it was
+        # configured, and Save wrote those defaults back over the real values.
+        'otel_enabled': bool(s.get('otel_enabled')),
+        'otel_endpoint': s.get('otel_endpoint', ''),
+        'otel_protocol': s.get('otel_protocol', 'http/protobuf'),
+        # `otel_headers` is documented as carrying "Authorization=Bearer <token>"
+        # and is WRITE-ONLY: a boolean goes out, never the value. It is the same
+        # treatment `omniroute_api_key` gets and the one secret in this payload
+        # that had been missed — readable by injected script until the handler
+        # escaping was fixed.
+        'otel_has_headers': bool(s.get('otel_headers')),
         'themes': theme_palettes(),
         'skins': {n: dict(v) for n, v in _themes.SKINS.items()},
         'worlds': {n: dict(v) for n, v in _themes.WORLDS.items()},

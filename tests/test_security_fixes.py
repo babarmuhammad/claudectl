@@ -6,6 +6,7 @@ token is not the only layer, and every one of these was reachable the moment it
 leaked — which, until `/` started requiring it, it did to anyone who asked.
 """
 import http.client
+import json
 import os
 
 import pytest
@@ -18,7 +19,7 @@ from claude_sessions import gui
 
 def test_an_output_style_name_cannot_escape_its_directory(tmp_path):
     """`save` slugged the name; `read` and `delete` joined it raw, three
-    functions apart. `?name=../../../../Users/mab/Documents/notes` read that
+    functions apart. `?name=../../../../Users/you/Documents/notes` read that
     file, and delete removed any .md on the volume."""
     from claude_sessions import outputstyles as os_mod
 
@@ -29,7 +30,7 @@ def test_an_output_style_name_cannot_escape_its_directory(tmp_path):
 
     assert os_mod._slug('../../secret') == '-..-secret'.lstrip('-.') or \
         '/' not in os_mod._slug('../../secret')
-    for probe in ('../secret', '..\\secret', '../../Users/mab/secret',
+    for probe in ('../secret', '..\\secret', '../../Users/you/secret',
                   '/etc/passwd', 'a/../../b'):
         s = os_mod._slug(probe)
         assert '/' not in s and '\\' not in s and not s.startswith('.'), probe
@@ -188,6 +189,31 @@ def test_the_job_decide_route_writes_exactly_one_response(server):
         'one request produced %d responses: %r' % (raw.count(b'HTTP/1.'), raw[:400])
 
 
+def test_the_token_stays_in_the_url_so_reload_still_works(server):
+    """The tidy-up that breaks the feature.
+
+    Token-gating `/` means the launcher has to put the token in the query
+    string. Having the page then strip it with `history.replaceState` looks
+    strictly better — until F5, which re-requests whatever the address bar
+    holds. A bare `/` answers 403 and the window is dead with no way back short
+    of relaunching claudectl. (A cookie is not the escape hatch: cookies ignore
+    the port, so any other loopback server the user visits gets sent it.)
+
+    Two halves, because either alone would pass while the product was broken.
+    """
+    from claude_sessions.gui_html import PAGE
+    assert 'history.replaceState(' not in PAGE, \
+        'the token is stripped from the URL again — reload will 403'
+
+    _sb, base = server
+    import urllib.request
+    url = base + '/?k=' + gui.TOKEN
+    for _attempt in (1, 2):                  # the second one IS the reload
+        with urllib.request.urlopen(url) as r:
+            assert r.status == 200
+            assert gui.TOKEN.encode() in r.read()
+
+
 # ── the graph page ───────────────────────────────────────────────────
 
 def test_the_graph_payload_cannot_break_out_of_its_script_block():
@@ -204,3 +230,34 @@ def test_a_repo_name_cannot_write_html_into_the_graph_legend():
     i = src.index('function buildLegend')
     legend = src[i:src.index('function setView')]
     assert "+hx(r)+" in legend, 'the repo name is concatenated into innerHTML raw'
+
+
+def test_the_otel_headers_value_is_never_sent_back_to_the_page(server):
+    """It is documented as "Authorization=Bearer <token>", and `/api/state` was
+    returning it verbatim — the one secret in the settings payload that did not
+    get `omniroute_api_key`'s write-only treatment. Before the handler-escaping
+    fixes it was readable by script injected from a cloned repo's filename.
+    """
+    from claude_sessions import config as _c
+    from claude_sessions import gui as gui_mod
+
+    _sb, _base = server
+    s = _c.load_settings()
+    s['otel_enabled'] = True
+    s['otel_headers'] = 'Authorization=Bearer super-secret-value'
+    _c.save_settings(s)
+
+    payload = gui_mod.state_payload()
+    assert payload['otel_has_headers'] is True
+    assert 'otel_headers' not in payload
+    assert 'super-secret-value' not in json.dumps(payload)
+
+
+def test_a_save_that_does_not_retype_the_headers_keeps_them():
+    """The other half: a write-only field renders empty, so the save must OMIT
+    it rather than send ''. Sending '' erased the configured value on every
+    unrelated OTEL save."""
+    from claude_sessions.gui_html import PAGE
+    assert 'if(hdr)body.otel_headers=hdr;' in PAGE, \
+        'a blank headers field blanks the stored value again'
+    assert "otel_headers:($('#sOtelHdr')||{}).value||''" not in PAGE

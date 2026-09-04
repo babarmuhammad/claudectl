@@ -76,6 +76,11 @@ mostly that: the security sweep, the hangs, and a session list you can read.
   plus `injected-context.md`, an entire transcript. It now seeds a `.gitignore`
   the first time it is created. `claudectl.json`, which holds your OmniRoute key,
   is written `0600`.
+- **`/api/state` echoed the OTEL headers value back to the page**, and that
+  setting is documented as carrying `Authorization=Bearer <token>`. It is the one
+  secret in the settings payload that never got `omniroute_api_key`'s write-only
+  treatment. It is reported as a boolean now, and the field in the settings page
+  is write-only: blank means keep what is stored.
 - A non-ASCII byte in the `X-Claudectl` header raised inside `hmac.compare_digest`
   and printed a traceback instead of answering 403.
 
@@ -175,6 +180,12 @@ mostly that: the security sweep, the hangs, and a session list you can read.
   successful lookups were cached. `claude mcp list` is cached for 30 seconds now
   including its failures — which is the case that costs the most, because a
   slow-failing MCP server is exactly when it is slowest.
+- **The whole OTEL section of the settings page was inert.** It read
+  `ST.otel_enabled` and friends while `/api/state` nested them under `ST.otel`,
+  so every field rendered its default no matter what was saved — and pressing
+  Save then wrote those defaults back over the real configuration, including
+  blanking the headers. The payload is flat now, named exactly as
+  `/api/settings` takes the values back.
 - **Two "Open in editor" buttons had never worked**, sending a parameter the
   endpoint does not read. `/api/job/<id>/decide` — the route every approval gate
   resolves through — wrote two HTTP responses for one request.

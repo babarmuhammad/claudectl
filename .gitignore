@@ -51,3 +51,6 @@ claude-session-Fable-Claude-Script.md
 references/
 # mkdocs build output
 /site/
+
+# scratch commit-message file
+CLAUDECTL_COMMITMSG
