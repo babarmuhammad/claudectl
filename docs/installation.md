@@ -149,4 +149,4 @@ $lnk.Save()
 - [Quickstart](quickstart.md) — install to first session in five minutes
 - [Terminal UI](tui.md) — every screen and every key binding
 - [Command line](cli.md) — every command, for scripts and hooks
-- [Installing the agent library](agent-library.md) — bulk-install 154 community subagents
+- [Installing the agent library](agent-library.md) — bulk-install 150+ community subagents

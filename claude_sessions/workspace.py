@@ -15,6 +15,7 @@ triggered it.
 
 import os
 import json
+import re
 import time
 import hashlib
 import subprocess
@@ -32,6 +33,7 @@ IMPORTANT_FILES = ['CLAUDE.md', 'README.md', '.mcp.json', 'pyproject.toml', 'pac
 _WEIGHTS = {
     'manifest': 5, 'claude_md': 25, 'claude_md_fresh': 25,
     'mcp_docs': 15, 'repo': 10, 'sessions': 10, 'conflicts': 10,
+    'claude_md_claims': 5,
 }
 
 #: Operations that regenerate the project's context from live inputs, and so
@@ -54,6 +56,9 @@ _FIXES = {
     'repo': 'rebuild memory (m → b) to re-baseline against this HEAD',
     'sessions': 'rebuild memory (m → b) to fold in the new sessions',
     'conflicts': 'README is newer than CLAUDE.md — re-run analyze (a)',
+    'claude_md_claims': 'one of the two is out of date — rebuild memory (m → b) if '
+                        'the graph is behind, or edit that sentence in CLAUDE.md '
+                        'yourself; your prose is the one block claudectl never rewrites',
 }
 
 
@@ -204,6 +209,110 @@ def save_manifest(project_path, m, proj_folder=None):
 
 # ── refresh / update ─────────────────────────────────────────
 
+# ── does the prose still agree with the graph? ───────────────
+#
+# CLAUDE.md has two halves and claudectl owns exactly one of them. It rewrites
+# AUTOGEN/SESSIONS/MEMORY/AGENTS from live inputs; it must never touch the prose
+# above them, because a tool that silently rewords what you wrote is worse than
+# one that lets it age. The consequence is that the hand-written half is the only
+# part of the file with no freshness signal at all — and it is append-only by
+# habit, so a fact written on line 44 is never read again.
+#
+# This repository's own CLAUDE.md carried "29 palettes x 7 skins" against a
+# themes.py holding 32 and 8, for months, while the memory graph — re-extracted
+# from the same code — said 32. So the oracle already existed; nothing compared
+# the two. That is all this does, with no model call and no subprocess.
+
+#: Words that end a claim. "32 palettes and 4 themed worlds" must register
+#: `palettes: 32`, not tie 32 to every noun in the rest of the sentence.
+_CLAIM_STOP = frozenset(
+    'a an and are as at because by for from in into is of on or over per plus '
+    'that the to under via with x'.split())
+#: Units a text may legitimately restate with a different number — a budget of
+#: 250 tokens here and 600 there is not a contradiction.
+_CLAIM_UNITS = frozenset(
+    'bytes chars characters days entries hours items lines minutes months '
+    'percent pixels seconds times tokens weeks years'.split())
+#: A number, then the words it counts. The lookbehind keeps `1.9.0` and `0.5s`
+#: from being read as claims about whatever follows them.
+_CLAIM_RE = re.compile(r'(?<![\w.])(\d[\d,]*)\s+([a-z][a-z \-]{0,40})')
+#: A sentence carrying one of these is describing what the project USED to be.
+#: This repository's own CLAUDE.md says "an earlier design was 26 generative
+#: canvas renderers … that was deleted", and comparing that against a graph
+#: extracted from the code that replaced it is the single loudest false positive
+#: this check can produce — the prose is correct, and it is history.
+_CLAIM_PAST = re.compile(
+    r'\b(?:was|were|used to|had|earlier|previously|before|old|former|deleted|'
+    r'removed|replaced|dropped|gone|no longer|instead of|rejected)\b', re.I)
+#: Sentence boundaries, plus list items and headings: a markdown bullet is a
+#: sentence for this purpose even when it never reaches a full stop.
+_CLAIM_SPLIT = re.compile(r'(?:[.!?;]\s|\n)')
+
+
+def _claims(text, present_only=False):
+    """`{noun: number}` for every countable claim the text makes exactly once.
+
+    A noun stated with two different numbers is DROPPED rather than guessed at.
+    That single rule is most of what keeps this usable: it is why "32 palettes
+    and 4 themed worlds" contributes `palettes` and `worlds` but not `themed`,
+    and why a page mentioning two different budgets contributes neither.
+
+    Two more filters, both learned from running it on this repository:
+    `present_only` skips sentences written in the past tense (see _CLAIM_PAST),
+    and only PLURAL nouns count — "15 call sites" and "2 because" were both read
+    as claims before that, and a counted thing is essentially always plural."""
+    seen = {}
+    for part in _CLAIM_SPLIT.split(text or ''):
+        if present_only and _CLAIM_PAST.search(part):
+            continue
+        for num, tail in _CLAIM_RE.findall(part):
+            try:
+                n = int(num.replace(',', ''))
+            except ValueError:
+                continue
+            for word in tail.split()[:3]:
+                word = word.strip('-')
+                if word in _CLAIM_STOP:
+                    break
+                if len(word) >= 4 and word.endswith('s') and word not in _CLAIM_UNITS:
+                    seen.setdefault(word, set()).add(n)
+    return {w: next(iter(ns)) for w, ns in seen.items() if len(ns) == 1}
+
+
+def _claim_conflicts(md_text, mem):
+    """`[(noun, what CLAUDE.md says, what memory says)]`, sorted.
+
+    This reports a DISAGREEMENT, not a verdict, and the wording everywhere says
+    so. The graph is usually the fresher of the two — it is re-extracted from the
+    code, while the prose is written once and then only appended to — but it is
+    not a clean oracle: it holds entities extracted in different cycles, so it
+    can contradict itself. On this repository one entity says "29 palettes and 7
+    skins" while a newer one says "32 palettes and 4 themed worlds".
+
+    The ambiguity rule in `_claims` turns that into a MISS rather than a false
+    accusation (`palettes` carries two numbers on the graph side, so it is
+    dropped) — which is the right way round, and the reason the fix text names
+    rebuilding memory first. Resolving it by preferring the newest entity was
+    considered and rejected: `created_at` is when an entity was first seen, not
+    when it was last refreshed, so the tiebreak would be reading a timestamp that
+    does not mean what it would need to mean.
+
+    Only the MANUAL half is read — a generated block disagreeing with the graph
+    is a rebuild, not a contradiction, and would be a permanent false positive."""
+    from .ctxaudit import split_blocks
+    said = _claims(split_blocks(md_text)['manual'], present_only=True)
+    if not said:
+        return []
+    summaries = [e.get('summary') or '' for e in mem.get('entities') or []]
+    for key in ('repo_summaries', 'summaries'):
+        val = mem.get(key)
+        if isinstance(val, dict):
+            summaries += [v for v in val.values() if isinstance(v, str)]
+    known = _claims(' \n'.join(summaries))
+    return sorted((w, said[w], known[w])
+                  for w in said if w in known and said[w] != known[w])
+
+
 def _gather_live(project_path, proj_folder):
     """Cheaply collect the current observable workspace facts."""
     from .claude_md import resolve_memory_files
@@ -222,6 +331,22 @@ def _gather_live(project_path, proj_folder):
                 'label': label, 'path': path, 'exists': exists,
                 'sha256': _sha256_file(path) if exists else '',
             })
+
+    # None means "not compared", which is a different fact from "compared and
+    # agrees" — most projects have no graph yet, and reporting them Fresh here
+    # would be the same confident overstatement claude_md_fresh already avoids.
+    claim_conflicts = None
+    try:
+        proj = next((c for c in claude_md_files
+                     if c['label'] == 'project' and c['exists']), None)
+        if proj and project_path:
+            from . import memory
+            mem = memory.load_memory(project_path, proj_folder)
+            if mem.get('entities'):
+                with open(proj['path'], encoding='utf-8', errors='ignore') as f:
+                    claim_conflicts = _claim_conflicts(f.read(), mem)
+    except Exception:
+        pass
 
     # A count and the two extreme mtimes — so this must NOT parse transcripts.
     # `scan_sessions` also builds a preview and a message count for every file
@@ -303,6 +428,7 @@ def _gather_live(project_path, proj_folder):
         'sessions': sess,
         'mcp_live': servers,
         'mcp_ready': mcp_ready,
+        'claim_conflicts': claim_conflicts,
     }
 
 
@@ -513,6 +639,21 @@ def _evaluate(m, live):
             add('conflicts', 'fresh', 'no conflicting inputs')
     else:
         add('conflicts', 'fresh', 'n/a', applicable=False)
+
+    # claude_md_claims: the hand-written prose vs the graph. This is the only
+    # check about the half of CLAUDE.md claudectl may not repair, so its detail
+    # has to carry the whole finding — there is no button that fixes it.
+    conflicts = live.get('claim_conflicts')
+    if not md_exists or conflicts is None:
+        add('claude_md_claims', 'fresh', 'no memory graph to check against',
+            applicable=False)
+    elif conflicts:
+        word, said, known = conflicts[0]
+        more = f' (+{len(conflicts) - 1} more)' if len(conflicts) > 1 else ''
+        add('claude_md_claims', 'stale',
+            f'CLAUDE.md says {said} {word}, memory says {known}{more}')
+    else:
+        add('claude_md_claims', 'fresh', 'prose agrees with memory')
 
     # freshness score over applicable, weighted checks
     total = sum(_WEIGHTS[c['name']] for c in checks if c['applicable'] and c['name'] in _WEIGHTS)

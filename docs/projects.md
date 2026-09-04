@@ -63,6 +63,34 @@ generated; **invalid** means a missing-after-generation CLAUDE.md or a corrupt m
 weighted fraction of applicable checks that are fresh. Viewing status is **read-only** — it
 never rewrites the manifest.
 
+### Does your prose still agree with the graph?
+
+`CLAUDE.md` has two halves and claudectl owns exactly one of them: it rewrites the AUTOGEN,
+SESSIONS and memory blocks from live inputs, and it **never touches the prose above them** —
+a tool that silently rewords what you wrote is worse than one that lets it age. The cost of
+that guarantee is that the hand-written half has no freshness signal of its own, and it is
+append-only by habit: a fact written near the top is rarely read again.
+
+The `claude_md_claims` check is the one thing that can be said about it without rewriting it.
+It reads the countable claims in your prose ("32 palettes", "4 worlds") and compares them
+against the same claims in the [memory graph](memory.md), which is re-extracted from the
+code:
+
+```
+  🟡 CLAUDE.md says 4 collectors, memory says 6   → one of the two is out of date
+```
+
+It reports a **disagreement, not a verdict**. Usually the graph is the fresher side, but it
+holds entities extracted in different cycles and can lag too — so the remedy is to rebuild
+memory if the graph is behind, or edit that sentence yourself if it is not. There is
+deliberately no button that "fixes" it.
+
+It is conservative on purpose, because a noisy check gets switched off. A noun stated with
+two different numbers is ignored rather than guessed at, units (`tokens`, `days`, `lines`)
+never count, only plural nouns count, and a sentence written in the past tense is skipped —
+*"an earlier design was 26 renderers"* is history, not a stale claim. A project with no
+memory graph yet is marked `n/a` and scores nothing either way.
+
 **Change diffs** — when AI-regenerating CLAUDE.md (`a`) or a system prompt (`s`), the
 approval step shows a **git-style colored diff** (old → new) so you decide *before* writing
 (`f` toggles to the full proposed text; ENTER approve, ESC reject). The previous version is

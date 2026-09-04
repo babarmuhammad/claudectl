@@ -8,7 +8,7 @@ description: >-
 
 The **⚙ Agents** screen reads `~/.claude/claudectl-agents/<category>/*.md`. To bulk-install
 the [awesome-claude-code-subagents](https://github.com/VoltAgent/awesome-claude-code-subagents)
-catalog (154 agents, mirrored by category), run this PowerShell snippet once:
+catalog (150+ agents, mirrored by category), run this PowerShell snippet once:
 
 !!! info "Credit"
 

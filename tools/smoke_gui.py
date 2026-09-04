@@ -375,7 +375,10 @@ ROUTES = {
             {'name': 'sessions', 'state': 'fresh', 'detail': '42 analyzed',
              'applicable': True, 'weight': 10},
             {'name': 'conflicts', 'state': 'fresh', 'detail': 'none',
-             'applicable': False, 'weight': 10}]},
+             'applicable': False, 'weight': 10},
+            {'name': 'claude_md_claims', 'state': 'stale',
+             'detail': 'CLAUDE.md says 29 palettes, memory says 32',
+             'applicable': True, 'weight': 5}]},
     '/api/recall-preview': {
         'tokens': 214, 'empty': False,
         'items': ['CheckoutHandler', 'RetryPolicy', 'Retries need a jittered backoff'],
@@ -1346,10 +1349,15 @@ def main():
             "fix:c.querySelectorAll('.hrow .btn').length,pre:c.innerText,"
             "head:(document.querySelector('#wsHead')||{}).innerText||''}:null;})()")
         check('workspace checks render as rows with states',
-              bool(wsr) and wsr['rows'] == 7 and 'fresh' in wsr['pre']
+              bool(wsr) and wsr['rows'] == 8 and 'fresh' in wsr['pre']
               and 'stale' in wsr['pre'], wsr and wsr['rows'])
         check('every stale check offers the thing that fixes it',
-              bool(wsr) and wsr['fix'] >= 3, wsr and wsr['fix'])
+              bool(wsr) and wsr['fix'] >= 4, wsr and wsr['fix'])
+        # the prose-vs-graph check has to quote BOTH numbers: it is the one row
+        # whose detail IS the whole finding, because no button can repair it
+        check('the prose-vs-graph row names both numbers',
+              bool(wsr) and '29 palettes' in wsr['pre'] and '32' in wsr['pre'],
+              wsr and wsr['pre'][:80])
         # the score is what the header and the manifest row both quote, and both
         # are written by the same late fill — a card that fills its rows but not
         # its header reads as "no score" forever

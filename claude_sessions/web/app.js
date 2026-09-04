@@ -2171,6 +2171,10 @@ const WSFIX={claude_md:['Scaffold','cmScaffold()'],
   sessions:['Rebuild memory','buildMemory()'],
   manifest:['Rebuild memory','buildMemory()'],
   mcp_docs:['MCP servers',"go('mcp')"],
+  /* No button can fix this one: it says the prose and the graph disagree, and
+     which side is wrong is a judgement. So it opens the file rather than
+     pretending to repair it — rebuilding memory is one tab away from there. */
+  claude_md_claims:['CLAUDE.md',"TAB='claudemd';drawProject()"],
   conflicts:['AI analyze',"inlineJob('#jban','ai_scaffold',C(),{label:'AI-analyzing project',redraw:()=>drawMemory()})"]};
 
 async function drawMemory(){

@@ -283,11 +283,11 @@ export const FEATURES: Doc = {
           },
           {
             t: 'Agents & skills',
-            d: 'A category-organised agent library mirroring a 154-agent community catalog, per-project subagent selection, adaptive suggestions from local signals, and a skills manager.',
+            d: 'A category-organised agent library mirroring a community catalog of 150+ agents in 10 categories, per-project subagent selection, adaptive suggestions from local signals, and a skills manager.',
           },
           {
             t: 'Hooks',
-            d: 'Nineteen ready-made Claude Code hook templates — formatting, safety guardrails, audit, context injection, token savers — plus AI-generated ones. Installing, disabling and removing all apply across every account.',
+            d: 'Thirty-one ready-made Claude Code hook templates — formatting, safety guardrails, failure logging, notifications, memory freshness, context injection, token savers — plus AI-generated ones. Installing, disabling and removing all apply across every account.',
           },
           {
             t: 'Status line, failover & checkpoints',
@@ -315,7 +315,7 @@ export const FEATURES: Doc = {
       lead: 'The whole thing as a desktop app, with full parity to the terminal UI.',
       blocks: [
         p(
-          'A native window when PyQt6 is present, otherwise your browser, served over loopback only. 29 palettes, 7 skins and 4 themed worlds — a skin changes the shape of the app, not just its colours.',
+          'A native window when PyQt6 is present, otherwise your browser, served over loopback only. 32 palettes, 8 skins and 4 themed worlds — a skin changes the shape of the app, not just its colours.',
         ),
       ],
     },
@@ -414,7 +414,7 @@ export const DOWNLOAD: Doc = {
       blocks: [
         ul([
           'The claudectl package: the terminal UI, the desktop GUI, the memory engine, the connections engine and the hook, agent and skill managers.',
-          'Bundled starter skills and 19 hook templates.',
+          'Bundled starter skills and 31 hook templates.',
           'The Claude Code plugin manifest, with commands and skills generated from the package so they cannot fall behind it.',
           'A signed source distribution and a wheel on PyPI. Versioning is semantic; the changelog follows Keep a Changelog.',
         ]),
@@ -611,7 +611,7 @@ export const ABOUT: Doc = {
           },
           {
             t: 'VoltAgent/awesome-claude-code-subagents',
-            d: 'The 154-agent catalog the agent library mirrors. All credit for the agents goes to their original authors.',
+            d: 'The community catalog the agent library mirrors — 150+ agents in 10 categories. All credit for the agents goes to their original authors.',
           },
           {
             t: 'microsoft/markitdown',

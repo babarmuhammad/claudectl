@@ -30,13 +30,13 @@ Anthropic.
 
 - [Command line](https://docs.claudectl.space/cli/): every command — `workspace status`, `recall`, `review`, `sync-accounts`, `statusline`, the failover proxy — and where claudectl's state lives.
 - [Terminal UI](https://docs.claudectl.space/tui/): every screen, notifications, the two kinds of loop, and the complete key-binding reference.
-- [Desktop app](https://docs.claudectl.space/desktop/): the local web GUI, its shells, and the 29 palettes / 7 skins / 4 worlds theme system.
+- [Desktop app](https://docs.claudectl.space/desktop/): the local web GUI, its shells, and the 32 palettes / 8 skins / 4 worlds theme system.
 - [Claude Code plugin](https://docs.claudectl.space/plugin/): the three slash commands and eight skills the plugin adds inside a session, and why it ships no hooks.
 
 ## Working with projects
 
 - [Configuration](https://docs.claudectl.space/configuration/): every file claudectl reads and writes — its own settings, per-project files, the global CLAUDE.md, the repository layout.
-- [Projects](https://docs.claudectl.space/projects/): pre-launch health card, context-loss insurance, permission-fatigue killer, and the workspace provenance/freshness manifest.
+- [Projects](https://docs.claudectl.space/projects/): pre-launch health card, context-loss insurance, permission-fatigue killer, the workspace provenance/freshness manifest, and the check that flags CLAUDE.md prose contradicting the memory graph.
 - [Sessions](https://docs.claudectl.space/sessions/): browse, search, tag, fork, resume, archive and export sessions; usage analytics; per-project launch control.
 - [Project memory](https://docs.claudectl.space/memory/): the semantic memory graph, its three token-budgeted injection surfaces, session lessons and recall.
 - [Architecture graph](https://docs.claudectl.space/architecture/): the interactive, expandable dependency graph rendered as self-contained HTML.
@@ -53,7 +53,7 @@ Anthropic.
 - [MCP servers](https://docs.claudectl.space/mcp/): add, remove and inspect MCP servers; connection state; tool documentation.
 - [Agents and skills](https://docs.claudectl.space/agents/): the agent library, per-project subagent selection, adaptive suggestions, the skills manager.
 - [Agent library install](https://docs.claudectl.space/agent-library/): bulk-installing the awesome-claude-code-subagents catalog.
-- [Hooks](https://docs.claudectl.space/hooks/): 19 Claude Code hook templates plus AI-generated hooks.
+- [Hooks](https://docs.claudectl.space/hooks/): 31 Claude Code hook templates plus AI-generated hooks.
 - [Plan to Execute and OmniRoute](https://docs.claudectl.space/plan-execute/): plan on an accurate model, execute on a cheap or free one; OmniRoute setup and troubleshooting.
 - [Status line, failover and checkpoints](https://docs.claudectl.space/statusline/): the per-turn status line, the model failover proxy, the read-only checkpoint view.
 - [Files, layout and encoding](https://docs.claudectl.space/reference/): CLAUDE.md auto-generation and how Claude Code encodes project paths into folder names.

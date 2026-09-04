@@ -7,6 +7,61 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Workspace status now checks whether your CLAUDE.md prose still agrees with
+  the memory graph.** `CLAUDE.md` has two halves and claudectl owns exactly one:
+  it rewrites the AUTOGEN, SESSIONS and memory blocks from live inputs, and it
+  never touches the prose above them, because a tool that silently rewords what
+  you wrote is worse than one that lets it age. The cost of that guarantee is
+  that the hand-written half had no freshness signal of its own, and it is
+  append-only by habit — a fact written near the top is rarely read again.
+
+  The new `claude_md_claims` check reads the countable claims in your prose
+  ("32 palettes", "4 worlds") and compares them against the same claims in the
+  memory graph, which *is* re-extracted from the code:
+
+  ```
+  🟡 CLAUDE.md says 29 palettes, memory says 32
+  ```
+
+  It reports a disagreement, not a verdict. The graph is usually the fresher
+  side, but it holds entities extracted in different cycles and can lag too, so
+  the remedy names rebuilding memory first and the GUI button opens the file
+  rather than pretending to repair it. There is deliberately no automatic fix.
+
+  Conservative on purpose, because a noisy check gets switched off: a noun
+  stated with two different numbers is ignored rather than guessed at, units
+  (`tokens`, `days`, `lines`) never count, only plural nouns count, and a
+  sentence in the past tense is skipped — *"an earlier design was 26
+  renderers"* is history, not a stale claim. A project with no memory graph is
+  marked `n/a` and scores nothing either way. One JSON read, no model call and
+  no subprocess.
+
+### Fixed
+
+- **Published numbers that had drifted since 1.8.2.** The project dashboard
+  still reported version 1.8.2, 1,367 tests, 183 Python files and 129 commits;
+  the marketing site parses that page, so every number on it was stale too. The
+  README's test badge said 1,706 — a third number, matching neither. The
+  documentation and the site also advertised 29 palettes, 7 skins and 19 hook
+  templates against a codebase holding 32, 8 and 31, and `docs/hooks.md`
+  described only 17 of the 31 templates, missing the memory-freshness,
+  failure-logging, notification and test-running families entirely.
+
+- **The README test badge is generated now, not hand-typed.**
+  `tools/gen_metrics.py` already counted the tests for the dashboard; it writes
+  the badge from that same number, so the two surfaces cannot disagree again.
+  Refreshed by the existing weekly metrics workflow. `tests/test_docs_numbers.py`
+  gates the counts that *are* derivable from this repository — palettes, skins,
+  worlds, hook templates, plugin commands and bundled skills — across the
+  README, every documentation page and the marketing site's copy.
+
+- **`gen_metrics.py` emitted two dead links** on every run: `[Download](download.md)`
+  and `[Changelog](changelog.md)` name documentation pages that moved to the apex
+  site. Someone had been hand-correcting the generated file; the generator
+  overwrote it each time.
+
 ## [1.9.0] - 2026-09-04
 
 Two things claudectl says about itself turned out not to be true, and both are

@@ -1,11 +1,12 @@
-"""Regenerate docs/dashboard.md — the public project dashboard.
+"""Regenerate docs/dashboard.md — the public project dashboard — and the
+README's test badge, which is the same measurement on a second surface.
 
 Numbers come from three places: the repository itself (version, test count,
 source size, commit activity), PyPI and pypistats (downloads), and the GitHub
 API (stars, forks, issues, latest release). Nothing is fetched at page-render
 time, so the site stays a static build with no runtime service and no API key.
 
-    py -3 tools/gen_metrics.py            # rewrite docs/dashboard.md
+    py -3 tools/gen_metrics.py            # rewrite docs/dashboard.md + the badge
     py -3 tools/gen_metrics.py --offline  # repo-only numbers, no network
 
 A failed fetch is an error, not a dash: writing placeholders over good data
@@ -25,6 +26,7 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, 'docs', 'dashboard.md')
+README = os.path.join(ROOT, 'README.md')
 REPO = 'babarmuhammad/claudectl'
 PKG = 'claudectl'
 UA = {'User-Agent': 'claudectl-docs-metrics'}
@@ -165,7 +167,10 @@ def render(r, x):
     p.append('| License | MIT |')
     p.append('| Runtime dependencies | **0** |')
     p.append('')
-    p.append('[Download](download.md) · [Changelog](changelog.md)\n')
+    # Absolute, because both pages live on the apex marketing site — a relative
+    # link would name a docs page that does not exist and fail --strict.
+    p.append('[Download](https://claudectl.space/download/) · '
+             '[Changelog](https://claudectl.space/changelog/)\n')
 
     p.append('## Downloads\n')
     p.append('From [pypistats.org](https://pypistats.org/packages/%s), mirrors excluded.\n' % PKG)
@@ -201,6 +206,24 @@ def render(r, x):
     return '\n'.join(p)
 
 
+def write_badge(tests):
+    """Point the README's test badge at the number this file just published.
+
+    It was hand-typed, and it drifted the way a hand-kept copy always does: the
+    dashboard said 1,367 while the badge said 1,706, two different definitions of
+    "tests" on two surfaces, neither of them current. Counting it here is what
+    makes the badge and the dashboard the same measurement. No test asserts it —
+    a gate would fail every pull request that adds a test, which is why this is
+    refreshed weekly by the metrics workflow instead."""
+    text = _read('README.md')
+    new = re.sub(r'(badge/tests-)\d+', r'\g<1>%d' % tests, text)
+    if new == text:
+        return
+    with open(README, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(new)
+    print('wrote', README, '(tests badge: %d)' % tests)
+
+
 def main(argv):
     try:
         remote = {} if '--offline' in argv else remote_facts()
@@ -209,10 +232,12 @@ def main(argv):
         # of em-dashes that still looks like a successful build.
         print('metrics fetch failed (%s) — docs/dashboard.md left as it is' % e)
         return 1
-    text = render(repo_facts(), remote)
+    facts = repo_facts()
+    text = render(facts, remote)
     with open(OUT, 'w', encoding='utf-8', newline='\n') as f:
         f.write(text)
     print('wrote', OUT)
+    write_badge(facts['tests'])
     return 0
 
 
