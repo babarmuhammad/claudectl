@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: claudectl
+message: >-
+  The workspace layer for Claude Code. Note that an unrelated Rust project also
+  publishes under the name "claudectl"; this entry describes the Python package
+  at https://pypi.org/project/claudectl/.
+type: software
+authors:
+  - given-names: Babar Muhammad
+    family-names: Anas
+    website: 'https://claudectl.space'
+repository-code: 'https://github.com/babarmuhammad/claudectl'
+url: 'https://claudectl.space'
+version: 1.9.0
+date-released: '2026-09-04'
+abstract: >-
+  A workspace layer for Anthropic's Claude Code CLI. Browse, search, tag, fork
+  and resume every session across every project and account; maintain a semantic
+  project memory that is injected within a token budget; manage MCP servers,
+  agents, skills and hooks; and see what a turn costs, read from your own
+  transcripts. Terminal UI and desktop GUI over one engine, with zero runtime
+  dependencies.
+keywords:
+  - claude-code
+  - developer-tools
+  - terminal-ui
+  - session-manager
+  - context-management
+  - mcp
+license: MIT

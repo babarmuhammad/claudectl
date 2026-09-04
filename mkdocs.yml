@@ -118,3 +118,18 @@ extra:
     - icon: fontawesome/brands/github
       link: https://github.com/babarmuhammad/claudectl
       name: claudectl on GitHub
+
+  # schema.org `sameAs` for the author entity, emitted on every page by
+  # overrides/main.html. An unrelated Rust project publishes under this name,
+  # so what identifies THIS claudectl is one author corroborated by a set of
+  # profiles that link back. Must stay in step with `PROFILES` in
+  # www/lib/site.ts — both hosts have to assert the same entity or the graph
+  # says there are two of them.
+  author: Babar Muhammad Anas
+  apex: https://claudectl.space
+  profiles:
+    - https://github.com/babarmuhammad
+    - https://www.linkedin.com/in/muhammad-anas-babar-819647240
+    - https://dev.to/muhammad_anasbabar_31256
+    - https://babarmuhammad.hashnode.dev
+    - https://www.instagram.com/muhammad_anas_babar

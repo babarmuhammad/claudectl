@@ -203,7 +203,7 @@ def main():
             '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
         pg = br.new_page(viewport={'width': 1600, 'height': 1000})
         pg.on('pageerror', lambda e: errs.append(str(e)))
-        pg.goto(f'http://127.0.0.1:{PORT}/')
+        pg.goto(f'http://127.0.0.1:{PORT}/?k={sg.gui.TOKEN}')   # / is token-gated
         pg.wait_for_timeout(2500)
         print('stage:', pg.evaluate(
             "STAGE.ok?('live · '+STAGE.scene+(STAGE._post?' + bloom':'')):'FALLBACK'"))

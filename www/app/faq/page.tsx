@@ -7,7 +7,7 @@ import { Spine } from '@/components/site/Spine';
 export const metadata = meta({
   title: 'Frequently asked questions',
   description:
-    'How claudectl manages Claude Code sessions, cuts token usage, handles multiple accounts and MCP servers — and how it differs from /resume. Answered plainly.',
+    'What claudectl is, how to install it, where Claude Code keeps its sessions, how claudectl cuts token usage and handles multiple accounts — and how it differs from /resume. Answered plainly.',
   path: '/faq',
 });
 
@@ -48,8 +48,8 @@ export default function FaqPage() {
         {/* <details> is the platform's disclosure widget: keyboard and screen
             reader behaviour for free, and no client component. */}
         {/* A list, so the rows keep their natural height and the solids shrink
-            to a rail on the right — padding twelve questions out to twelve
-            screens makes them worse to read, not better. */}
+            to a rail on the right — padding one question per screen makes them
+            worse to read, not better. */}
         <Spine
           layout="rail-right"
           items={FAQ.map(({ q, a }) => ({

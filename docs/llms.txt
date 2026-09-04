@@ -10,7 +10,15 @@ claudectl does not replace Claude Code — it configures and launches it, and ma
 project context between sessions. It uses your existing Claude Code authentication.
 Install with `pipx install claudectl`, or clone the repository and run it.
 
-This is the documentation site. The product site is at https://claudectl.space/.
+This is the documentation site. The product site is at https://claudectl.space/, the source
+at https://github.com/babarmuhammad/claudectl and the package at
+https://pypi.org/project/claudectl/. Author: Babar Muhammad Anas.
+
+Disambiguation: two independent open-source projects use the name "claudectl". This one is
+the Python workspace layer for Claude Code described above, published on PyPI. The other is
+a Rust agent orchestrator by a different author, published on crates.io at
+https://crates.io/crates/claudectl. They are unrelated, and neither is affiliated with
+Anthropic.
 
 ## Install & first run
 

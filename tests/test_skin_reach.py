@@ -165,7 +165,9 @@ def test_world_palettes_and_skins_stay_out_of_the_classic_pickers():
         assert w['skin'] not in CLASSIC_SKINS, w['skin']
         assert PALETTES[w['palette']].get('hidden'), w['palette']
     # and the classic three are all still offered
-    assert set(CLASSIC_SKINS) == {'hud', 'crt', 'brutal'}
+    # Standard is offered too — the plain one, added because "auto" resolves to
+    # whichever of the other three the palette names and never to nothing
+    assert set(CLASSIC_SKINS) == {'standard', 'hud', 'crt', 'brutal'}
 
 
 def test_no_look_puts_an_effect_on_the_type_itself():

@@ -740,7 +740,7 @@ def main():
         # keep the stack: 'Cannot set properties of null' with no frame behind it
         # is a scavenger hunt across 3000 lines
         pg.on('pageerror', lambda e: errs.append(('pageerror', str(e) + '\n' + (e.stack or ''))))
-        pg.goto(f'http://127.0.0.1:{PORT}/')
+        pg.goto(f'http://127.0.0.1:{PORT}/?k={gui.TOKEN}')   # / is token-gated
         pg.wait_for_timeout(1800)
 
         print('\n— dashboard —')
@@ -950,6 +950,71 @@ def main():
         pg.wait_for_timeout(400)
         check('motion:off stops the stage too', pg.evaluate("MO._raf===null"))
         pg.evaluate("MO.set('full');STAGE.setTier('off')")
+        pg.wait_for_timeout(300)
+
+        print('\n— unfocused: CSS stops too, and the ground stays painted —')
+        # The rAF chain parking was never the whole story. Chromium throttles
+        # keyframes for a HIDDEN page; an unfocused window is not hidden, and a
+        # Qt one is never `document.hidden` at all. So a world's full-viewport
+        # overlay and every infinite animation kept running while claudectl sat
+        # in the background — which is what "it flickers a lot when I'm on
+        # another app" was. Asserted on COMPUTED style, because the whole class
+        # of bug here is a rule that exists but loses on specificity or source
+        # order (the icon rail and the skin block both learned that).
+        # The stage must be ON for the background check to mean anything:
+        # `html.stage-on body{background:transparent}` is the rule that opens the
+        # hole, and with the stage off the base `body{background:var(--bg)}`
+        # covers it anyway. Reverting the fix with the stage off produced
+        # "FAILURES: none" — a check that ran and proved nothing, which is the
+        # `wait_for` lesson exactly.
+        # Wear the world the way the app does — ST.world + applyTheme, not
+        # `applyWorld('cyber')`. applyWorld takes the world OBJECT, so a string
+        # leaves `w.overlay` undefined and it sets `display:none` inline: the
+        # overlay was never mounted, and "it is display:none while blurred"
+        # passed by testing nothing. Same false-pass shape as `wait_for`.
+        pg.evaluate("ST.world='cyber';applyTheme(ST.theme);STAGE.setTier('cinematic')")
+        pg.wait_for_timeout(900)
+        check('stage painted, so the blur swap is the real one',
+              pg.evaluate("document.documentElement.classList.contains('stage-on')"))
+        # and the overlay must EXIST before "it is display:none" says anything —
+        # querySelector returning null read as a pass on the first cut
+        ovl = pg.evaluate("""(() => {
+          const o = document.querySelector('.ovl-fx');
+          return o ? [1, getComputedStyle(o).display,
+                      getComputedStyle(o).animationName] : [0, '', ''];})()""")
+        check('the world mounted a VISIBLE, animating overlay',
+              ovl[0] == 1 and ovl[1] != 'none' and ovl[2] != 'none', ovl)
+        pg.evaluate("setVis(false)")
+        pg.wait_for_timeout(250)
+        st = pg.evaluate("""(() => {
+          const o = document.querySelector('.ovl-fx');
+          const el = document.querySelector('.beam,.spin,.pip') || document.body;
+          return {
+            cls:   document.documentElement.classList.contains('win-blur'),
+            ovl:   o ? getComputedStyle(o).display : '(no overlay element)',
+            anim:  getComputedStyle(el).animationPlayState,
+            body:  getComputedStyle(document.body).backgroundColor,
+            raf:   MO._raf === null,
+          };})()""")
+        check('win-blur marks the window unfocused', st['cls'] is True, st)
+        check('the world overlay is taken down', st['ovl'] == 'none', st['ovl'])
+        check('looping animations are paused, not ended',
+              st['anim'] == 'paused', st['anim'])
+        # transparent/rgba(0,0,0,0) here IS the hole: #stage is hidden instantly
+        # while the washes fade over 500ms, and html.stage-on body is
+        # transparent — so the ground was the root canvas colour
+        check('the body keeps painting a background',
+              'rgba(0, 0, 0, 0)' not in st['body'] and st['body'] != 'transparent',
+              st['body'])
+        check('and the frame chain is still parked', st['raf'] is True)
+        pg.evaluate("setVis(true)")
+        pg.wait_for_timeout(250)
+        back = pg.evaluate("""[
+          document.documentElement.classList.contains('win-blur'),
+          getComputedStyle(document.querySelector('.beam,.spin,.pip')||document.body)
+            .animationPlayState]""")
+        check('focus resumes the animations', back == [False, 'running'], back)
+        pg.evaluate("ST.world='';applyTheme(ST.theme);STAGE.setTier('off')")
         pg.wait_for_timeout(300)
 
         print('\n— a running job keeps the activity gauge alive —')
@@ -1575,7 +1640,7 @@ def main():
     # "FAILURES: none" every time. A floor on the number of checks executed is
     # the cheapest thing that would have caught it.
     # And a floor that never moves stops being a floor: it rises with the suite.
-    FLOOR = 149
+    FLOOR = 170
     if len(ran) < FLOOR:
         fails.append(f'only {len(ran)} checks ran, expected >= {FLOOR} — '
                      'part of this suite is not executing')

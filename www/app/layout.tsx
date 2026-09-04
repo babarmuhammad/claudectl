@@ -4,7 +4,7 @@ import { Header } from '@/components/site/Header';
 import { Footer } from '@/components/site/Footer';
 import { Backdrop } from '@/components/site/Backdrop';
 import { RouteFade } from '@/components/site/RouteFade';
-import { SITE, url } from '@/lib/site';
+import { PROFILES, SITE, url } from '@/lib/site';
 import { HOME } from '@/lib/content';
 import { jsonLd } from '@/lib/meta';
 import { VERSION } from '@/lib/build-data';
@@ -33,7 +33,6 @@ export const metadata: Metadata = {
     'AI coding workspace',
     'developer tools',
   ],
-  alternates: { canonical: SITE.url },
   openGraph: {
     type: 'website',
     url: SITE.url,
@@ -50,6 +49,12 @@ export const metadata: Metadata = {
   },
   robots: { index: true, follow: true },
   icons: { icon: '/favicon.ico' },
+  // Feed discovery. A reader (and several crawlers) look for this link before
+  // they look for anything else on the page.
+  alternates: {
+    canonical: SITE.url,
+    types: { 'application/rss+xml': [{ url: url('/blog/rss.xml'), title: `${SITE.name} blog` }] },
+  },
 };
 
 export const viewport: Viewport = {
@@ -57,24 +62,59 @@ export const viewport: Viewport = {
   colorScheme: 'dark',
 };
 
-/** One SoftwareApplication for the whole site, in the layout so every page
- *  carries it. Page-specific graphs (FAQPage, BlogPosting) are added per route. */
-const APP_LD = {
+/** The site-wide entity graph, in the layout so every page carries it.
+ *  Page-specific graphs (FAQPage, BlogPosting) are added per route.
+ *
+ *  Three nodes rather than one bare SoftwareApplication, because an unrelated
+ *  Rust project ships under this name: the Person is the hub every profile in
+ *  PROFILES points back to, and `sameAs` is how a search engine merges those
+ *  scattered profiles into one entity instead of two projects called claudectl.
+ *  `alternateName` gives it the strings people actually type. */
+const AUTHOR_ID = `${SITE.url}/#author`;
+
+const SITE_LD = {
   '@context': 'https://schema.org',
-  '@type': 'SoftwareApplication',
-  name: SITE.name,
-  applicationCategory: 'DeveloperApplication',
-  operatingSystem: 'Windows, macOS, Linux',
-  description: HOME.description,
-  url: SITE.url,
-  downloadUrl: SITE.pypi,
-  ...(VERSION ? { softwareVersion: VERSION } : {}),
-  license: 'https://opensource.org/licenses/MIT',
-  isAccessibleForFree: true,
-  offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-  author: { '@type': 'Person', name: SITE.author, url: SITE.authorGithub },
-  codeRepository: SITE.repo,
-  programmingLanguage: 'Python',
+  '@graph': [
+    {
+      '@type': 'Person',
+      '@id': AUTHOR_ID,
+      name: SITE.author,
+      url: SITE.url,
+      sameAs: [...PROFILES],
+    },
+    {
+      '@type': 'WebSite',
+      '@id': `${SITE.url}/#website`,
+      name: SITE.name,
+      alternateName: ['claudectl (Python)', 'claudectl for Claude Code'],
+      url: SITE.url,
+      description: HOME.description,
+      inLanguage: 'en',
+      publisher: { '@id': AUTHOR_ID },
+    },
+    {
+      '@type': 'SoftwareApplication',
+      '@id': `${SITE.url}/#software`,
+      name: SITE.name,
+      alternateName: ['claudectl (Python)', 'claudectl for Claude Code'],
+      identifier: 'claudectl',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Windows, macOS, Linux',
+      description: HOME.description,
+      url: SITE.url,
+      downloadUrl: SITE.pypi,
+      installUrl: SITE.pypi,
+      ...(VERSION ? { softwareVersion: VERSION } : {}),
+      license: 'https://opensource.org/licenses/MIT',
+      isAccessibleForFree: true,
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      author: { '@id': AUTHOR_ID },
+      maintainer: { '@id': AUTHOR_ID },
+      codeRepository: SITE.repo,
+      programmingLanguage: 'Python',
+      sameAs: [SITE.repo, SITE.pypi, SITE.docs],
+    },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
@@ -83,7 +123,7 @@ export default function RootLayout({ children }: LayoutProps<'/'>) {
       <body className="flex min-h-full flex-col antialiased">
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{ __html: jsonLd(APP_LD).text }}
+          dangerouslySetInnerHTML={{ __html: jsonLd(SITE_LD).text }}
         />
         <a
           href="#main"

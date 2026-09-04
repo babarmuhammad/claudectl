@@ -77,7 +77,7 @@ That graph then reaches a session through the three surfaces above:
 | `.claude/rules/claudectl-mem-*.md` | Per-module entities and relations, `globs:`-scoped | **0 until Claude touches those files** |
 | `UserPromptSubmit` hook (opt-in) | The subgraph relevant to *this prompt* | ≤600 tokens/prompt, under a second, local |
 
-The token arithmetic behind that split is a separate topic — see [how to cut Claude Code token costs](/blog/cut-claude-code-token-costs/) for the audit and the numbers.
+The token arithmetic behind that split is a separate topic — see [how to cut Claude Code token costs](/blog/cut-claude-code-token-costs) for the audit and the numbers.
 
 ## Retrieval, and being honest about it
 
@@ -111,7 +111,7 @@ The load-bearing detail is that this runs at `SessionEnd`, not `Stop`. `Stop` fi
 2. **Turn on the rules surface.** Per-module knowledge in `.claude/rules/` costs zero until Claude opens a matching file. This is the single highest-value change.
 3. **Add the recall hook only if you want per-prompt injection.** It is opt-in, budgeted at ~600 tokens, and runs locally.
 4. **Turn on recent-work memory** for a token-free one-line summary per session, injected as a compact digest on the next `SessionStart` — so a new session knows what the last few did.
-5. **After a compact, hand off instead of re-explaining.** `⇧K` starts a *new* session seeded with the previous transcript, written to `.claudectl/injected-context.md` and passed as a pointer, not a paste.
+5. **After a compact, hand off instead of re-explaining.** **Hand off** on the session row (or `⇧K` in the terminal UI) starts a *new* session seeded with the previous transcript, written to `.claudectl/injected-context.md` and passed as a pointer, not a paste.
 
 ## Where this does not help
 

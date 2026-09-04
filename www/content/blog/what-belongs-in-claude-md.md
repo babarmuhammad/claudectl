@@ -124,7 +124,7 @@ The KEEP fence is the strongest of these. AI compression does not merely *avoid 
 
 If your `CLAUDE.md` is generated in part, two blocks are unbounded by nature: the session-topics log (one line per session, nothing ever removed) and the commit list. Cap both — `claude_md_sessions_cap` defaults to 10 recent entries, `claude_md_commits` sets the commit count. This is the single most common cause of a file that was 60 lines in March and 300 in August without anyone writing a word.
 
-The cost side of all this — measuring the always-on total, compression, deny rules — is covered in [the 250-token index pattern](/blog/cut-claude-code-token-costs/).
+The cost side of all this — measuring the always-on total, compression, deny rules — is covered in [the 250-token index pattern](/blog/cut-claude-code-token-costs).
 
 ## Compact instructions
 

@@ -132,3 +132,44 @@ def test_no_hook_writes_an_event():
             if any(n and n.split('.')[-1] == 'events' for n in names):
                 offenders.append(os.path.basename(path))
     assert not offenders, 'a hook writes to the event log: %s' % offenders
+
+
+def test_a_measurement_in_the_message_does_not_defeat_the_dedupe(_log_in_tmp):
+    """A dedupe key that contains a number is not a key.
+
+    `gui.py` formats the elapsed time into its slow-handler warning, so
+    `slow: 1.55s` and `slow: 1.56s` were distinct messages and the 60-second
+    window never fired. Live consequence: 609 of the 674 events in this
+    machine's log were slow-warnings differing only in a decimal, and they had
+    evicted every real failure past MAX_BYTES.
+    """
+    for dt in (1.55, 1.56, 1.61, 2.44):
+        _c.log.warning('gui api %s %s slow: %.2fs', 'GET', '/api/memory/active', dt)
+    rows = events.read()
+    assert len(rows) == 1, [r['msg'] for r in rows]
+    # …and the one that IS written keeps its real number, unshaped
+    assert 'slow: 1.55s' in rows[0]['msg']
+    # a genuinely different message is still its own event
+    _c.log.warning('gui api %s %s slow: %.2fs', 'GET', '/api/dashboard', 6.18)
+    assert len(events.read()) == 2
+
+
+def test_two_messages_that_differ_only_in_wording_still_dedupe_separately(_log_in_tmp):
+    """The collapse must not go so far that unrelated failures share a key."""
+    _c.log.warning('claude exited 1: session limit')
+    _c.log.warning('claude exited 1: overloaded')
+    assert len(events.read()) == 2
+
+
+def test_an_integer_is_part_of_the_identity_and_must_not_collapse(_log_in_tmp):
+    """Collapsing every digit run was over-broad, and the log's own producers
+    say why: `failover` writes 'HTTP %s', so a 429 and a 500 from the same
+    candidate became one event; `gui_api` writes '... failed for %s', so two
+    project paths differing by a digit collapsed and the second project's
+    failure was dropped. The measured defect was `slow: %.2fs` — a decimal.
+    """
+    _c.log.warning('failover: big-pickle -> HTTP 429, next candidate')
+    _c.log.warning('failover: big-pickle -> HTTP 500, next candidate')
+    _c.log.warning('memory refresh failed for D:/work/app1')
+    _c.log.warning('memory refresh failed for D:/work/app2')
+    assert len(events.read()) == 4

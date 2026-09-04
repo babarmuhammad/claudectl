@@ -25,6 +25,7 @@ rest of the burst skips with the real reason instead of repeating the failure.
 """
 
 import os
+import re
 import time
 
 from . import config as _c
@@ -47,9 +48,27 @@ _decided = {}      # normalised cfgdir -> (choice, until_ts)
 
 #: substrings that mean "out of quota". Deliberately specific: a bare 'limit'
 #: also matches the budget cap and the turn cap, neither of which is this.
+#:
+#: 'session limit' and 'weekly limit' are the two Claude Code actually sends, and
+#: their absence made this whole module a no-op for the common case. The real
+#: refusal reads "You've hit your session limit · resets 2:30am (Europe/Rome)" —
+#: which matched NONE of the markers above it, so `note_failure` never latched
+#: and the mechanism its own docstring describes ("that one failure is what stops
+#: the other five") had never once fired. The event log showed the consequence:
+#: four spawned-and-refused calls in 19 minutes against an account that was
+#: already saying no. Checked against a real 429 transcript, not guessed — the
+#: same discipline as reading `context_window.used_percentage` off the payload.
 _LIMIT_MARKERS = ('usage limit', 'rate limit', 'rate_limit', 'ratelimit',
                   'rate-limited', 'limit reached', 'limit exceeded',
-                  'quota', 'too many requests', '429')
+                  'session limit', 'weekly limit',
+                  'out of quota', 'quota exceeded', 'too many requests')
+
+#: `429` needs a word boundary, and `quota` needed qualifying. `ui._note_failure`
+#: now hands the model's whole STDOUT to `note_failure`, not a 300-char stderr
+#: latch — so a bare substring scan matched `14290` in a token count and the word
+#: "quota" in any answer that discussed rate limits, and latched the account out
+#: of headless work for fifteen minutes on a successful-looking run.
+_LIMIT_RE = re.compile(r'429')
 
 
 def _norm(d):
@@ -166,7 +185,7 @@ def headroom(exclude=None):
 
 def is_limit_error(text):
     t = str(text or '').lower()
-    return any(m in t for m in _LIMIT_MARKERS)
+    return any(m in t for m in _LIMIT_MARKERS) or bool(_LIMIT_RE.search(t))
 
 
 def note_failure(env, text):

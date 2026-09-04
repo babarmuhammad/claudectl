@@ -200,8 +200,8 @@ def record(project_path, tool, command, reason):
     """Append one denial. Called by the hook; kept here so the format has one
     writer and one reader."""
     try:
-        d = os.path.join(project_path, '.claudectl')
-        os.makedirs(d, exist_ok=True)
+        from . import store
+        d = store.claudectl_dir(project_path)
         line = json.dumps({'ts': round(time.time()), 'tool': tool or '',
                            'command': (command or '')[:500],
                            'reason': (reason or '')[:300]}, ensure_ascii=False)

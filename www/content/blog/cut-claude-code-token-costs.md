@@ -115,7 +115,7 @@ Two levers, separate from context size.
 
 **A cheap model for the tool's own calls.** claudectl's internal Claude calls — memory extraction, lesson distillation, CLAUDE.md and hook and skill generation — default to Haiku (`extract_model` in Settings → Economy model). Your actual coding sessions keep whatever model you picked. Worth checking in any tool that makes model calls on your behalf: the default is often the same expensive model you use for the work.
 
-Beyond cheap there is free — plan on an accurate model and execute on a free one, covered in [plan on an expensive model, execute on a free one](/blog/plan-expensive-execute-cheap/).
+Beyond cheap there is free — plan on an accurate model and execute on a free one, covered in [plan on an expensive model, execute on a free one](/blog/plan-expensive-execute-cheap).
 
 ## Compact instructions
 
@@ -133,4 +133,4 @@ Auto-compaction is going to happen on a long session. What it keeps is steerable
 
 The point of the exercise is not a smaller file. It is that the always-on cost stops being a function of how big your codebase got.
 
-Reference detail: [docs.claudectl.space/token-economy](https://docs.claudectl.space/token-economy/).
+Reference detail: [docs.claudectl.space/usage](https://docs.claudectl.space/usage/).

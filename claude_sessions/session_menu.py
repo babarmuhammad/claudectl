@@ -57,7 +57,11 @@ ACTIONS = [
     ('s', 'sys-prompt',     'project', '/api/system-prompt',         'System prompt'),
     ('u', 'usage',          'project', '/api/usage/project',         'Project usage stats'),
     ('w', 'status',         'project', '/api/workspace-status',      'Workspace status & freshness'),
-    ('K', 'inject context', 'project', '/api/inject/sessions',       'Inject context from another chat'),
+    # 'session' scope now, not 'project': the GUI's equivalent is the `Hand off`
+    # button on a session row, so the row IS the source and there is no
+    # source-picker step. The TUI's own ⇧K still opens the picker (a terminal
+    # list has no per-row buttons), which is why the key and blurb are unchanged.
+    ('K', 'hand off',       'session', '/api/inject/launch',         'Hand this chat to a new one'),
     ('W', 'ctx audit',      'project', '/api/ctxaudit',              'Context weight audit (tokens)'),
     # ── in the palette and in help, but not in the hint bar: that bar is one
     #    line wide, and these are the half that is reached less often.
@@ -319,7 +323,11 @@ def sessions_menu(sessions_in, proj_folder, project_name, project_path, extra_ac
             name = _name_of(s_folder, sid)
             badge = f"{C_DIM}[{count}]{C_RESET} " if count else ''
             if name:
-                disp = f"{C_NAME}{render.trunc(name, 30)}{C_RESET}  {C_DIM}{preview if preview else date}{C_RESET}"
+                # a third of the line, not a fixed 30 columns: the name is the
+                # part you are reading, and on a wide terminal 30 cut a title
+                # that had room to spare while the preview beside it ran on
+                name_w = max(30, render.content_width() // 3)
+                disp = f"{C_NAME}{render.trunc(name, name_w)}{C_RESET}  {C_DIM}{preview if preview else date}{C_RESET}"
             elif preview:
                 disp = f"{badge}{preview}"
             else:

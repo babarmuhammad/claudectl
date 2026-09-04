@@ -18,10 +18,16 @@ const CRUMBS = breadcrumbs([
 
 /** The page-level application graph. The layout already carries one for the
  *  site; this is the one a crawler sees on the page that actually installs, so
- *  it names the version and the requirement. */
+ *  it names the version and the requirement.
+ *
+ *  Same `@id` as the layout's node on purpose — without it these are two
+ *  SoftwareApplications with the same name on one page, which is the ambiguity
+ *  the entity graph exists to remove. With it they merge, and this page just
+ *  adds `softwareRequirements`. */
 const APP_LD = {
   '@context': 'https://schema.org',
   '@type': 'SoftwareApplication',
+  '@id': `${SITE.url}/#software`,
   name: SITE.name,
   applicationCategory: 'DeveloperApplication',
   operatingSystem: 'Windows, macOS, Linux',
@@ -34,7 +40,7 @@ const APP_LD = {
   license: 'https://opensource.org/licenses/MIT',
   isAccessibleForFree: true,
   offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
-  author: { '@type': 'Person', name: SITE.author, url: SITE.authorGithub },
+  author: { '@id': `${SITE.url}/#author` },
   codeRepository: SITE.repo,
   programmingLanguage: 'Python',
 };

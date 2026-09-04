@@ -33,7 +33,7 @@ Two rules.
 
 **Stream them.** They get large; a 2,787-message session is a normal week's work and files past 100 MB exist. `readlines()` on one of those is a memory event, not a read. One reader for the format, and the reader streams — with `limit`/`offset` over yielded objects, a `max_bytes` cap, and a substring prefilter tested against the *raw line* so a caller that only wants the `"Bash"` entries never pays for a `json.loads` it discards.
 
-**Do not decode the folder name.** The encoding is lossy: `D:\Projects\my-app` becomes `D--Projects-my-app`, and `\\server\share\Project` becomes `--server-share-Project`, whose leading dashes defeat any attempt to recover a drive letter. Every transcript line already carries the real `cwd`. Read it. That is exact for every encoding and cheaper than the directory walk it replaces. (More on the Windows specifics in [managing Claude Code sessions on Windows](/blog/managing-claude-code-sessions-on-windows/).)
+**Do not decode the folder name.** The encoding is lossy: `D:\Projects\my-app` becomes `D--Projects-my-app`, and `\\server\share\Project` becomes `--server-share-Project`, whose leading dashes defeat any attempt to recover a drive letter. Every transcript line already carries the real `cwd`. Read it. That is exact for every encoding and cheaper than the directory walk it replaces. (More on the Windows specifics in [managing Claude Code sessions on Windows](/blog/managing-claude-code-sessions-on-windows).)
 
 ## `.claude.json`
 

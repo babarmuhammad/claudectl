@@ -201,6 +201,16 @@ def select(name, project_path=None, cfgdir=None):
     return True, f'Output style for {where}: {name}'
 
 
+def _slug(name):
+    """A style name is a FILENAME, and it arrives off the wire.
+
+    `save` has always slugged it; `read` and `delete` joined it raw, so
+    `?name=../../../../Users/mab/Documents/notes` read that file and delete
+    removed any .md on the volume. One sanitiser, three callers.
+    """
+    return re.sub(r'[^A-Za-z0-9_.-]+', '-', str(name or '')).strip('-.')
+
+
 def read(name, project_path=None, cfgdir=None):
     """The text behind a style — from disk, from a starter, or the explanation
     that a built-in has no file.
@@ -208,8 +218,9 @@ def read(name, project_path=None, cfgdir=None):
     It used to return '' for anything not on disk, and every built-in is not on
     disk, so `view` rendered "(empty)" on the three styles most people have and
     read as a dead button."""
+    slug = _slug(name)
     for _scope, d in _dirs(project_path, cfgdir):
-        for fn in (f'{name}.md', f'{name.lower()}.md'):
+        for fn in (f'{slug}.md', f'{slug.lower()}.md'):
             p = os.path.join(d, fn)
             if os.path.isfile(p):
                 s = _parse(p)
@@ -249,7 +260,7 @@ def active_scope(project_path=None, cfgdir=None):
 
 def save(name, description, body, project_path=None, cfgdir=None):
     """Create or overwrite a custom style."""
-    slug = re.sub(r'[^A-Za-z0-9_.-]+', '-', name).strip('-')
+    slug = _slug(name)
     if not slug:
         return False, 'A name is required'
     scope_dir = _dirs(project_path, cfgdir)[-1 if project_path else 0][1]
@@ -265,8 +276,9 @@ def delete(name, project_path=None, cfgdir=None):
     """Remove a custom style. Built-ins are not on disk and cannot go."""
     if name in [n for n, _d in BUILTIN]:
         return False, f'{name} ships with Claude Code — nothing to delete'
+    slug = _slug(name)
     for _scope, d in _dirs(project_path, cfgdir):
-        p = os.path.join(d, f'{name}.md')
+        p = os.path.join(d, f'{slug}.md')
         if os.path.isfile(p):
             try:
                 os.remove(p)

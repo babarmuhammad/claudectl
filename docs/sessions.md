@@ -18,12 +18,12 @@ across the lot.
 - **Search** — type to filter sessions live; **🔍 Search all sessions** finds and resumes any session across every project
 - **Transcript viewer & export** — read any session in a pager (`v`) with full-text search inside the conversation (`/`, `n`/`p` to jump between matches) and a message-position counter; export to markdown (`e`)
 - **Session info** — per-session tokens, est. cost, models, git branch, duration (`i`)
-- **Archive** — move sessions to a restorable `archived/` folder instead of deleting (`d`, toggle view with `A`)
+- **Archive** — move sessions to a restorable `archived/` folder instead of deleting (`d`, toggle view with `A`). The archived view spans **every configured account**, like the live list, and Restore puts a session back in the account it came from.
 - **Rename / Fork / Continue** — rename (`r`), fork (`f`), or continue the latest session (`claude -c`)
 - **Tags** — tag sessions (`t`); tags show inline and are searchable
 - **Changed files** — list the files a session edited/created, derived from its tool calls (`F`)
 
-- **Context hand-off** (`⇧K`) — start a *new* session seeded with any prior session's transcript, from any account. See [Context hand-off](context-handoff.md).
+- **Context hand-off** — start a *new* session seeded with any prior session's transcript, from any account: **Hand off** on the session row in the GUI, `⇧K` in the terminal UI. See [Context hand-off](context-handoff.md).
 
 The full key map for these actions is on the [Usage](tui.md#key-bindings) page.
 

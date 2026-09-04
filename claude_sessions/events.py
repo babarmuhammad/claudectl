@@ -28,6 +28,7 @@ exactly as `automode.denials` already does for `denied.jsonl`.
 
 import json
 import os
+import re
 import time
 
 from . import config as _c
@@ -50,6 +51,33 @@ LEVELS = ('error', 'warn', 'info')
 _DEDUPE_SEC = 60
 _recent = {}
 
+#: DECIMALS only. Collapsing integers too was over-broad: `failover` logs
+#: 'HTTP %s' so a 429 and a 500 became one event, `gui_api` logs '... failed
+#: for %s' so two project paths differing by a digit collapsed and the
+#: second project's failure was silently dropped, and `diskgc` logs the
+#: rejected path. The measured defect was 'slow: %.2fs' — a decimal.
+_NUMS = re.compile(r'[0-9]+\.[0-9]+')
+
+
+def _dedupe_shape(msg):
+    """The message with every number collapsed, for the dedupe key only.
+
+    A key that contains a measurement is not a key. `gui.py` formats the elapsed
+    time into its slow-handler warning, so `slow: 1.55s` and `slow: 1.56s` were
+    different messages and the window above never once fired: 609 of the 674
+    events in this machine's log were slow-warnings differing only in the
+    decimal, and they had pushed every real failure past MAX_BYTES. Collapsing
+    digits fixes that for every numeric-varying message, not just this one —
+    elapsed times, byte counts, PIDs, session ids.
+
+    Only DECIMALS collapse. An integer usually IS the identity of the event —
+    an HTTP status, a PID, a port, a digit inside a path — and folding those
+    turned two different failures into one dropped one of them.
+
+    The WRITTEN msg keeps its numbers; only the memo key is shaped.
+    """
+    return _NUMS.sub('#', msg)
+
 
 def path():
     """`~/.claude/claudectl-events.jsonl` — beside claudectl.json, and
@@ -71,7 +99,7 @@ def record(src, msg, *, level='error', detail='', proj=''):
         if not msg:
             return False
         level = level if level in LEVELS else 'error'
-        key = (str(src), msg)
+        key = (str(src), _dedupe_shape(msg))
         now = time.time()
         last = _recent.get(key)
         if last is not None and now - last < _DEDUPE_SEC:

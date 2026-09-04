@@ -8,6 +8,42 @@ export type QA = { q: string; a: string };
 
 export const FAQ: QA[] = [
   {
+    q: 'What is claudectl?',
+    a: 'claudectl is a free, open-source workspace layer for Anthropic’s Claude Code CLI. It sits in front of Claude Code: you pick a project, see every session you have ever had in it, and launch the next one with the model, effort, permissions and context you intended. It adds persistent project memory, a session archive you can search and tag, MCP server management, an interactive architecture graph and per-turn cost tracking. It is a Python package, MIT licensed, with zero runtime dependencies, and it runs as a terminal UI or a desktop GUI over the same engine.',
+  },
+  {
+    q: 'Is this the same as the Rust claudectl?',
+    a: 'No. There are two independent open-source projects using the name claudectl. This one is the Python workspace layer for Claude Code — install it with pipx install claudectl, source at github.com/babarmuhammad/claudectl, documentation at docs.claudectl.space. The other is a Rust agent orchestrator by a different author, published on crates.io. They are unrelated projects and neither is affiliated with Anthropic.',
+  },
+  {
+    q: 'Is claudectl made by Anthropic?',
+    a: 'No. claudectl is an independent third-party tool built by Babar Muhammad Anas. It is not affiliated with, endorsed by, or supported by Anthropic. Claude and Claude Code are Anthropic’s trademarks. claudectl wraps the Claude Code CLI you have already installed and uses the authentication you already have.',
+  },
+  {
+    q: 'Does claudectl need an API key?',
+    a: 'No. It never talks to the Claude API on its own account — it launches the Claude Code CLI, which uses the login you already have, and it reads the transcripts and settings Claude Code writes to disk. There is nothing to configure and no subscription. Everything runs on your machine, and the desktop GUI is served on loopback only.',
+  },
+  {
+    q: 'How do I install claudectl on Windows, macOS or Linux?',
+    a: 'The same command on all three: pipx install claudectl (or pip install claudectl). It needs Python 3.10 or newer and the Claude Code CLI on your PATH. Then run claudectl for the terminal UI, or claudectl --gui for the desktop app. On Windows the GUI opens in a native window if PyQt6 is installed; everywhere else, and without PyQt6, it opens in your browser.',
+  },
+  {
+    q: 'Where does Claude Code store its sessions?',
+    a: 'Under your Claude Code config directory — ~/.claude by default, or wherever CLAUDE_CONFIG_DIR points — in projects/<encoded-path>/<session-id>.jsonl, one JSON object per line. The folder name is your project path with every non-alphanumeric character replaced by a dash, which is lossy and should not be decoded; each transcript line already carries the real cwd. claudectl reads these files directly and never modifies them.',
+  },
+  {
+    q: 'How do I see how many tokens Claude Code has used?',
+    a: 'claudectl reads it out of your own transcripts rather than calling an API, so it works offline and covers every session you have ever run: usage per day, per project, per account and per model, with the cost of a turn broken down. The status line shows the current session’s context pressure and today’s spend on every turn.',
+  },
+  {
+    q: 'How do I uninstall claudectl?',
+    a: 'pipx uninstall claudectl, or pip uninstall claudectl. If you installed the status line or hooks, remove them first from the hooks screen so the entries come out of Claude Code’s settings.json cleanly — claudectl writes into that file and is the only thing that knows which entries are its own. Your sessions, memory and Claude Code configuration are untouched by the uninstall.',
+  },
+  {
+    q: 'Does claudectl work with Claude Code plugins and skills?',
+    a: 'Yes, and it ships as one. claudectl manages the marketplaces and plugins Claude Code has installed, and has its own plugin with slash commands and skills — /plugin marketplace add babarmuhammad/claudectl. It deliberately bundles no hooks in the plugin: its hook manager already installs them per account, and two owners for one settings.json entry means the recall hook runs twice.',
+  },
+  {
     q: 'How do I manage Claude Code sessions on Windows?',
     a: 'Claude Code stores every session as a JSONL transcript under your config directory, but gives you no way to browse them. claudectl lists every session per project with its topic, message count and age, and lets you search, tag, fork, resume, export and archive them — from a terminal UI or a desktop GUI.',
   },

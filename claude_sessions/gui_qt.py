@@ -21,6 +21,28 @@ def _icon_path():
     return ''
 
 
+#: fallback when nothing is saved or the saved name has gone — the 'default'
+#: palette's own bg, which is what the old hardcoded value was.
+_FALLBACK_BG = '#0d1117'
+
+
+def _page_bg():
+    """The active palette's `bg`, for the Qt page's backing surface.
+
+    A world overrides the palette while worn, exactly as `applyTheme` does in
+    the browser, so the two agree about what colour the page is.
+    """
+    try:
+        from .config import load_settings
+        from .themes import PALETTES, WORLDS
+        s = load_settings()
+        w = WORLDS.get((s.get('world') or '').strip())
+        name = w['palette'] if w else (s.get('theme') or 'default').strip()
+        return PALETTES.get(name, PALETTES['default'])['bg']
+    except Exception:
+        return _FALLBACK_BG
+
+
 def run_desktop():
     """Serve the GUI and show it in a native Qt window. Blocks until the
     window closes. Raises ImportError if PyQt6/WebEngine is unavailable —
@@ -48,6 +70,7 @@ def run_desktop():
     from PyQt6.QtGui import QIcon, QDesktopServices, QColor
     from PyQt6.QtCore import QUrl
 
+    from . import gui
     from .gui import make_server
 
     srv = make_server()
@@ -65,16 +88,24 @@ def run_desktop():
         win.setWindowIcon(QIcon(ico))
     view = QWebEngineView()
     # QWebEngineView's page defaults to a white backing surface; every repaint
-    # (e.g. the job-progress modal's per-second text update) briefly shows that
-    # white surface through before Chromium composites the dark page over it,
-    # reading as a flicker. app.css's --bg is always #0d1117 (GUI has no light
-    # theme), so matching it here removes the flash entirely.
-    view.page().setBackgroundColor(QColor('#0d1117'))
+    # briefly shows that white through before Chromium composites the page over
+    # it, reading as a flicker. Matching the page background removes the flash.
+    #
+    # Read from the palette, not hardcoded. The old comment here said "--bg is
+    # always #0d1117 (GUI has no light theme)" — no longer true: there are four
+    # light palettes (#fffcf0, #fafafa …) and six OLED ones at #050505, and on
+    # any of them a hardcoded #0d1117 was the wrong-coloured flash rather than
+    # the fix. It is also what shows through for the half second the GL canvas
+    # is hidden on blur, which is one of the three causes of the background
+    # flicker (see the `win-blur` block at the end of app.css).
+    view.page().setBackgroundColor(QColor(_page_bg()))
     # window.open (graph tab) is silently dropped by QWebEngineView unless
     # new-window requests are handled — route them to the system browser
     view.page().newWindowRequested.connect(
         lambda req: QDesktopServices.openUrl(req.requestedUrl()))
-    view.load(QUrl(f'http://127.0.0.1:{port}/'))
+    # ?k= — `/` is token-gated, because it is the response the token is written
+    # into and an unauthenticated one hands it to any local socket peer.
+    view.load(QUrl(f'http://127.0.0.1:{port}/?k={gui.TOKEN}'))
     win.setCentralWidget(view)
     win.resize(1280, 840)
     win.show()

@@ -7,6 +7,78 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-09-04
+
+Two things claudectl says about itself turned out not to be true, and both are
+now. It said a GUI job would never hang on a keyboard, and three of them did.
+It said the local API was guarded by three layers, and it had two — while the
+page carrying the key was handed to anyone who asked for it. This release is
+mostly that: the security sweep, the hangs, and a session list you can read.
+
+### Security
+
+- **Cross-site scripting in the desktop GUI, and it reached a shell.** Every
+  value that reached an inline event handler in `web/app.js` — seventy-nine
+  interpolations — was escaped at the wrong layer. `${JSON.stringify(v)}` inside
+  `onclick='…'` escapes for JavaScript and *nothing* for HTML; `'${jsq(v)}'`
+  inside `on…="…"` did the mirror image. One apostrophe closed the attribute and everything after it was
+  parsed as new attributes.
+
+  The values are not yours: a filename from a repository you cloned, an MCP
+  server name out of a project's `.mcp.json`, a git branch, a skill directory,
+  a plugin name. Injected script ran same-origin with the API token in scope,
+  and `/api/settings` plus `/api/open-editor` turn that into an arbitrary
+  command. One helper, `hesc()`, applies both layers in the right order and is
+  now the only way a value reaches a handler; `tests/test_inline_handlers.py`
+  fails the build if a bare `JSON.stringify` ever appears in markup again.
+
+  It was also a plain bug: a suggestion containing "don't" broke the page.
+- **The page that carries the API token gave it away.** `GET /` was served on the
+  `Host` check alone, and `/` is the response the per-run token is substituted
+  into — so any process that could open a socket to the port could simply ask
+  for it, which on Windows includes a process running as a *different user*,
+  because loopback is not a user-identity boundary. `/` now takes the token in
+  its query string exactly as `/graph` always has, the launcher puts it there,
+  and the SPA drops it from the address bar on boot.
+- **The guard now has the three layers it always claimed.** `gui._guard()`
+  implemented `Host` and the token; the documented middle layer — rejecting a
+  cross-site fetch — existed only in the failover proxy. It is the layer that
+  still holds if the token leaks, so it is the one that mattered here. It had to
+  be written as an allowlist rather than the proxy's outright rejection, because
+  the SPA's own `fetch()` sends those headers.
+- **`git clone` ran an attacker's URL before anything reviewed it.**
+  Installing a skill from git passed the URL straight to `git clone` with no
+  scheme check and no `--`, and `ext::sh -c …` is a real git transport that
+  executes on clone. The review gate that shows you what will be installed runs
+  *after* the checkout, so it never protected the fetch. Remote URLs are now
+  validated in one place (`proc.remote_url_ok`) and the option list is
+  terminated; the same applies to adding a plugin marketplace and merging a
+  worktree branch.
+- **Two endpoints deleted whatever they were told to.** `/api/agents/delete`
+  reached `os.remove(body['file'])` and `/api/skills/remove` reached
+  `shutil.rmtree(body['dir'])` with no validation at all, so
+  `{"dir": "C:\\Users\\you"}` was a recursive delete of your home directory.
+  Both now require a path claudectl actually manages. `target_cfgdir`, which
+  becomes `CLAUDE_CONFIG_DIR` for a spawned `claude`, is validated by the same
+  account allowlist as `cfgdir` — it was skipped only because it is spelled
+  differently.
+- **Path traversal in output styles.** `read` and `delete` joined the style name
+  into a path raw, three functions away from a `save` that had always sanitised
+  it: `?name=../../../../Users/you/Documents/notes` read that file, and delete
+  removed any `.md` on the volume.
+- **A repository name could inject script into the architecture graph**, which is
+  served same-origin with the GUI and under the same policy. The graph's JSON
+  payload is also now safe against U+2028/U+2029, which are JavaScript line
+  terminators that `ensure_ascii=False` emitted raw.
+- **`.claudectl/` marks itself never-commit.** claudectl writes it into *your*
+  repositories, and it holds `bash-log.txt` — every Bash command Claude Code ran,
+  which routinely includes `export TOKEN=…` and `curl -H "Authorization: …"` —
+  plus `injected-context.md`, an entire transcript. It now seeds a `.gitignore`
+  the first time it is created. `claudectl.json`, which holds your OmniRoute key,
+  is written `0600`.
+- A non-ASCII byte in the `X-Claudectl` header raised inside `hmac.compare_digest`
+  and printed a traceback instead of answering 403.
+
 ### Added
 
 - **Logs, in both interfaces.** A new **⚙ Logs** screen in the TUI and **Logs**
@@ -21,12 +93,42 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   so around forty `log.exception` sites, including *every* background job crash
   and *every* faulted API handler, wrote to nothing. One logging handler now
   fans them all in; no per-turn path writes to the log, and no hook touches it.
+- **Hand off** — on every session row in the GUI, and `⇧K` in the terminal UI.
+  Start a new session seeded with a previous one's transcript, under any account
+  you like. It replaces the Tools-tab "new chat with injected context" flow,
+  where you had to pick the source session from a list; the row *is* the source
+  now.
+- **A `standard` skin** — no chassis, system font, hairline borders. The plain
+  one, for when the point is the content. 32 palettes, 8 skins.
 - **`headless_quota` setting** — `prompt` (default), `auto` or `off`. Decides
   what happens when claudectl wants to make one of its own Claude calls and the
   account's limit is already full.
 
 ### Fixed
 
+- **A session row shows what the session is about again.** The action strip was
+  invisible until you hovered a row, but it still occupied its full width at all
+  times — so adding **Hand off** as a tenth action took roughly a quarter of the
+  title away from every row, whether you were reading or acting. The strip is out
+  of the layout entirely now: the title gets the whole row at rest, the actions
+  fade in over its right end on hover, and nothing moves. They are reachable by
+  keyboard for the first time. The row also carries the full title as a tooltip,
+  the preview text kept behind it is no longer clipped to 65 characters, and an
+  archived row shows its AI title instead of falling back to the preview.
+
+  In the terminal UI the name column scales with the window instead of a fixed 30
+  columns, and the hint bar drops whole hints rather than cutting the last one
+  mid-word — which is what `⇧K hand off` had been doing at 80 columns.
+- **Three GUI jobs hung until a six-hour reaper.** AI-generate agent, AI-generate
+  hook and AI CLAUDE.md all reached an interactive terminal primitive on a
+  background thread, where no keypress is ever coming: nothing logged, nothing
+  timed out, and the interface said "running" the whole time. Each is now split
+  into a non-interactive function the job calls and a thin terminal wrapper.
+
+  The underlying cause is more general and is now closed generally: a module that
+  did `from .ui import text_input` held its own reference, which patching `ui`
+  never moved. The bridge sweeps for the original function instead of naming
+  modules — naming them is what had already failed twice.
 - **claudectl spent accounts that had nothing left.** Every internal
   `claude -p` call — AI agents, AI skills, MCP analysis, system prompts, AI
   CLAUDE.md, memory and lessons extraction, Plan → Execute and its council,
@@ -49,6 +151,45 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Claude". They now capture stderr and latch it in the same place
   `_run_cancellable` already did, and the callers report what `claude` actually
   said.
+- **Rate-limit detection no longer fires on the model's own output.** Reading the
+  whole of stdout to find the real refusal meant a bare `429` matched a token
+  count and a bare `quota` matched any answer that discussed rate limiting —
+  locking an account out of headless work for fifteen minutes after a run that
+  had nothing wrong with it.
+- **Archived sessions from other accounts were invisible**, and the ones you
+  could see could not be restored to the right place.
+- **`/api/sessions` was re-parsing every transcript on every GUI restart** — an
+  8-second median on a large project. The disk cache existed but nothing on the
+  cold path could reach it. It also now carries a schema number, so a change to
+  what claudectl stores about a session is visible on old sessions instead of
+  only on new ones.
+- **The window kept painting while it was not on screen.** CSS animations, a
+  world's overlay and the CRT caret all kept running behind a hidden canvas, and
+  a light or OLED palette flashed the wrong colour during the swap. Blur is
+  debounced, focus is not, and the dashboard's teardown-and-refetch is debounced
+  with it — Qt fires spurious blur/focus pairs on things that are not a focus
+  change. A tab becoming visible inside the debounce window could also leave the
+  page stuck in its blurred state.
+- **Unresolvable projects cost 98% of the project listing.** A path that no
+  longer exists on disk was re-walked on every call, forever, because only
+  successful lookups were cached. `claude mcp list` is cached for 30 seconds now
+  including its failures — which is the case that costs the most, because a
+  slow-failing MCP server is exactly when it is slowest.
+- **Two "Open in editor" buttons had never worked**, sending a parameter the
+  endpoint does not read. `/api/job/<id>/decide` — the route every approval gate
+  resolves through — wrote two HTTP responses for one request.
+- **One noisy warning was crowding the event log out.** The dedupe key contained
+  the measurement it was deduplicating, so 609 of 674 events were the same
+  warning differing by one decimal. Only decimals collapse now: an HTTP status or
+  a project path with a digit in it is part of the event's identity, and folding
+  those was dropping real failures.
+
+### Changed
+
+- `.claudectl/` is created through one helper, and `config.write_atomic` takes an
+  optional file mode.
+- The plugin manifest, the marketplace entry, the docs page and `CITATION.cff`
+  are all checked against `pyproject.toml` by one test.
 
 ## [1.8.2] - 2026-09-01
 

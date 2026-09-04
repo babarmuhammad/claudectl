@@ -45,29 +45,49 @@ def path_from_transcripts(folder, max_files=3, max_lines=40):
     return None
 
 
-#: folder -> (mtime_ns, real path). `/api/state`, `/api/search-index`, the usage
-#: endpoints and a `/api/dashboard` that polls every 10 s each call this once
-#: PER PROJECT, and every call opens up to three transcripts. The folder's mtime
-#: changes whenever a session is written, which is exactly when the answer could
-#: have changed, so this can never go stale. Keyed by folder rather than by
+#: folder -> (mtime_ns, real path or None, stamped_at). `/api/state`,
+#: `/api/search-index`, the usage endpoints and a `/api/dashboard` that polls
+#: every 10 s each call this once PER PROJECT, and every call opens up to three
+#: transcripts. The folder's mtime changes whenever a session is written, which
+#: is exactly when the answer could have changed. Keyed by folder rather than by
 #: (folder, mtime) so it stays bounded by the number of projects.
+#:
+#: A MISS IS CACHED TOO, and that is the expensive half. Storing only successes
+#: meant a folder whose transcripts name a path that no longer exists paid the
+#: recursive `_walk_for` guess on every single call, forever — nothing prunes a
+#: dead project folder and nothing will. Measured before this: 72 folders, 30
+#: resolving in 0.04 s total and 42 not resolving in 1.59 s total, ~38 ms each,
+#: which was 98% of `gui.list_projects()` and therefore of the /api/memory/active
+#: poll that runs every 5 seconds.
 _path_cache = {}
+
+#: A miss also expires on time, not only on mtime. The mtime key covers a new
+#: transcript appearing; it cannot see the *target* directory reappearing on
+#: disk (re-clone a repo to the same path and nothing under the project folder
+#: changes). A minute of staleness there is the right trade against the walk.
+#: ponytail: TTL on misses only; hits stay mtime-keyed and never expire
+_MISS_TTL = 60
 
 
 def find_actual_path(encoded, max_depth=8, folder=None):
     if folder:
+        import time
         try:
             mtime = os.stat(folder).st_mtime_ns
         except OSError:
             mtime = None
         hit = _path_cache.get(folder)
-        if hit and mtime is not None and hit[0] == mtime:
+        if hit and mtime is not None and hit[0] == mtime \
+                and (hit[1] is not None or time.time() - hit[2] < _MISS_TTL):
             return hit[1]
-        got = path_from_transcripts(folder)
-        if got:
-            if mtime is not None:
-                _path_cache[folder] = (mtime, got)
-            return got
+        got = path_from_transcripts(folder) or _walk_for(encoded, max_depth)
+        if mtime is not None:
+            _path_cache[folder] = (mtime, got, time.time())
+        return got
+    return _walk_for(encoded, max_depth)
+
+
+def _walk_for(encoded, max_depth=8):
     # Fallback only — the transcript's own `cwd` above is exact, and this walk
     # is guesswork against a lossy encoding. Where it STARTS is the only
     # platform-specific part: 'D--Claude' names a drive, '-home-mab-proj' names

@@ -230,18 +230,29 @@ def run_with_progress(args, crumbs, label, timeout=120, cwd=None, env=None):
     reader.join(timeout=5)
     errdr.join(timeout=5)
     if proc.returncode:
-        _note_failure(args, env, proc.returncode, errs)
+        _note_failure(args, env, proc.returncode, errs, chunks)
         return None, False
     return (chunks[0] if chunks else ''), False
 
 
-def _note_failure(args, env, code, errs):
+def _note_failure(args, env, code, errs, chunks=()):
     """One latch for a failed child, the same one gui_api._run_cancellable
-    writes — so a caller has ONE place to read why, not two."""
+    writes — so a caller has ONE place to read why, not two.
+
+    `chunks` is stdout. It matters because the refusal Claude Code cares most
+    about — the session/weekly limit — is printed to STDOUT inside the
+    `--output-format json` envelope, not to stderr, so a stderr-only latch said
+    "claude exited 1: (no output)" for it.
+    """
     from . import memory as _m, quota
+    from .gui_api import _claude_failure_reason
+    err = ''.join(c for c in errs if c).strip()
+    out = _claude_failure_reason(''.join(c for c in chunks if c))
     _m.last_call_error = 'claude exited %s: %s' % (
-        code, (''.join(c for c in errs if c).strip() or '(no output)')[:300])
-    quota.note_failure(env, _m.last_call_error)
+        code, (err or out or '(no output)')[:300])
+    # the raw text of BOTH streams, for the same reason _run_cancellable passes
+    # the envelope: a marker may sit in a field the sentence does not carry
+    quota.note_failure(env, err + '\n' + ''.join(c for c in chunks if c))
     from . import events
     events.record('subprocess', _m.last_call_error,
                   detail=' '.join(str(a) for a in list(args)[:2]))
@@ -325,7 +336,7 @@ def run_with_progress_stdin(args, stdin_text, crumbs, label, timeout=240, cwd=No
     reader.join(timeout=5)
     errdr.join(timeout=5)
     if proc.returncode:
-        _note_failure(args, env, proc.returncode, errs)
+        _note_failure(args, env, proc.returncode, errs, chunks)
         return None, False
     return (chunks[0] if chunks else ''), False
 

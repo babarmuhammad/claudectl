@@ -22,6 +22,15 @@
   <meta name="twitter:title" content="{{ title }}">
   <meta name="twitter:description" content="{{ desc }}">
   <meta name="twitter:image" content="{{ image }}">
+  {#
+    The author entity, on every docs page. The apex site asserts the same
+    Person @id with the same sameAs list (www/lib/site.ts PROFILES); saying it
+    on both hosts is what merges docs.claudectl.space and claudectl.space into
+    one entity rather than two sites that happen to share a name — which
+    matters here because an unrelated Rust project also publishes as claudectl.
+    The @id is the APEX url on purpose: one entity, named from one place.
+  #}
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"Person","@id":"{{ config.extra.apex }}/#author","name":"{{ config.extra.author }}","url":"{{ config.extra.apex }}","sameAs":[{% for p in config.extra.profiles %}"{{ p }}"{% if not loop.last %},{% endif %}{% endfor %}]}</script>
   {% if page and page.meta and page.meta.jsonld %}
   <script type="application/ld+json">{{ page.meta.jsonld }}</script>
   {% endif %}

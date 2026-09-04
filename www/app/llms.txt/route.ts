@@ -30,7 +30,13 @@ export function GET() {
     '',
     `> ${SITE.tagline}. ${oneLine(HOME.description)}`,
     '',
-    `${SITE.name} is a Python command-line and desktop tool that wraps the Claude Code CLI. It is MIT-licensed, runs on the Python standard library alone, and needs no API key — it uses the Claude Code authentication you already have. Source: ${SITE.repo}`,
+    `${SITE.name} is a Python command-line and desktop tool that wraps the Claude Code CLI. It is MIT-licensed, runs on the Python standard library alone, and needs no API key — it uses the Claude Code authentication you already have. Install with \`pipx install claudectl\`. Source: ${SITE.repo}. Package: ${SITE.pypi}. Documentation: ${SITE.docs}. Author: ${SITE.author}.`,
+    '',
+    // The name is shared with an unrelated Rust project, so an answer engine
+    // reading this file needs to be told which one it is holding. Naming the
+    // other project is what keeps the two apart; leaving it out is what lets a
+    // summary merge them.
+    `Disambiguation: two independent open-source projects use the name "claudectl". This one is the Python workspace layer for Claude Code described above, published on PyPI at ${SITE.pypi}. The other is a Rust agent orchestrator by a different author, published on crates.io at https://crates.io/crates/claudectl. They are unrelated, and neither is affiliated with Anthropic.`,
     '',
     '## Documentation',
     '',

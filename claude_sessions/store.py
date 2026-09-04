@@ -12,7 +12,29 @@ import os
 
 from . import config as _c
 
-__all__ = ['projects_root', 'project_folder', 'session_file', 'is_encoded']
+__all__ = ['projects_root', 'project_folder', 'session_file', 'is_encoded',
+           'claudectl_dir']
+
+#: what claudectl writes into a project it does not own
+_WORKDIR = '.claudectl'
+
+
+def claudectl_dir(project_path):
+    """`<project>/.claudectl`, created, and marked never-commit.
+
+    Everything claudectl parks in someone else's repository goes here, and some
+    of it is sensitive: `bash-log.txt` is every Bash command Claude Code ran in
+    that project (`export TOKEN=…`, `curl -H "Authorization: …"`), and
+    `injected-context.md` is an entire transcript. claudectl's own repo has the
+    directory in `.gitignore`; nobody else's does, so the file landed in users'
+    working trees looking like something to commit.
+
+    A `.gitignore` holding `*` ignores the directory's contents including itself,
+    which is the whole fix and costs one write the first time.
+    """
+    d = os.path.join(project_path, _WORKDIR)
+    _c._ensure_dir(d)     # one implementation of the marker, see config
+    return d
 
 
 def is_encoded(enc):

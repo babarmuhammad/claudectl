@@ -303,3 +303,67 @@ def test_a_failed_headless_call_reports_what_claude_said(monkeypatch, tmp_path):
     assert 'usage limit' in memory.last_call_error
     assert memory.why_failed() == memory.last_call_error
     assert subprocess  # keep the import meaningful to a reader
+
+
+def test_the_limit_text_claude_code_actually_sends_is_recognised():
+    """The refusal is not phrased like any of the markers that were here.
+
+    Verbatim from a real 429 transcript
+    (`~/.claude/projects/D--Claude/56bca8bb-….jsonl`, `"error":"rate_limit"`,
+    `"apiErrorStatus":429`): the assistant message is the sentence below. It
+    matched NOTHING, so `note_failure` never latched, and the "one failure stops
+    the other five" guard had never fired for the commonest rejection.
+    """
+    from claude_sessions import quota
+    assert quota.is_limit_error(
+        "You've hit your session limit · resets 2:30am (Europe/Rome)")
+    assert quota.is_limit_error("You've hit your weekly limit · resets Monday")
+    # and the shapes that already worked still do
+    assert quota.is_limit_error('Claude AI usage limit reached')
+    assert quota.is_limit_error('429 Too Many Requests')
+    # a bare 'limit' must still NOT match — the budget cap and the turn cap say
+    # that, and neither is out-of-quota
+    assert not quota.is_limit_error('--max-turns limit of 20 turns')
+    assert not quota.is_limit_error('') and not quota.is_limit_error(None)
+
+
+def test_the_markers_do_not_match_the_models_own_output():
+    """`ui._note_failure` hands `note_failure` the whole STDOUT now, not a
+    300-char stderr latch — so every marker is scanned against text the model
+    wrote. A bare '429' substring hit a token count and a bare 'quota' hit any
+    answer that mentioned rate limiting, latching the account out of headless
+    work for fifteen minutes after a run that had nothing wrong with it.
+    """
+    from claude_sessions import quota
+    for benign in ('total tokens: 14290', 'cost 4291 tokens',
+                   'wrote 429 lines to quota.py',
+                   'reviewed quota.py; the quota system looks fine',
+                   'the daily quota display needs a label'):
+        assert not quota.is_limit_error(benign), benign
+    # the real one is still recognised, boundary and all
+    assert quota.is_limit_error('HTTP 429 Too Many Requests')
+    assert quota.is_limit_error('your quota exceeded for this window')
+
+
+def test_a_json_envelope_failure_reports_the_sentence_not_the_blob():
+    """`--output-format json` buries the reason behind ~200 chars of metadata,
+    and every reporter truncates — so what reached the user was a clipped blob
+    with the sentence cut off. Twenty of those are in the live event log."""
+    from claude_sessions.gui_api import _claude_failure_reason
+    blob = json.dumps({
+        'duration_api_ms': 0, 'stop_reason': 'stop_sequence',
+        'session_id': '56bca8bb-6932-4cf8-be99-e7a793e01475',
+        'total_cost_usd': 0, 'usage': {'input_tokens': 0, 'output_tokens': 0},
+        'is_error': True,
+        'result': "You've hit your session limit · resets 2:30am (Europe/Rome)",
+    })
+    assert len(blob) > 200                        # the truncation that hid it
+    assert _claude_failure_reason(blob) == \
+        "You've hit your session limit · resets 2:30am (Europe/Rome)"
+    # nested error objects, and the plain-text paths, both survive unchanged
+    assert _claude_failure_reason(
+        json.dumps({'error': {'message': 'overloaded'}})) == 'overloaded'
+    assert _claude_failure_reason('Traceback (most recent call last):') == \
+        'Traceback (most recent call last):'
+    assert _claude_failure_reason('{not json at all') == '{not json at all'
+    assert _claude_failure_reason('') == '' and _claude_failure_reason(None) == ''

@@ -70,8 +70,8 @@ def main(argv=None):
     if not cmd:
         return 0
     try:
-        d = os.path.join(cwd, '.claudectl')
-        os.makedirs(d, exist_ok=True)
+        from claude_sessions import store
+        d = store.claudectl_dir(cwd)
         p = os.path.join(d, 'bash-log.txt')
         with open(p, 'a', encoding='utf-8') as f:
             f.write(cmd + '\n')

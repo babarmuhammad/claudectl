@@ -789,13 +789,23 @@ def _ai_hook(cfgdir=None):
         flash(f"Invalid hook (event={event or '?'})", ok=False, secs=2)
         return
     matcher = str(data.get('matcher', '')).strip()
-    _cls()
-    print(f"\n  AI-GENERATED HOOK\n")
-    print(f"  Event   : {event}")
-    print(f"  Matcher : {matcher or '(any)'}")
-    print(f"  Command : {command}")
-    print(f"  {data.get('desc', '')}\n")
-    if not confirm("Add this hook?"):
+    # `_pager_confirm`, not `print` + `confirm`: this function is also the GUI's
+    # `hook_ai` job, and there the four prints went to a stdout nobody was
+    # reading while `confirm` blocked in wait_event() forever — the job parked
+    # at 'running' until the six-hour reaper. `_pager_confirm` is one of the
+    # primitives `gui_api._install_bridge` patches, so it is a pager in the
+    # terminal and a real approve/reject gate in the browser, showing the same
+    # text either way.
+    from .claude_md import _pager_confirm
+    preview = '\n'.join([
+        f"Event   : {event}",
+        f"Matcher : {matcher or '(any)'}",
+        f"Command : {command}",
+        '',
+        str(data.get('desc', '')),
+    ])
+    if not _pager_confirm('AI-GENERATED HOOK  — approve to add', preview):
+        flash('Rejected — not added', ok=False, secs=1.4)
         return
     entry = {'hooks': [{'type': 'command', 'command': command}]}
     if matcher:

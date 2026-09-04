@@ -11,6 +11,26 @@ export const SITE = {
   ogImage: '/og-card.png',
 } as const;
 
+/** Every profile the author controls, for schema.org `sameAs`.
+ *
+ *  This is the disambiguation mechanism, not decoration: an unrelated Rust
+ *  project publishes under the same name, so the thing that tells a search
+ *  engine which "claudectl" this is, is one entity corroborated by a set of
+ *  profiles that all link back here. Add a URL only once it exists AND links
+ *  to claudectl.space — a dead or one-way profile weakens the graph.
+ *
+ *  Deliberately absent: the Reddit account. It is pseudonymous and shares no
+ *  string with the name or the project, so it corroborates nothing, and
+ *  publishing it here would permanently tie that pseudonym to a real identity.
+ *  It lives in the growth repo's ledger, which is where it is actually used. */
+export const PROFILES = [
+  'https://github.com/babarmuhammad',
+  'https://www.linkedin.com/in/muhammad-anas-babar-819647240',
+  'https://dev.to/muhammad_anasbabar_31256',
+  'https://babarmuhammad.hashnode.dev',
+  'https://www.instagram.com/muhammad_anas_babar',
+] as const;
+
 export const NAV = [
   { href: '/features', label: 'Features' },
   { href: '/download', label: 'Download' },

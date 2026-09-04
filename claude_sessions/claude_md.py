@@ -783,6 +783,23 @@ def fence_untrusted(text):
     return _UNTRUSTED_OPEN + (text or '') + _UNTRUSTED_CLOSE
 
 
+def _on_job_thread():
+    """True when this call is a GUI background job rather than the terminal UI.
+
+    The one thing a job thread cannot do is read a key. `gui_api._install_bridge`
+    covers five interactive primitives; `wait_event`/`poll_event` are not among
+    them and never can be, because there is no key coming — so the flows that
+    reach them have to branch instead. Read off `_JOBCTX` at call time (never
+    bound at import) for the reason the whole codebase does: it is thread-local
+    state.
+    """
+    try:
+        from .gui_api import _JOBCTX
+        return getattr(_JOBCTX, 'job', None) is not None
+    except Exception:
+        return False
+
+
 def ai_scaffold_claude_md(project_path, proj_folder=None):
     """Use Claude CLI (-p) to deeply analyze project and generate comprehensive CLAUDE.md."""
     md_path = os.path.join(project_path, 'CLAUDE.md')
@@ -810,35 +827,44 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
         except Exception:
             pass
 
-    # ── Confirmation screen ──────────────────────────────────────
-    _cls()
-    print(f"\n  AI ANALYZE  /  {name}\n")
-    if is_update:
-        md_age = format_age(os.path.getmtime(md_path))
-        print(f"  Mode    : UPDATE  (existing file, last modified {md_age} ago)")
-        print(f"  Existing content preserved. Only outdated facts updated.")
-    else:
-        print(f"  Mode    : FRESH  (no existing CLAUDE.md)")
-        print(f"  Will generate full structured CLAUDE.md from project data.")
-    print(f"\n  ENTER start   ESC cancel\n")
-
-    # ── Optional extra prompt ────────────────────────────────────
+    # ── Confirmation screen + optional extra prompt ──────────────
+    # Skipped entirely on a job thread. `wait_event()` is a `time.sleep(0.03)`
+    # spin that returns only on a real keypress and is NOT one of the primitives
+    # `gui_api._install_bridge` patches — so the GUI's `ai_scaffold` job blocked
+    # here forever and sat at 'running' until the six-hour reaper. The click that
+    # started the job IS the confirmation; the extra instructions come through
+    # the bridged `text_input`, which pops `job['inputs']` and returns the
+    # default when there is nothing queued. The approval gate is further down and
+    # is `diffview.confirm`, which the bridge does cover.
     extra_prompt = ''
-    while True:
-        ev = wait_event()
-        if ev[0] == 'enter':   # show extra prompt input
-            _cls()
-            print(f"\n  AI ANALYZE  /  {name}\n")
-            print(f"  Optional: add extra instructions for Claude (ENTER to skip)\n")
-            print(f"  Example: 'focus on API endpoints' / 'add client-facing language rules'\n")
-            result = text_input("Extra instructions:", default='')
-            if result is None:  # ESC — cancel
+    if _on_job_thread():
+        extra_prompt = text_input("Extra instructions:", default='') or ''
+    else:
+        _cls()
+        print(f"\n  AI ANALYZE  /  {name}\n")
+        if is_update:
+            md_age = format_age(os.path.getmtime(md_path))
+            print(f"  Mode    : UPDATE  (existing file, last modified {md_age} ago)")
+            print(f"  Existing content preserved. Only outdated facts updated.")
+        else:
+            print(f"  Mode    : FRESH  (no existing CLAUDE.md)")
+            print(f"  Will generate full structured CLAUDE.md from project data.")
+        print(f"\n  ENTER start   ESC cancel\n")
+        while True:
+            ev = wait_event()
+            if ev[0] == 'enter':   # show extra prompt input
+                _cls()
+                print(f"\n  AI ANALYZE  /  {name}\n")
+                print(f"  Optional: add extra instructions for Claude (ENTER to skip)\n")
+                print(f"  Example: 'focus on API endpoints' / 'add client-facing language rules'\n")
+                result = text_input("Extra instructions:", default='')
+                if result is None:  # ESC — cancel
+                    return
+                extra_prompt = result
+                break
+            elif ev[0] == 'esc':
                 return
-            extra_prompt = result
-            break
-        elif ev[0] == 'esc':
-            return
-        # ignore any other key — require explicit ENTER
+            # ignore any other key — require explicit ENTER
 
     # Gather context
     _cls()
@@ -1070,8 +1096,9 @@ def ai_scaffold_claude_md(project_path, proj_folder=None):
                     done = True
                     break
                 # Drain ALL pending input — wheel/held arrows otherwise pile up
-                # and replay into the next screen
-                while True:
+                # and replay into the next screen. Terminal only: a job thread
+                # has no keyboard to read and its cancel is the check above.
+                while not _on_job_thread():
                     ev = poll_event()
                     if not ev:
                         break

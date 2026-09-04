@@ -1,7 +1,7 @@
 {
   "name": "claudectl",
   "displayName": "claudectl",
-  "version": "1.8.2",
+  "version": "1.9.0",
   "description": "Recall this project's memory, check its health, and review the current diff — from inside a session. The full workspace manager is the claudectl CLI; this plugin is its in-session surface.",
   "author": {
     "name": "Babar Muhammad Anas",

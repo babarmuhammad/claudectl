@@ -1,0 +1,26 @@
+name: Feature request
+description: Suggest something claudectl should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >-
+        The problem, not the solution. What does your current workflow look like,
+        and where does it break down?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you have in mind
+      description: Optional. If you already know the shape it should take, say so.
+
+  - type: markdown
+    attributes:
+      value: >-
+        claudectl has zero runtime dependencies and reads Claude Code's own state
+        rather than replacing it — proposals that keep both constraints are much
+        easier to land.

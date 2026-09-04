@@ -19,6 +19,7 @@ Two ideas make this thin:
 import json
 import os
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -37,6 +38,41 @@ _JOBCTX = threading.local()          # .job set on job threads
 
 class JobCancelled(Exception):
     """Raised inside a job thread when the user cancels."""
+
+
+def _claude_failure_reason(stdout):
+    """The sentence a human needs, out of what `claude -p` printed before it
+    exited non-zero.
+
+    `--output-format json` (which `memory._claude_json` asks for) puts the
+    refusal in `result`, behind ~200 characters of `duration_api_ms`,
+    `stop_reason`, `session_id`, `total_cost_usd` and `usage`. Everything that
+    reports a failure truncates, so what actually reached the user — the job
+    banner, the Logs page, the event log — was a clipped JSON blob with the
+    reason cut off. Twenty of those are sitting in this machine's event log, and
+    every one of them means "You've hit your session limit · resets 2:30am".
+
+    Falls through to the raw text unchanged when stdout is not that envelope
+    (`--print`, a crash, a stack trace), so nothing is hidden.
+    """
+    raw = (stdout or '').strip()
+    if not raw.startswith('{'):
+        return raw
+    try:
+        env = json.loads(raw)
+    except Exception:
+        return raw
+    if not isinstance(env, dict):
+        return raw
+    for key in ('result', 'error', 'message'):
+        v = env.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        if isinstance(v, dict):                     # {"error": {"message": ...}}
+            m = v.get('message')
+            if isinstance(m, str) and m.strip():
+                return m.strip()
+    return raw
 
 
 def _run_cancellable(cmd, input_text=None, capture_output=True, text=True,
@@ -87,8 +123,9 @@ def _run_cancellable(cmd, input_text=None, capture_output=True, text=True,
         # stderr is merged into stdout above, so a failed CLI run looks exactly
         # like a successful one to every caller unless the exit code is checked.
         if proc.returncode:
+            reason = _claude_failure_reason(stdout)
             if job is not None:
-                job['last_subprocess_error'] = {'code': proc.returncode, 'output': stdout}
+                job['last_subprocess_error'] = {'code': proc.returncode, 'output': reason}
             # The scheduler and the detached memory worker have NO job context,
             # so `if job is not None` dropped the reason on the floor for
             # precisely the two callers that run unattended — a rate-limited
@@ -96,8 +133,11 @@ def _run_cancellable(cmd, input_text=None, capture_output=True, text=True,
             # "queued". Record it where any caller can read it.
             from . import memory as _mem
             _mem.last_call_error = 'claude exited %s: %s' % (
-                proc.returncode, (stdout or '(no output)')[:300])
+                proc.returncode, (reason or '(no output)')[:300])
             from . import events, quota
+            # the ENVELOPE, not the extracted sentence: a marker could live in a
+            # field the sentence does not carry, and this test is a cheap
+            # substring scan over text we already have in memory
             quota.note_failure(env, stdout)
             events.record('subprocess', _mem.last_call_error,
                           detail=' '.join(str(c) for c in cmd[:2]))
@@ -321,7 +361,10 @@ def _jsonable(v):
 # ── UI bridge (installed once; no-op outside job threads) ────
 
 def _install_bridge():
-    from . import ui, diffview, claude_md, hooks
+    # hooks/claude_md are imported here so they are certain to be in sys.modules
+    # before the by-value sweep at the bottom runs — they are the two that were
+    # actually caught holding their own copies.
+    from . import ui, diffview, claude_md, hooks    # noqa: F401 (see the sweep)
 
     _orig_flash = ui.flash
     def flash(msg, ok=True, secs=1.0):
@@ -358,8 +401,6 @@ def _install_bridge():
             return _orig_text_input(prompt, default=default)
         return job['inputs'].pop(0) if job['inputs'] else default
     ui.text_input = text_input
-    # hooks.py imports text_input by value at module top
-    hooks.text_input = text_input
 
     _orig_ui_confirm = ui.confirm
     def ui_confirm(prompt, danger=False):
@@ -368,6 +409,26 @@ def _install_bridge():
             return _orig_ui_confirm(prompt, danger=danger)
         return True     # GUI flows pre-confirm destructive actions client-side
     ui.confirm = ui_confirm
+
+    # ── the by-value copies ──────────────────────────────────────────────
+    # `from .ui import flash, text_input, confirm` binds a SECOND name, and
+    # patching `ui` does not move it: `hooks._ai_hook` hung on the real
+    # `confirm`, and `claude_md`'s `_on_job_thread()` branch hung on the real
+    # `text_input` — the exact job the split was written to un-hang.
+    #
+    # Naming the modules is what has failed every previous time this bug
+    # appeared (`config._spawn_editor`, `hooks.settings_path`), so this does not
+    # name them: it sweeps for the ORIGINAL function object, which is exact —
+    # no list to fall behind, and no false positive. Modules imported after this
+    # point need nothing, because by then `ui.flash` already IS the bridge.
+    swap = {id(_orig_flash): flash, id(_orig_text_input): text_input,
+            id(_orig_ui_confirm): ui_confirm}
+    for m in list(sys.modules.values()):
+        if not getattr(m, '__name__', '').startswith(__package__ + '.'):
+            continue
+        for attr, val in list(vars(m).items()):
+            if id(val) in swap and m is not ui:
+                setattr(m, attr, swap[id(val)])
 
 
 #: how long an approval gate waits before rejecting itself. It was an hour, on
@@ -622,14 +683,45 @@ def _cfgdir_ok(v):
                for _n, d in _c.all_config_dirs())
 
 
-#: checked by NAME, wherever they appear. These three are the ones that reach
-#: the filesystem; `path` is deliberately absent, because several endpoints
-#: legitimately take a directory that does not exist yet, and every path that
-#: becomes a subprocess cwd already goes through paths.resolve_dir.
+def _managed_path_ok(v):
+    """Is this somewhere claudectl is allowed to DELETE?
+
+    `os.remove(body['file'])` and `shutil.rmtree(body['dir'])` were reachable
+    with any path at all, so `{"dir": "C:\\\\Users\\\\mab"}` was a recursive
+    delete of the home directory. The token gates it, but a guard that only
+    holds while a secret does is one layer, not two.
+
+    Enumerating every root is the wrong shape — project-scoped agents and skills
+    live under an arbitrary project. Both managed locations are recognisable
+    instead: an account config directory (which `_cfgdir_ok` already knows), or
+    anything below a `.claude` / `.claudectl` directory, which is where every
+    project-scoped one lives by construction.
+    """
+    p = os.path.normcase(os.path.abspath(v))
+    for _n, d in _c.all_config_dirs():
+        root = os.path.normcase(os.path.abspath(d))
+        if p == root or p.startswith(root + os.sep):
+            return True
+    parts = p.split(os.sep)
+    return '.claude' in parts or '.claudectl' in parts
+
+
+#: checked by NAME, wherever they appear. These reach the filesystem; `path` is
+#: deliberately absent, because several endpoints legitimately take a directory
+#: that does not exist yet, and every path that becomes a subprocess cwd already
+#: goes through paths.resolve_dir.
+#:
+#: `target_cfgdir` is here because naming a parameter differently was enough to
+#: skip the check entirely: `api_inject_launch` put its value straight into
+#: CLAUDE_CONFIG_DIR for a spawned `claude`, on the one endpoint whose docstring
+#: says it is validated now. `dir` is deliberately NOT here — `accounts/add`
+#: legitimately names a directory that does not exist yet — so the destructive
+#: `dir` sinks call `_managed_path_ok` themselves.
 PARAM_CHECKS = {
     'enc': lambda v: _store.is_encoded(v),
     'sid': lambda v: _store.is_encoded(v),
     'cfgdir': _cfgdir_ok,
+    'target_cfgdir': _cfgdir_ok,
 }
 
 
@@ -671,9 +763,9 @@ def call(fn, q=None, body=None):
 #: a real fault and must stay a 500. The list was short by five, which the
 #: endpoint floor found as five separate 500s.
 _REQUEST_PARAMS = frozenset((
-    'enc', 'sid', 'cfgdir', 'path', 'action', 'kind', 'name', 'id',
-    'dir', 'file', 'key', 'event', 'scope', 'text', 'value', 'model', 'task',
-    'url', 'query', 'q', 'ts',
+    'enc', 'sid', 'cfgdir', 'target_cfgdir', 'path', 'action', 'kind', 'name',
+    'id', 'dir', 'file', 'key', 'event', 'scope', 'text', 'value', 'model',
+    'task', 'url', 'query', 'q', 'ts',
 ))
 
 
@@ -739,20 +831,46 @@ def api_session_delete(q, body):
 
 
 def api_archived(q, body):
+    """Archived sessions of a project across EVERY account, newest-first.
+
+    This used to resolve exactly one folder — whatever `cfgdir` the client sent,
+    which was always `CUR.primary_cfgdir`, i.e. the first account in
+    `all_config_dirs()` order that has the project (so `default` whenever it has
+    it). Anything archived under another account was invisible, and the rows
+    carried no `account`/`cfgdir` either, so even a visible one could not have
+    been restored to the right place.
+
+    The archive is per-account and per-project (`<cfgdir>/projects/<enc>/archived`),
+    so there is nothing global to read — the walk is the fix. Mirrors
+    `gui.list_sessions` rather than inventing a second shape, and the TUI's
+    archived tab (`session_menu._rescan_archived`) has always merged accounts
+    this way.
+    """
     from .session_menu import _arch_of
-    from .sessions import scan_sessions, load_name, format_age, get_session_stats
+    from .sessions import (account_folders_for, scan_sessions, load_name,
+                           format_age)
+    from .stats import get_session_stats_cached
     from .gui import _used_omni
-    folder = _arch_of(_folder(q.get('cfgdir'), q['enc']))
     out = []
-    for mtime, sid, preview, count in scan_sessions(folder):
-        omni = False
-        try:
-            omni = _used_omni(get_session_stats(os.path.join(folder, f'{sid}.jsonl')))
-        except Exception:
-            pass
-        out.append({'sid': sid, 'title': load_name(folder, sid) or '',
-                    'preview': preview, 'age': format_age(mtime).strip(),
-                    'count': count, 'omni': omni})
+    for acct_name, folder in account_folders_for(q['enc']):
+        arch = _arch_of(folder)
+        cfgdir = os.path.dirname(os.path.dirname(folder))
+        for mtime, sid, preview, count in scan_sessions(arch):
+            omni, ai_title = False, ''
+            try:
+                st = get_session_stats_cached(os.path.join(arch, f'{sid}.jsonl'))
+                omni = _used_omni(st)
+                # the AI title, same as a live row. It was already parsed — the
+                # stats dict is being read here anyway — and without it every
+                # archived row fell back to the preview.
+                ai_title = st.get('title') or ''
+            except Exception:
+                pass
+            out.append({'sid': sid, 'title': load_name(arch, sid) or ai_title,
+                        'preview': preview, 'age': format_age(mtime).strip(),
+                        'mtime': mtime, 'count': count, 'account': acct_name,
+                        'cfgdir': cfgdir, 'omni': omni})
+    out.sort(key=lambda r: r['mtime'], reverse=True)
     return {'sessions': out}
 
 
@@ -1292,8 +1410,11 @@ def api_agent_create(q, body):
 
 
 def api_agent_delete(q, body):
+    f = body['file']
+    if not f.lower().endswith('.md') or not _managed_path_ok(f):
+        raise BadRequest('not an agent file claudectl manages')
     try:
-        os.remove(body['file'])
+        os.remove(f)
         return {'ok': True}
     except Exception as e:
         return {'ok': False, 'error': str(e)}
@@ -1549,6 +1670,9 @@ def api_skill_remove(q, body):
     fan-out, so "installed everywhere" cannot decay into orphans."""
     from .skills import delete_skill, delete_personal, personal_accounts
     d = body.get('dir', '')
+    # this reaches shutil.rmtree, and it used to reach it with any path at all
+    if not _managed_path_ok(d) or not os.path.isfile(os.path.join(d, 'SKILL.md')):
+        raise BadRequest('not a skill directory claudectl manages')
     if body.get('scope') == 'personal' and body.get('all_accounts', True):
         gone = delete_personal(d)
         return {'ok': bool(gone), 'accounts': [n for n, _p in gone]}
@@ -1586,9 +1710,12 @@ def api_global_claude_md_save(q, body):
 
 
 def api_mcp_get(q, body):
+    """The MCP page itself, so `?refresh=1` gets a live probe — the 30s cache
+    exists for /api/dashboard's 10-second poll, not to make this page stale."""
     from .mcp import get_mcp_status
+    refresh = str((q or {}).get('refresh', '')) in ('1', 'true', 'yes')
     return {'servers': [{'name': n, 'status': s}
-                        for n, s in get_mcp_status(q.get('cfgdir'))]}
+                        for n, s in get_mcp_status(q.get('cfgdir'), refresh=refresh)]}
 
 
 def api_skills_library(q, body):
@@ -2478,23 +2605,27 @@ def api_open_path(q, body):
             'name': os.path.basename(cand) or cand}
 
 
-# ── inject-context & plan-execute ────────────────────────────
-
-def api_inject_sessions(q, body):
-    from .context_inject import find_sessions_across_accounts
-    from .sessions import format_age
-    out = []
-    for acct, folder, sid, mtime, preview, title in \
-            find_sessions_across_accounts(q['path']):
-        out.append({'account': acct, 'folder': folder, 'sid': sid,
-                    'age': format_age(mtime).strip(),
-                    'title': title or preview or sid[:8]})
-    return {'sessions': out}
+# ── hand-off (context injection) & plan-execute ──────────────
+#
+# `/api/inject/sessions` used to live here: it listed every session of the
+# project across every account so a Tools-tab card could offer them in a
+# dropdown. The GUI action is a button on a session ROW now, so the row is the
+# source and there is nothing left to pick — and the list it returned was the
+# same set `/api/sessions` already serves. Deleted rather than left as an
+# unreferenced route: `tests/test_endpoint_floor.py` makes a real request to
+# every entry in these tables, so a dead one is a permanent cost.
 
 
 def api_inject_launch(q, body):
     """Write the context file and launch a new session in a new console
-    under the chosen account (mirror of context_inject.run minus menus)."""
+    under the chosen account (mirror of context_inject.run minus menus).
+
+    The SOURCE session is identified by `cfgdir` + `enc` + `sid`, and the folder
+    derived here. It used to arrive as an absolute `body['folder']` that was
+    joined and read — trusted only because the one caller got it from
+    `/api/inject/sessions`, which is not a check. `cfgdir` goes through
+    `PARAM_CHECKS` -> `_cfgdir_ok`, so it must name an account claudectl knows.
+    """
     import subprocess
     from .context_inject import _write_context_file, CTX_FILE
     from .config import get_claude_exe, launch_defaults
@@ -2504,7 +2635,8 @@ def api_inject_launch(q, body):
     path = body['path']
     if not resolve_dir(path):       # becomes a subprocess cwd below
         return {'ok': False, 'error': 'not a directory: %s' % (path or '(empty)')}
-    ctx_path, title = _write_context_file(path, body['folder'], body['sid'],
+    src_folder = _folder(body.get('cfgdir'), body['enc'])
+    ctx_path, title = _write_context_file(path, src_folder, body['sid'],
                                           body.get('account', 'default'))
     exe = get_claude_exe()
     if not exe:
@@ -2673,12 +2805,27 @@ def api_job_start(q, body):
                     'doc': doc}
         jid = start_job(f'Analyzing MCP {mcp_name}', _an)
     elif kind == 'agent_ai':
-        from .agents import _new_agent_ai
-        jid = start_job('Generating agent', lambda: _new_agent_ai(path or None),
-                        inputs=[body.get('description', '')])
+        # `agents.generate_agent_ai`, NOT `_new_agent_ai`: the latter is the TUI
+        # flow and opens a `menu()`, which no job thread can answer — it blocked
+        # in wait_event() until the six-hour stuck-reaper. `inputs` is gone with
+        # it; the fields arrive as real body parameters now, which also fixes the
+        # description having been fed in as the agent's NAME.
+        from .agents import generate_agent_ai
+        name = (body.get('name') or '').strip()
+        if not name:
+            raise BadRequest('name is required')
+        scope = 'project' if body.get('scope') == 'project' else 'user'
+        jid = start_job(f'Generating agent {name}',
+                        lambda: generate_agent_ai(
+                            name, body.get('description', ''), scope,
+                            path or None, body.get('category', '')))
     elif kind == 'hook_ai':
+        # cfgdir is forwarded: the hooks page has an account selector, and
+        # without it every AI-generated hook landed on the active account no
+        # matter which one you were looking at.
         from .hooks import _ai_hook
-        jid = start_job('Generating hook', lambda: _ai_hook(),
+        cfgdir = body.get('cfgdir') or None
+        jid = start_job('Generating hook', lambda: _ai_hook(cfgdir),
                         inputs=[body.get('description', '')])
     elif kind == 'work_scan':
         # One call, findings persisted into the graph. No approval gate: it
@@ -3580,7 +3727,6 @@ GET_ROUTES = {
     '/api/extra-paths': api_extra_paths_get,
     '/api/add-dirs': api_add_dirs_get,
     '/api/path-complete': api_path_complete,
-    '/api/inject/sessions': api_inject_sessions,
     '/api/health': api_health,
     '/api/brief': api_brief,
     '/api/conventions': api_conventions,

@@ -306,7 +306,7 @@ def test_index_serves_html(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     srv, base = _serve(monkeypatch)
     try:
-        with urllib.request.urlopen(base + '/') as r:
+        with urllib.request.urlopen(base + '/?k=' + gui.TOKEN) as r:
             body = r.read().decode('utf-8')
             assert r.status == 200
             assert 'claudectl' in body and '<html' in body
@@ -366,10 +366,65 @@ def test_page_carries_the_token_and_the_placeholder_never_ships(monkeypatch, tmp
     srv, base = _serve(monkeypatch)
     port = srv.server_address[1]
     try:
-        code, body = _raw(port, path='/')
+        code, body = _raw(port, path='/?k=' + gui.TOKEN)
         assert code == 200
         assert gui.TOKEN.encode() in body
         assert b'__CLAUDECTL_TOKEN__' not in body
+    finally:
+        srv.shutdown()
+
+
+def test_the_page_that_carries_the_token_does_not_give_it_away(monkeypatch, tmp_path):
+    """`/` is the response TOKEN is substituted into, so serving it on the Host
+    check alone handed the secret to any process that could open a socket to the
+    port — which on Windows includes one running as a different user, because
+    loopback is not a user-identity boundary. It takes the token in the query
+    string now, exactly as /graph does."""
+    Sandbox(monkeypatch, tmp_path)
+    srv, _base = _serve(monkeypatch)
+    port = srv.server_address[1]
+    try:
+        for bad in ('/', '/?k=', '/?k=nope'):
+            code, body = _raw(port, path=bad)
+            assert code == 403, bad
+            assert gui.TOKEN.encode() not in body, bad
+    finally:
+        srv.shutdown()
+
+
+def test_a_cross_site_fetch_is_refused_even_with_the_token(monkeypatch, tmp_path):
+    """The middle layer the module doc has always promised: it is what still
+    holds if the token leaks. An allowlist, not failover.py's outright
+    rejection — the SPA's own fetch() sends both of these headers."""
+    Sandbox(monkeypatch, tmp_path)
+    srv, _base = _serve(monkeypatch)
+    port = srv.server_address[1]
+    tok = {'X-Claudectl': gui.TOKEN}
+    try:
+        for extra in ({'Sec-Fetch-Site': 'cross-site'},
+                      {'Sec-Fetch-Site': 'same-site'},
+                      {'Origin': 'http://evil.example'}):
+            h = dict(tok)
+            h.update(extra)
+            assert _raw(port, extra=h)[0] == 403, extra
+        # what the SPA itself sends must still pass
+        h = dict(tok)
+        h.update({'Sec-Fetch-Site': 'same-origin',
+                  'Origin': 'http://127.0.0.1:%d' % port})
+        assert _raw(port, extra=h)[0] == 200
+    finally:
+        srv.shutdown()
+
+
+def test_a_non_ascii_token_header_is_a_403_not_a_traceback(monkeypatch, tmp_path):
+    """Headers decode as latin-1, and hmac.compare_digest raises TypeError on a
+    non-ASCII str — which escapes into socketserver.handle_error and prints a
+    traceback the log_message silencer does not cover."""
+    Sandbox(monkeypatch, tmp_path)
+    srv, _base = _serve(monkeypatch)
+    port = srv.server_address[1]
+    try:
+        assert _raw(port, extra={'X-Claudectl': '\xff\xfe'})[0] == 403
     finally:
         srv.shutdown()
 
@@ -416,3 +471,38 @@ def test_responses_carry_the_hardening_headers(monkeypatch, tmp_path):
         assert "frame-ancestors 'none'" in h['Content-Security-Policy']
     finally:
         srv.shutdown()
+
+
+def test_archived_sessions_span_every_account(monkeypatch, tmp_path):
+    """It resolved ONE folder — whatever `cfgdir` the client sent, which was
+    always `CUR.primary_cfgdir`: the first account in all_config_dirs() order
+    that has the project, so `default` whenever `default` has it. Anything
+    archived under another account was invisible, and the rows carried no
+    `account`/`cfgdir` either, so even a visible one could not be restored to
+    the right place. The TUI's archived tab has always merged accounts.
+    """
+    import json
+    from claude_sessions import config as _cfg, gui_api, sessions as _sess
+
+    enc = 'D--proj'
+    a = tmp_path / 'acct-default'
+    b = tmp_path / 'acct-work'
+    made = []
+    for cfg, name, sid in ((a, 'default', 'aaaaaaaa'), (b, 'work', 'bbbbbbbb')):
+        arch = cfg / 'projects' / enc / 'archived'
+        arch.mkdir(parents=True)
+        (arch / f'{sid}.jsonl').write_text(
+            json.dumps({'type': 'user', 'message': {'role': 'user',
+                        'content': 'a real question about the code'}}) + '\n',
+            encoding='utf-8')
+        made.append((name, str(cfg)))
+    monkeypatch.setattr(_cfg, 'all_config_dirs', lambda: made)
+    _sess._info_cache.clear()
+
+    rows = gui_api.api_archived({'enc': enc}, {})['sessions']
+    assert {r['sid'] for r in rows} == {'aaaaaaaa', 'bbbbbbbb'}, rows
+    # and each row says which account it is in, so Restore/Delete put it back
+    # where it came from instead of falling back to primary_cfgdir
+    assert {r['account'] for r in rows} == {'default', 'work'}
+    for r in rows:
+        assert r['cfgdir'] and os.path.isdir(r['cfgdir']), r

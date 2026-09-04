@@ -7,12 +7,22 @@ spawns claude.exe in a NEW console window (a browser can't host a terminal),
 reusing main.build_launch_command for exact TUI parity.
 
 Security: the server binds loopback only, and _guard() enforces three things
-on every /api request — an allowlisted Host, no browser fetch-metadata, and a
+on every /api request — an allowlisted Host, no cross-site fetch-metadata, and a
 per-run secret in X-Claudectl. A custom header alone is NOT enough: it stops a
 plain cross-origin fetch, but under DNS rebinding the attacker's own origin IS
 this server, so it may send any header it likes with no preflight. The Host
 check is what actually closes that, and TOKEN closes the case of another local
 process that guessed the port.
+
+TOKEN only closes that case if the server does not GIVE it away. `/` used to be
+served on the Host check alone, and `/` is the page the token is substituted
+into — so any process that could open a socket to the port could just ask for it,
+which on Windows includes a process running as a DIFFERENT user, because loopback
+is not a user-identity boundary. `/` now takes the token in its query string, the
+way `/graph` always has; the launcher puts it there and app.js strips it out of
+the address bar with history.replaceState on boot. The trade is one inert entry
+in browser history (the token dies with the process) against handing the secret
+to anyone who asks.
 """
 
 import hmac
@@ -383,12 +393,39 @@ class _Handler(BaseHTTPRequestHandler):
         return host in ('127.0.0.1:%d' % port, 'localhost:%d' % port,
                         '[::1]:%d' % port)
 
+    def _fetch_metadata_ok(self):
+        """The middle layer the module doc promises, and the one that still holds
+        if the token ever leaks.
+
+        It cannot be `failover.py`'s check — that one rejects Sec-Fetch/Origin
+        outright, which is right there (Claude Code's HTTP client sends none of
+        them) and fatal here, because the SPA's own fetch() sends both. So this
+        is an allowlist rather than a rejection: same-origin only."""
+        port = self.server.server_address[1]
+        sfs = self.headers.get('Sec-Fetch-Site')
+        if sfs and sfs not in ('same-origin', 'none'):
+            return False
+        org = self.headers.get('Origin')
+        return not org or org.lower() in (
+            'http://127.0.0.1:%d' % port, 'http://localhost:%d' % port)
+
+    def _token_ok(self, got):
+        """latin-1, because that is how http.client decoded the header. A
+        non-ASCII byte in it makes compare_digest raise TypeError, which escapes
+        into socketserver.handle_error and prints a traceback the log_message
+        silencer does not cover — free log noise for an unauthenticated peer."""
+        return hmac.compare_digest(str(got or '').encode('latin-1', 'replace'),
+                                   TOKEN.encode('latin-1'))
+
     def _guard(self):
         """Reject anything a cross-origin page could send (see module doc)."""
         if not self._host_ok():
             self._send(403, {'error': 'bad host'})
             return False
-        if not hmac.compare_digest(self.headers.get('X-Claudectl') or '', TOKEN):
+        if not self._fetch_metadata_ok():
+            self._send(403, {'error': 'cross-site request'})
+            return False
+        if not self._token_ok(self.headers.get('X-Claudectl')):
             self._send(403, {'error': 'missing or bad X-Claudectl header'})
             return False
         return True
@@ -400,6 +437,13 @@ class _Handler(BaseHTTPRequestHandler):
             self._send(403, {'error': 'bad host'})
             return
         if u.path == '/':
+            # The token is not a header here — a top-level navigation cannot
+            # carry one — so it rides the query string, exactly as /graph does.
+            # Serving this page unauthenticated would hand TOKEN to any local
+            # socket peer, which is the one case TOKEN exists to close.
+            if not self._token_ok(q.get('k')):
+                self._send(403, {'error': 'missing or bad token'})
+                return
             from .gui_html import PAGE
             page = PAGE.replace('__CLAUDECTL_TOKEN__', TOKEN)
             self._send(200, page.encode('utf-8'), ctype='text/html')
@@ -407,7 +451,7 @@ class _Handler(BaseHTTPRequestHandler):
         if u.path == '/graph':
             # Opened with window.open(), so it cannot carry a header — the token
             # rides the query string instead.
-            if not hmac.compare_digest(q.get('k') or '', TOKEN):
+            if not self._token_ok(q.get('k')):
                 self._send(403, {'error': 'missing or bad token'})
                 return
             self._serve_graph(q)
@@ -532,6 +576,8 @@ class _Handler(BaseHTTPRequestHandler):
             jid = u.path.split('/')[3]
             ok = job_decide(jid, bool(body.get('apply')))
             self._send(200 if ok else 404, {'ok': ok})
+            return            # without this the 404 below is written too, on the
+                              # same socket — one request, two responses
         elif u.path.startswith('/api/job/') and u.path.endswith('/cancel'):
             from .gui_api import job_cancel
             jid = u.path.split('/')[3]
@@ -760,7 +806,10 @@ def run_gui(open_browser=True):
 
     srv = make_server()
     port = srv.server_address[1]
-    url = f'http://127.0.0.1:{port}/'
+    # ?k= is required: `/` is what carries the token into the page, so it cannot
+    # itself be served unauthenticated (see the module doc). app.js drops it from
+    # the address bar as soon as it has booted.
+    url = f'http://127.0.0.1:{port}/?k={TOKEN}'
     if sys.stdout:   # None under pythonw (desktop shortcut launch)
         try:
             # the --gui branch runs before the TUI's UTF-8 console setup,

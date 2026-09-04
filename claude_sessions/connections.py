@@ -17,6 +17,7 @@ import html as _htmlmod
 
 from . import config as _c
 from . import render
+from . import store as _store
 
 SKIP_DIRS = {'.git', 'node_modules', '__pycache__', 'venv', '.venv', '.tox',
              'dist', 'build', 'site', '.mypy_cache', '.pytest_cache', '.claudectl',
@@ -333,8 +334,7 @@ def _save_cache(graph, project_path, proj_folder):
         if not base:
             continue
         try:
-            d = os.path.join(base, '.claudectl')
-            os.makedirs(d, exist_ok=True)
+            d = _store.claudectl_dir(base)
             with open(os.path.join(d, _CACHE_NAME), 'w', encoding='utf-8') as f:
                 json.dump(graph, f)
             return True
@@ -724,9 +724,15 @@ document.getElementById('expand').onclick=()=>{for(const id in N)if(hasKids(id))
 document.getElementById('collapse').onclick=()=>{expanded.clear();expanded.add('root:');refresh();setTimeout(fit,300);};
 document.getElementById('fit').onclick=fit;
 document.getElementById('reset').onclick=()=>{view={x:0,y:0,k:0.8};temp=1;};
+/* a repo name is a DIRECTORY NAME off disk — the one string in this page that
+   an attacker picks, by shipping a repo with that name. This page is served
+   same-origin with the SPA and under the same 'unsafe-inline' CSP, so script
+   injected here reaches the API token. */
+function hx(s){return String(s==null?'':s).replace(/[&<>"']/g,
+  c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function buildLegend(){const el=document.getElementById('legend');
  if(VIEW==='code'){const seen=[...new Set(VARR.map(n=>n.repo))].filter(r=>r!=='root').slice(0,8);
-  el.innerHTML=seen.map(r=>'<span><i style="background:'+rcol[r]+'"></i>'+r+'</span>').join('');return;}
+  el.innerHTML=seen.map(r=>'<span><i style="background:'+hx(rcol[r])+'"></i>'+hx(r)+'</span>').join('');return;}
  const kinds=[['component','component'],['concept','concept'],['service','service'],['model','model'],['module','module'],['lesson','lesson'],['agent','agent']];
  const present=new Set(VARR.map(n=>n.type));
  el.innerHTML=kinds.filter(k=>present.has(k[0])).map(([t,lbl])=>'<span><i style="background:'+(TYPES[t]||'#888')+'"></i>'+lbl+'</span>').join('');}
@@ -869,9 +875,23 @@ def build_memory_hierarchy(project_path, proj_folder=None):
     return {'nodes': list(nodes.values()), 'dep_edges': edges, 'meta': meta}
 
 
+def _script_json(obj):
+    """JSON safe to drop straight into a <script> block.
+
+    Three things end a JS string that JSON does not escape: `</script`, and
+    U+2028 / U+2029, which are JS line terminators. ensure_ascii=False (kept,
+    because the graph is full of non-ASCII names and the file is served UTF-8)
+    is what lets the last two through raw.
+    """
+    return (json.dumps(obj, ensure_ascii=False)
+            .replace('</', '<\\/')
+            .replace('\u2028', '\\u2028')
+            .replace('\u2029', '\\u2029'))
+
+
 def render_html(graph, memory=None, default_view='code'):
-    payload = json.dumps(graph, ensure_ascii=False).replace('</', '<\\/')
-    mem_payload = json.dumps(memory or {}, ensure_ascii=False).replace('</', '<\\/')
+    payload = _script_json(graph)
+    mem_payload = _script_json(memory or {})
     if not memory:
         default_view = 'code'
     title = _htmlmod.escape(graph['meta'].get('project_name', 'project'))
@@ -906,8 +926,7 @@ def write_graph_html(graph, project_path, proj_folder=None, memory=None, default
         if not base:
             continue
         try:
-            d = os.path.join(base, '.claudectl')
-            os.makedirs(d, exist_ok=True)
+            d = _store.claudectl_dir(base)
             p = os.path.join(d, 'connections-graph.html')
             with open(p, 'w', encoding='utf-8') as f:
                 f.write(render_html(graph, memory=memory, default_view=default_view))

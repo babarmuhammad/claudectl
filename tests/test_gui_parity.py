@@ -186,7 +186,9 @@ def test_hooks_template_and_remove(monkeypatch, tmp_path):
 def test_agents_create_read_delete(monkeypatch, tmp_path):
     sb = Sandbox(monkeypatch, tmp_path)
     from claude_sessions import agents as agents_mod
-    udir = tmp_path / 'uagents'
+    # under the sandbox's config dir, which is where `<cfgdir>/agents` really
+    # lives — /api/agents/delete refuses a path outside a managed root now
+    udir = os.path.join(sb.cfg, 'agents')
     monkeypatch.setattr(agents_mod, 'user_agents_dir', lambda: str(udir))
     srv, base = _serve()
     try:

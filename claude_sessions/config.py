@@ -348,7 +348,31 @@ def perm_note(perm, model='', omniroute=''):
     return ('', '')
 
 
-def write_atomic(path, text):
+def _ensure_dir(d):
+    """makedirs, plus the never-commit marker when this is a project workdir.
+
+    Every writer under `<project>/.claudectl` reaches the filesystem through
+    write_atomic, and several of them park something sensitive there —
+    `bash-log.txt` is every Bash command Claude Code ran, `injected-context.md`
+    is a whole transcript. claudectl's own repo gitignores the directory;
+    nobody else's does. Seeding it here rather than at each writer is what makes
+    the guarantee hold for the next writer too. `store.claudectl_dir` is the
+    same marker for the callers that only makedirs.
+    """
+    os.makedirs(d, exist_ok=True)
+    if os.path.basename(d.rstrip('\\/')) == '.claudectl':
+        ign = os.path.join(d, '.gitignore')
+        if not os.path.exists(ign):
+            try:
+                with open(ign, 'w', encoding='utf-8') as f:
+                    # ASCII: this file lands in other people's repositories
+                    f.write('# claudectl keeps machine-local state here. '
+                            'Never commit it.\n*\n')
+            except OSError:
+                pass
+
+
+def write_atomic(path, text, mode=None):
     """Temp file in the same directory, then os.replace. Returns True on success.
 
     Several of the files claudectl writes are parsed by Claude Code itself
@@ -356,14 +380,25 @@ def write_atomic(path, text):
     full disk, or a killed process partway through a plain open(path,'w') leaves
     truncated JSON that breaks the user's whole session, not just claudectl.
     os.replace is atomic on NTFS, so a reader sees either the old file or the new
-    one — never half of either."""
+    one — never half of either.
+
+    `mode` is applied to the TEMP file, before the rename, so the permissions are
+    never briefly wrong on the real path. It is opt-in rather than a default of
+    0600: most of what goes through here is a project file (CLAUDE.md, a skill,
+    a generated agent) that other tools and other users legitimately read. Only
+    the files carrying a secret ask for it."""
     try:
         d = os.path.dirname(path)
         if d:
-            os.makedirs(d, exist_ok=True)
+            _ensure_dir(d)
         tmp = f'{path}.{os.getpid()}.tmp'
         with open(tmp, 'w', encoding='utf-8', newline='') as f:
             f.write(text)
+        if mode is not None:
+            try:
+                os.chmod(tmp, mode)
+            except OSError:
+                pass          # a filesystem with no mode bits is not a failure
         os.replace(tmp, path)
         return True
     except Exception:
@@ -374,15 +409,19 @@ def write_atomic(path, text):
         return False
 
 
-def write_json_atomic(path, obj, indent=2):
-    return write_atomic(path, json.dumps(obj, indent=indent))
+def write_json_atomic(path, obj, indent=2, mode=None):
+    return write_atomic(path, json.dumps(obj, indent=indent), mode=mode)
 
 
 def save_settings(s):
     """Write settings dict. Returns True on success."""
     out = {k: v for k, v in s.items() if k != _UNKNOWN_KEYS}
     out.update(s.get(_UNKNOWN_KEYS) or {})
-    return write_json_atomic(settings_file, out)
+    # 0600: this file carries omniroute_api_key and otel_headers (an
+    # Authorization value). On POSIX the default umask leaves it 0644, i.e.
+    # world-readable on a shared host; on Windows chmod is a near no-op and
+    # costs nothing.
+    return write_json_atomic(settings_file, out, mode=0o600)
 
 
 # ── active config dir ────────────────────────────────────────

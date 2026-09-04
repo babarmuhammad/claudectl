@@ -278,7 +278,12 @@ def merge_into_main(project_path, branch):
     legible as its own line in the history, which is the whole reason it was
     run in a separate worktree.
     """
-    out = _git(['merge', '--no-ff', '--no-edit', branch], project_path, timeout=60)
+    # a ref beginning `-` is an option, not a branch — and this one arrives from
+    # a request body
+    if not branch or branch.startswith('-'):
+        return False, 'not a branch name'
+    out = _git(['merge', '--no-ff', '--no-edit', '--', branch],
+               project_path, timeout=60)
     if out is None:
         return False, f'merge of {branch} failed (conflicts, or not a repo)'
     return True, out.strip()[:400] or f'Merged {branch}'

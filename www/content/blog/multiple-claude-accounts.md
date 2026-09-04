@@ -10,7 +10,7 @@ faq:
   - q: Can I run two Claude accounts at the same time?
     a: Yes. Because the account is chosen by an environment variable read at process start, two sessions launched with different `CLAUDE_CONFIG_DIR` values run concurrently and independently. What breaks is everything around them — session history, project memory and usage totals all split along the same line unless the tooling in front reads every config directory.
   - q: What happens to my work when a Claude account hits its rate limit?
-    a: The session stops being usable, but the transcript is already on disk. With a second account configured you can start a fresh session under the other account seeded with the previous session's transcript, so you continue the same work against a different quota. claudectl does this with `⇧K`, writing the transcript to `.claudectl/injected-context.md` and passing the new session a pointer to it.
+    a: The session stops being usable, but the transcript is already on disk. With a second account configured you can start a fresh session under the other account seeded with the previous session's transcript, so you continue the same work against a different quota. claudectl calls this a hand-off — a button on the session row in the desktop app, `⇧K` in the terminal UI — writing the transcript to `.claudectl/injected-context.md` and passing the new session a pointer to it.
   - q: Does project memory work across multiple Claude accounts?
     a: It should, and it depends on where the memory lives. claudectl stores the memory graph under the project's real working directory rather than under a config directory, so every account sees the same graph, and the features that feed it — lesson extraction, session topics, usage stats, freshness counts — read every configured account's sessions.
   - q: Why does my status line or hook only work on one account?
@@ -56,9 +56,9 @@ The tooling problem is not switching — it is not noticing that you switched.
 
 This is the case that makes multi-account worth the setup. An account hits its 5-hour or weekly window mid-task. The work is not lost — the transcript is already on disk — but the session is over.
 
-`⇧K` in the sessions menu ("Inject context from another chat"):
+**Hand off** on the session row in the desktop app, or `⇧K` in the sessions menu of the terminal UI:
 
-1. **Pick the source session.** Every session for this project across *every* configured account, newest first, each labelled with its account: `[work] Refactor the parser (2h ago)`. Foreign-account sessions are included on purpose; that is the entire point of the screen.
+1. **Pick the source session.** In the desktop app the row *is* the source — the sessions list already spans *every* configured account, each row labelled with its own: `[work] Refactor the parser (2h ago)`. Foreign-account sessions are in that list on purpose; that is the entire point. In the terminal UI, `⇧K` opens a picker over the same set, newest first.
 2. **Pick the target account.** Which account the *new* session launches under. Defaults to the project's current account, and only asks at all when more than one is configured.
 3. **claudectl writes the transcript to disk** — `<project>/.claudectl/injected-context.md`, headed with the source session's title and originating account, then the whole conversation as `### User` / `### Assistant` sections.
 4. **The new session launches with a pointer, not a paste.** It gets a short system-prompt line saying where the file is and to read it first. The transcript never goes on the command line — a long one would blow past the Windows argv limit — so the model reads the file with its own tools.

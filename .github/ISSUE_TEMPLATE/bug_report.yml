@@ -1,0 +1,65 @@
+name: Bug report
+description: Something claudectl does is wrong or crashes
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: `claudectl --version`, and check
+        [Troubleshooting](https://docs.claudectl.space/troubleshooting/) —
+        it is a symptom-to-fix table and covers most of what gets reported.
+
+        If this is a **security** problem, do not file it here. Use
+        [private vulnerability reporting](https://github.com/babarmuhammad/claudectl/security/advisories/new).
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what happened instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: traceback
+    attributes:
+      label: Error output
+      description: >-
+        The full traceback if there is one. claudectl also keeps an event log —
+        the Logs screen in the TUI and GUI, or `~/.claude/claudectl/events.jsonl`.
+      render: text
+
+  - type: input
+    id: version
+    attributes:
+      label: claudectl version
+      placeholder: "1.8.2"
+    validations:
+      required: true
+
+  - type: input
+    id: env
+    attributes:
+      label: OS and Python
+      placeholder: "Windows 11, Python 3.12"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Where
+      options:
+        - Terminal UI
+        - Desktop GUI
+        - Command line (headless)
+        - Status line / hooks
+        - Claude Code plugin
+    validations:
+      required: true
+
+  - type: markdown
+    attributes:
+      value: >-
+        A screenshot helps — check it for project names or paths you would rather
+        not publish first.

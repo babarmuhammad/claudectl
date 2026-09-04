@@ -1,7 +1,7 @@
 ---
 description: >-
   claudectl's desktop GUI — full feature parity with the terminal UI, served locally with
-  zero Python dependencies, plus 29 palettes, 7 skins and 4 themed worlds.
+  zero Python dependencies, plus 32 palettes, 8 skins and 4 themed worlds.
 ---
 
 # Desktop app
@@ -21,7 +21,8 @@ three.js and anime.js (both MIT, served from `/vendor/`, never a CDN).
     - **Memory** — *what claudectl knows, and what it costs.* An inventory of every memory artifact the project has, each with what writes it, whether it reaches a session **always / lazily / per prompt / never**, its size, and its action — plus the sentence the UI never used to say: *~N tok read on every turn, ~M tok across the rule files that cost nothing until Claude opens a matching path.* Then the live state: what the last cycle extracted and what it spent, **total spend to date**, what is queued, what eviction dropped, which entities recall reinforces most, lessons with **how many sessions each is from being dropped**, and workspace health as per-check rows with the button that fixes each one. Build / ask / recall preview / lessons review, with **live scan progress** and the outcome of the last run.
     - **CLAUDE.md** — *the file, block by block.* Your prose, KEEP-fenced regions, AUTOGEN, SESSIONS and the MEMORY digest, each with its token cost and the one button that regenerates just that block; the memory files map with broken `@import`s flagged; and every version claudectl replaced, with diff and restore.
     - **Audit** — *what one turn costs across every surface at once*, project-scoped and account-scoped together (global CLAUDE.md per account, system-prompt file, SessionStart hooks, MCP schemas), plus deny rules for token-heavy paths.
-    - Also: Usage, **Plan → Execute** (plan model + effort, execute via Anthropic or free OmniRoute, full explanation inline), Tools (inject context from any session/account, project agents picker mirroring the TUI's category multi-select with suggestions, extra PATH entries, `--add-dir` directories), and the architecture Graph.
+    - Also: Usage, **Plan → Execute** (plan model + effort, execute via Anthropic or free OmniRoute, full explanation inline), Tools (project agents picker mirroring the TUI's category multi-select with suggestions, extra PATH entries, `--add-dir` directories), and the architecture Graph.
+- **Session rows** — every session of the project across every account. At rest the row is its title: the whole width, with the full text as a tooltip when it is long. Hover (or tab into it) and the actions fade in over the right end without moving anything — transcript, export, changed files, checkpoints, tags, rename, archive, **Fork** and **Hand off** (start a new chat seeded with that session's transcript, in this or any other account — see [Context hand-off](context-handoff.md)). The **Archived** view spans every account too, and Restore puts a session back in the account it came from.
 - **Managers** — MCP servers, agent library + AI-generate, hooks + AI-generate, accounts — same operations as the TUI, with the same diff-approval gate for AI-written files (jobs run server-side, you approve a git-style diff before anything is written).
 - **Usage banner** — one live bar-row per account (session/weekly/model windows with reset times), auto-refreshes every minute, refresh button for an immediate re-fetch.
 - **Stacked toasts** — multiple simultaneous notifications (errors, success, info) stack instead of overwriting; each auto-dismisses after 3.5 seconds. Job failures show the error message rather than a generic "Failed".
@@ -45,7 +46,7 @@ three.js and anime.js (both MIT, served from `/vendor/`, never a CDN).
 
 Icons are inline Material SVG — no CDN, no emoji.
 
-## Themes: 29 palettes, 7 skins, 4 themed worlds
+## Themes: 32 palettes, 8 skins, 4 themed worlds
 
 <div class="grid" markdown>
 
@@ -55,12 +56,17 @@ Icons are inline Material SVG — no CDN, no emoji.
 
 </div>
 
-A **palette** answers "what colours" — 29 of them, authored as real hex (Catppuccin, Tokyo
+A **palette** answers "what colours" — 32 of them, authored as real hex (Catppuccin, Tokyo
 Night, Gruvbox, Rosé Pine, Nord, Solarized and more), applied verbatim to every surface
 rather than derived from an accent hue. A **skin** answers "what is this app": corner
 treatment, border weight, type scale, row density, chassis frame, card entrance and which
 background scene runs. The two are orthogonal — pick both, or let the palette choose its
 default skin. Live preview before saving.
+
+Reach for **Standard** when you want none of that: no chassis frame, the system UI font,
+hairline borders and the quietest background in the set. It is the plain one, and it mixes
+with all 32 palettes. (It is not the same as the picker's **auto** tile, which hands the
+choice back to the palette and always lands on HUD, Terminal or Brutalist.)
 
 A **world** commits to a whole look instead: it owns its palette, skin, background scene,
 icon set, overlay and cursor together, and disables the palette/skin pickers while worn.

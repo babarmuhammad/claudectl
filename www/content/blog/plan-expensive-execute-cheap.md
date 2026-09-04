@@ -76,7 +76,7 @@ Beyond the plan-execute split, claudectl can launch a **standalone** interactive
 
 This is the section that decides whether the idea is useful to you.
 
-**Small context windows.** Free-tier models frequently sit under 16K tokens. Your `CLAUDE.md` plus rules files plus the plan has to fit inside that with room for the work. claudectl warns when the total passes roughly 8K. This is where a bounded always-on index stops being a nice-to-have and becomes the thing that makes free execution possible at all — see [the 250-token index pattern](/blog/cut-claude-code-token-costs/).
+**Small context windows.** Free-tier models frequently sit under 16K tokens. Your `CLAUDE.md` plus rules files plus the plan has to fit inside that with room for the work. claudectl warns when the total passes roughly 8K. This is where a bounded always-on index stops being a nice-to-have and becomes the thing that makes free execution possible at all — see [the 250-token index pattern](/blog/cut-claude-code-token-costs).
 
 **Missing tool use.** Some free models have no `tool_use`, which degrades agents, skills and MCP calls. claudectl automatically sets `CLAUDE_CODE_SUBAGENT_MODEL=claude-sonnet-5`, so delegated work always runs on a capable model even when the main session does not. That covers the common case; the main model's own capabilities remain whatever the free model has.
 

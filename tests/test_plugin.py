@@ -70,6 +70,7 @@ VERSION_COPIES = (
     ('plugin/.claude-plugin/plugin.json', r'"version":\s*"([^"]+)"'),
     ('.claude-plugin/marketplace.json',   r'"version":\s*"([^"]+)"'),
     ('docs/index.md',                     r'"softwareVersion":\s*"([^"]+)"'),
+    ('CITATION.cff',                      r'(?m)^version:\s*(\S+)\s*$'),
 )
 
 

@@ -2,7 +2,12 @@
 'use strict';
 const $=s=>document.querySelector(s);
 // Per-run secret, substituted into this page by gui._Handler when it is served.
+// `/` is token-gated, so the launcher had to put the token in the query string —
+// a top-level navigation cannot carry a header. Take it out of the address bar
+// immediately: the page already has the value, and what is left in history is
+// then a URL that no longer names a secret.
 const CK='__CLAUDECTL_TOKEN__';
+if(location.search)history.replaceState(null,'',location.pathname);
 const api=(p,opt={})=>fetch(p,{...opt,headers:{'X-Claudectl':CK,
   'Content-Type':'application/json',...(opt.headers||{})}}).then(r=>r.json());
 const post=(p,body)=>api(p,{method:'POST',body:JSON.stringify(body||{})});
@@ -57,14 +62,14 @@ function setLoading(on){
    attribute-value call site (data-v="${esc(v)}", title="${esc(v)}") was open */
 const _ESC_MAP={'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
 function esc(s){return s==null?'':String(s).replace(/[&<>"']/g,c=>_ESC_MAP[c]);}
-/* A value going into a JS STRING LITERAL inside an HTML attribute needs its
-   backslashes doubled as well as its HTML escaped: the browser unescapes the
-   attribute, then JS reads `\U` and `\.` as escape sequences, so a Windows
-   path like C:\Users\mab\.claude arrives as C:Usersmab.claude. Two call sites
-   had each open-coded the same .replace, and the third one written forgot it —
-   which is what "invalid cfgdir" was. Prefer passing an INDEX into a global
-   over a path; use this when the value itself has to travel. */
-function jsq(s){return esc(String(s==null?'':s).replace(/\\/g,'\\\\'));}
+/* A value going into a JS literal inside an HTML attribute. JSON.stringify
+   makes it a valid JS literal; esc() then makes that literal survive the HTML
+   parser. JSON.stringify alone escapes NOTHING for HTML -- one apostrophe in a
+   filename, an MCP server name or a git branch closes onclick='...' and
+   everything after it is parsed as new attributes, which is script execution
+   same-origin with the API token. Never interpolate a bare JSON.stringify into
+   markup; tests/test_xss_gate.py fails the build if you do. */
+function hesc(v){return esc(JSON.stringify(v));}
 function C(){return {path:CUR.path,enc:CUR.encoded,cfgdir:CUR.primary_cfgdir};}
 /* stable per-account color: default = the theme's green, others take a FIXED
    (hue, lightness) ramp — not a generated hue wheel. Each slot's lightness is
@@ -291,7 +296,7 @@ const MOTION_PERSONA={
    you wear one the palette and skin pickers are disabled.
 
    Why the orthogonal model was not enough: a skin that has to look sane under
-   29 palettes can commit to nothing, which is how Sakura/Mecha/Glass ended up
+   32 palettes can commit to nothing, which is how Sakura/Mecha/Glass ended up
    as loud wallpapers on weak chrome ("da buttare"). Classic mode is untouched —
    Slate + Terminal still works exactly as before — this sits above it. */
 function curWorld(){return (ST.worlds||{})[ST.world]||null;}
@@ -761,13 +766,13 @@ function drawNav(){
     // can tell where you are without opening it
     const pips=shut?`<span class="gpip">${items.map(([id])=>
       `<i class="${PAGE_===id?'on':''}"></i>`).join('')}</span>`:'';
-    return `<div class="grp${shut?' shut':''}" onclick="toggleNavGroup('${jsq(grp)}')"
+    return `<div class="grp${shut?' shut':''}" onclick="toggleNavGroup(${hesc(grp)})"
         role="button" tabindex="0" aria-expanded="${!shut}"
         title="${shut?'Expand':'Collapse'} ${esc(grp)}">
         <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 4l4 4-4 4"/></svg>
         <span>${esc(grp)}</span>${pips}</div>`
       +(shut?'':items.map(([id,i,l])=>
-        `<div class="it${PAGE_===id?' sel':''}" onclick="go('${id}')" title="${esc(l)}">${ic(i)} <span>${l}</span></div>`
+        `<div class="it${PAGE_===id?' sel':''}" onclick="go(${hesc(id)})" title="${esc(l)}">${ic(i)} <span>${l}</span></div>`
       ).join(''));
   }).join('');
 }
@@ -1102,13 +1107,41 @@ function stopDashboard(){
 /* QtWebEngine keeps the page 'visible' while minimized — guard on blur too.
    MO.vis mirrors _VIS because motion.js is concatenated ahead of this file and
    cannot reach forward into a `let` that has not initialised yet. */
-function setVis(v){_VIS=v;MO.vis=v;if(v)MO.kick();else MO.stop();
+function setVis(v){
+  /* Cancel any pending debounce FIRST. `visibilitychange` calls this directly,
+     so a blur that had armed the 150ms timer, followed by the tab becoming
+     visible inside that window, left the timer to fire setVis(false) on a
+     focused page — animations paused and the GL surface down, with nothing left
+     to clear it until the next focus event. */
+  clearTimeout(_VIS_T);_VIS_T=null;
+  _VIS=v;MO.vis=v;if(v)MO.kick();else MO.stop();
+  /* `win-blur` on <html> is what actually stops the PAINTING — see the last
+     block of app.css. It is deliberately not STAGE's own `stage-blur`, which
+     never appears when the stage is off or its context died, while the CSS
+     animations and a world's overlay keep looping regardless. */
+  document.documentElement.classList.toggle('win-blur',!v);
   // and take the GL surface down while we are not drawing to it — see STAGE.blur
   if(window.STAGE)STAGE.blur(!v);}
+/* A blur/focus pair costs a full background swap plus a dashboard teardown and
+   an immediate re-fetch. Qt fires those pairs on interactions that are not
+   really a focus change (opening a native menu, a child window taking focus for
+   a frame), and the round trip is visible. So going AWAY waits; coming back is
+   instant, because a delay there is the thing you would actually notice. */
+let _VIS_T=null;
+/* The dashboard teardown/re-fetch is HALF the cost the comment above is about,
+   and it was left undebounced — stopDashboard() aborts the in-flight request
+   and startDashboard() re-fetches immediately, so every spurious Qt pair still
+   paid the round trip the debounce existed to remove. Both halves move
+   together now. */
+function setVisSoon(v){
+  clearTimeout(_VIS_T);_VIS_T=null;
+  if(v){setVis(true);if(PAGE_==='home')startDashboard();return;}
+  _VIS_T=setTimeout(()=>{_VIS_T=null;setVis(false);stopDashboard();},150);
+}
 document.addEventListener('visibilitychange',()=>{setVis(!document.hidden);
   if(_VIS&&PAGE_==='home')refreshDashboard();});
-window.addEventListener('blur',()=>{setVis(false);stopDashboard();});
-window.addEventListener('focus',()=>{setVis(true);if(PAGE_==='home')startDashboard();});
+window.addEventListener('blur',()=>setVisSoon(false));
+window.addEventListener('focus',()=>setVisSoon(true));
 function setV(el,v){if(!el)return;if(el.__v!==v){el.__v=v;el.innerHTML=v;}}
 /* ── daily token chart: stacked columns by account, inline SVG, no deps ── */
 let CHART_DAYS=14;
@@ -1268,7 +1301,7 @@ function drawActivity(){
       ${j.last?`<div class="asub">${esc(j.last)}</div>`:''}
       ${j.error?`<div class="asub err">${esc(j.error)}</div>`:''}</div>
     <span class="aage">${actDur(j.elapsed)}${j.ended?' · '+actAgo(j.ended):''}</span>
-    ${j.status==='awaiting'?`<button class="btn sm pri" onclick="closeActivity();jobOpen('${jsq(j.id)}')">Open</button>`:''}
+    ${j.status==='awaiting'?`<button class="btn sm pri" onclick="closeActivity();jobOpen(${hesc(j.id)})">Open</button>`:''}
   </div>`;
   // live Claude Code sessions are the OTHER kind of ongoing work, and the one
   // that is usually actually happening — claudectl's own jobs are rare
@@ -1286,7 +1319,7 @@ function drawActivity(){
     <span class="dot" style="background:${acctColor(r.account||'default')}"></span>
     <div><b>${esc(r.project)}</b><div class="asub">${esc(r.title||r.sid)} · ${r.msgs} msgs</div></div>
     <span class="aage">${esc(r.age)} ago</span>
-    <button class="btn sm" onclick="closeActivity();dashResumeSid('${jsq(r.sid)}')">Resume</button></div>`;
+    <button class="btn sm" onclick="closeActivity();dashResumeSid(${hesc(r.sid)})">Resume</button></div>`;
   const sect=(title,n,body)=>`<div class="sect"><div class="secth"><h4>${title}</h4>
       <span class="secttag">${n}</span></div>${body}</div>`;
   const nRun=running.length+Object.keys(live.by_account||{}).length;
@@ -1616,7 +1649,7 @@ function acctCard(a){
     <div class="arow"><span class="al">weekly</span><span class="bar shimmer"></span><span class="ap"></span></div>`;
   let note='';
   if(bad)note=`<div class="st err">${esc(a.status_text||'not logged in')}
-    <span class="hlink" onclick="acctReconnect('${jsq(a.account)}','${jsq(a.dir||'')}')">Reconnect ›</span></div>`;
+    <span class="hlink" onclick="acctReconnect(${hesc(a.account)},${hesc(a.dir||'')})">Reconnect ›</span></div>`;
   else if(a.status==='rate_limited')note=`<div class="st warn">rate-limited${a.retry_in?' · retry in '+a.retry_in+'s':''}</div>`;
   else if(a.status==='error')note=`<div class="st warn">${esc(a.status_text||'usage unavailable')}</div>`;
   else if(a.stale_secs!=null&&a.stale_secs>600)note=`<div class="st dim">as of ${Math.round(a.stale_secs/60)}m ago</div>`;
@@ -1758,7 +1791,7 @@ function drawProject(){
   $('#bHide').title=CUR.hidden?'Show this project in the list again'
                               :'Hide this project from the project list (nothing is deleted)';
   $('#tabs').innerHTML=TABS.map(([id,l])=>
-    `<div class="tab${TAB===id?' sel':''}" onclick="TAB='${id}';drawProject()">${l}</div>`).join('')
+    `<div class="tab${TAB===id?' sel':''}" onclick="TAB=${hesc(id)};drawProject()">${l}</div>`).join('')
     +`<div class="tab" onclick="window.open('/graph?${qs({path:CUR.path,enc:CUR.encoded,k:CK})}','_blank')">Graph ${ic('ext')}</div>`;
   ({sessions:drawSessions,memory:drawMemory,claudemd:drawClaudeMd,review:drawReview,
     audit:drawAudit,pusage:drawProjUsage,planexec:drawPlanExec,
@@ -1819,7 +1852,12 @@ function projectSetup(){
 /* sessions tab */
 async function drawSessions(archived){
   const nav=paintNow(LOADING);
-  const d=archived?await api('/api/session/archived?'+qs({enc:CUR.encoded,cfgdir:CUR.primary_cfgdir}))
+  /* No cfgdir on either branch: both endpoints walk every account server-side.
+     Sending `CUR.primary_cfgdir` was the archived-view bug — it is the FIRST
+     account that has this project (so `default` whenever `default` has it), and
+     anything archived under another account was simply not in the response.
+     The TUI's archived tab has always merged them. */
+  const d=archived?await api('/api/session/archived?enc='+encodeURIComponent(CUR.encoded))
                   :await api('/api/sessions?enc='+encodeURIComponent(CUR.encoded));
   SESS=d.sessions||[];
   const tagsD=await api('/api/session/tags?'+qs({enc:CUR.encoded,cfgdir:CUR.primary_cfgdir}));
@@ -1847,12 +1885,16 @@ async function drawSessions(archived){
       <span class="dot" style="background:${acctColor(s.account)}"
             title="${esc(s.account||'')}"></span>
       <div class="info">
-        <div class="t" id="st${i}">${esc(s.title||s.preview||s.sid.slice(0,8))} ${tg}</div>
+        <div class="t" id="st${i}" title="${esc(s.title||s.preview||s.sid)}">${esc(s.title||s.preview||s.sid.slice(0,8))} ${tg}</div>
         <div class="meta"><span>${esc(s.age)} ago</span><span>${s.count} msgs</span>
           ${s.tokens?`<span>${esc(s.tokens)} tok</span>`:''}
           ${s.account&&s.account!=='default'?`<span class="tag acct" style="color:${acctColor(s.account)}">${esc(s.account)}</span>`:''}
           ${s.omni?`<span class="tag acct" style="color:var(--violet)" title="Executed via OmniRoute (free-tier model)">omni</span>`:''}</div>
-      </div>
+      <!-- inside .info, and absolutely positioned over its right end: the strip
+           was opacity:0 but still held its full width at all times, so adding a
+           tenth action took a quarter of the title away from every row, read or
+           not. .info spans exactly the gap between the account dot and Resume,
+           which makes it the one correct positioning context. -->
       <div class="acts">${archived?`
         <button class="btn sm danger" onclick="deleteS(${i},true)" title="Delete">${ic('del')}</button>`:`
         <button class="btn sm" onclick="toggleTune(${i})" title="Adjust power before resuming">${ic('settings')}</button>
@@ -1863,7 +1905,10 @@ async function drawSessions(archived){
         <button class="btn sm" onclick="tagS(${i})" title="Tags">${ic('label')}</button>
         <button class="btn sm" onclick="renameS(${i})">Rename</button>
         <button class="btn sm" onclick="archiveS(${i})">Archive</button>
-        <button class="btn sm" onclick="forkS(${i})">Fork</button>`}
+        <button class="btn sm" onclick="forkS(${i})">Fork</button>
+        <button class="btn sm" onclick="handoffS(${i})"
+          title="Start a new chat — in this or another account — seeded with this session's transcript as context">${ic('inject')} Hand off</button>`}
+      </div>
       </div>
       <button class="btn sm pri" onclick="${archived?`restoreS(${i})`:`resumeS(${i})`}">${archived?'Restore':'Resume'}</button>
       </div>${archived?'':`
@@ -2104,7 +2149,7 @@ async function entDetail(name){
       <div class="chips">${d.source_files.map(f=>`<span class="chip">${esc(f)}</span>`).join('')}</div>`:''}
     ${(d.relations||[]).length?`<div class="lbl" style="margin-top:10px">Connected to</div>
       ${d.relations.map(r=>`<div class="agrow"><span style="flex:1">${r.dir==='out'?'':'← '}${esc(r.rel)} <b>${esc(r.other)}</b></span>
-        <button class="btn sm" onclick="entDetail('${jsq(r.other)}')">open</button></div>`).join('')}`:''}
+        <button class="btn sm" onclick="entDetail(${hesc(r.other)})">open</button></div>`).join('')}`:''}
     ${(d.sessions||[]).length?`<div class="lbl" style="margin-top:10px">Learned in</div>
       <div class="chips">${d.sessions.map(s=>`<span class="chip">${esc(String(s).slice(0,8))}</span>`).join('')}</div>`
       :`<p style="color:var(--dim2);font-size:12px;margin-top:10px">Recall counts hits per fact, not per session, so there is no per-session breakdown for a code fact — only lessons carry the session they came from.</p>`}`;
@@ -2144,9 +2189,9 @@ async function drawMemory(){
     <td class="num">${l.status==='pinned'?'<span class="tag ok">kept</span>'
       :`<span class="${left<=5?'tag warn':'tag'}" title="Dropped when it has gone ${ttl} sessions unused.">${Math.max(0,left)}</span>`}</td>
     <td style="white-space:nowrap">
-      <button class="btn sm" onclick="lessonAct('${l.id}','approve')" title="Approve">${ic('check')}</button>
-      <button class="btn sm" onclick="lessonAct('${l.id}','pin')" title="Pin">${ic('pin')}</button>
-      <button class="btn sm danger" onclick="lessonAct('${l.id}','evict')" title="Evict">${ic('close')}</button></td></tr>`;}).join('');
+      <button class="btn sm" onclick="lessonAct(${hesc(l.id)},'approve')" title="Approve">${ic('check')}</button>
+      <button class="btn sm" onclick="lessonAct(${hesc(l.id)},'pin')" title="Pin">${ic('pin')}</button>
+      <button class="btn sm danger" onclick="lessonAct(${hesc(l.id)},'evict')" title="Evict">${ic('close')}</button></td></tr>`;}).join('');
   // coverage against something REAL: how many of the graph's own modules got a
   // rule file. The old denominator read `ws.modules`, a key no endpoint has
   // ever returned, so it fell back to a constant 8 for the feature's whole life.
@@ -2199,7 +2244,7 @@ async function drawMemory(){
         <span class="k">Built</span><span>${esc(st.generated_at||'never')}</span>
       </div></div>
       ${(st.top||[]).length?`<div class="lbl" style="margin-top:10px" title="How often recall has injected each fact. It is a term in the ranking and in what eviction drops first.">Facts Claude reaches for most</div>
-        <div class="chips">${st.top.map(t=>`<span class="chip" style="cursor:pointer" onclick="entDetail('${jsq(t.name)}')" title="Recalled into ${t.hits} prompt(s)${t.module?' · '+esc(t.module):''} — click for what it means">${esc(t.name)} <i>${t.hits}</i></span>`).join('')}</div>`:''}
+        <div class="chips">${st.top.map(t=>`<span class="chip" style="cursor:pointer" onclick="entDetail(${hesc(t.name)})" title="Recalled into ${t.hits} prompt(s)${t.module?' · '+esc(t.module):''} — click for what it means">${esc(t.name)} <i>${t.hits}</i></span>`).join('')}</div>`:''}
       ${(st.evicted_names||[]).length?`<div class="lbl" style="margin-top:10px" title="When the graph passes its cap, the least-used unpinned facts go. Pinned ones never do.">Dropped to stay under the cap (${st.evicted||0})</div>
         <div class="chips">${st.evicted_names.slice(0,12).map(n=>`<span class="chip">${esc(n)}</span>`).join('')}</div>`:''}
       <div class="lbl" style="margin-top:16px">Keeping it current</div>
@@ -2305,7 +2350,7 @@ async function drawMemory(){
         <span style="color:var(--dim);font-size:12px">— sessions under that account record nothing.</span>
         <span class="hlink" onclick="go('hooks')">Fix</span></div>`:''}
       <div id="memWork">${(wl.entries||[]).length?`<table class="tbl" style="margin-top:10px"><tr><th>when</th><th>summary</th><th>files</th></tr>`
-        +wl.entries.map(e=>`<tr${e.session_id?` style="cursor:pointer" onclick="openWorkSession('${jsq(e.session_id)}')" title="Open this session"`:''}>
+        +wl.entries.map(e=>`<tr${e.session_id?` style="cursor:pointer" onclick="openWorkSession(${hesc(e.session_id)})" title="Open this session"`:''}>
           <td style="white-space:nowrap;color:var(--dim)">${esc(e.ended_at||'')}</td>
           <td>${esc(e.summary||'')}</td>
           <td style="color:var(--dim);font-size:12px">${esc((e.files||[]).join(', '))}</td></tr>`).join('')
@@ -2509,7 +2554,7 @@ async function drawClaudeMd(){
         <span style="width:18px">${f.exists?ic('check'):'—'}</span>
         <span style="flex:1">${esc(f.label)}</span>
         <span style="color:var(--dim2);font-size:11px">${esc(f.path)}</span>
-        ${f.exists?`<button class="btn sm" onclick="post('/api/open-editor',{file:'${jsq(f.path)}'})">open</button>`:''}
+        ${f.exists?`<button class="btn sm" onclick="post('/api/open-editor',{file:${hesc(f.path)}})">open</button>`:''}
       </div>${(f.imports||[]).map(im=>`<div class="agrow" style="margin-left:26px">
         <span style="flex:1;color:var(--dim);font-size:12px">@import ${esc(im.ref)}</span>
         ${im.exists?ic('check'):'<span class="tag warn" title="This @import points at a file that does not exist — Claude silently loads nothing for it.">missing</span>'}
@@ -2568,10 +2613,10 @@ async function drawAudit(){
                :it.label.startsWith('rule ')?'memory':'';
     return `
     <tr><td>${esc(it.label)} ${it.lazy?'<span class="tag" title="Loaded only when Claude opens a matching path.">lazy</span>':''}
-      ${owner?`<span class="hlink" style="font-size:11px" onclick="TAB='${owner}';drawProject()">detail →</span>`:''}</td>
+      ${owner?`<span class="hlink" style="font-size:11px" onclick="TAB=${hesc(owner)};drawProject()">detail →</span>`:''}</td>
     <td class="num">${it.tokens==null?'<span title="Not knowable before the session starts.">~?</span>':it.tokens}</td>
     <td style="color:var(--warn);font-size:12px">${esc((it.warnings||[]).join(' · '))}</td>
-    <td style="white-space:nowrap">${it.path?`<button class="btn sm" onclick="post('/api/open-editor',{file:'${jsq(it.path)}'})">open</button>`:''}</td></tr>`;}).join('');
+    <td style="white-space:nowrap">${it.path?`<button class="btn sm" onclick="post('/api/open-editor',{file:${hesc(it.path)}})">open</button>`:''}</td></tr>`;}).join('');
   if(!paint(nav,`
     <div class="card"><h3>Context weight — ~${d.total||0} tok loaded every turn
       <span class="sp"></span>
@@ -2618,8 +2663,8 @@ function histRows(k,vs){
   return vs.map(v=>`<div class="agrow">
       <span style="min-width:70px;color:var(--dim)">${esc(v.age)}</span>
       <span style="flex:1;font-size:12px">${histSum(k.key,v,k.now)}</span>
-      <button class="btn sm" onclick="histDiff('${jsq(k.key)}',${v.ts})">what changed</button>
-      <button class="btn sm pri" onclick="histRestore('${jsq(k.key)}',${v.ts},'${jsq(k.title)}','${jsq(v.age)}')">restore</button>
+      <button class="btn sm" onclick="histDiff(${hesc(k.key)},${v.ts})">what changed</button>
+      <button class="btn sm pri" onclick="histRestore(${hesc(k.key)},${v.ts},${hesc(k.title)},${hesc(v.age)})">restore</button>
       </div>`).join('');
 }
 async function drawHistory(only){
@@ -2677,9 +2722,6 @@ function drawTools(){
         onclick="inlineJob('#jban','work_scan',C(),{label:'Scanning for work',onDone:st=>toast(((st.result||{}).items||[]).length+' finding(s)','ok'),redraw:()=>drawBrief()})">${ic('ai')} Find work</button></h3>
       <p style="color:var(--dim);font-size:12px;margin:2px 0 8px">Free signals — stale context, TODO markers, deferred shortcuts, untested modules — are always listed. Press <b>Find work</b> to add what a model can see that a grep cannot.</p>
       <div id="bOut"><span class="spin"></span></div></div>
-    <div class="card"><h3>${ic('inject')} New chat with injected context</h3>
-      <p style="color:var(--dim);font-size:13px;margin-bottom:10px">Start a new session seeded with another session's transcript — from any account, into any account.</p>
-      <button class="btn" onclick="injectFlow()">Choose source session…</button></div>
     <div class="card"><h3>${ic('map')} Architecture <span class="sp"></span>
       <button class="btn sm" onclick="archRefresh()">${ic('refresh')} Rebuild</button>
       <button class="btn sm" onclick="window.open('/graph?${qs({path:CUR.path,enc:CUR.encoded,k:CK})}','_blank')">Graph ${ic('ext')}</button></h3>
@@ -2758,7 +2800,7 @@ async function drawBrief(){
         <span class="tag${BRIEF_ALERT[s.tag]?' warn':''}">${esc(s.tag)}</span>
         <div class="clamp3">${esc(s.text)}</div>
         ${BRIEF_SCAN[s.tag]?`<button class="btn sm" title="Stop showing this"
-          onclick="briefDismiss('${jsq(s.text)}')">${ic('close')}</button>`:''}</div>`).join('')
+          onclick="briefDismiss(${hesc(s.text)})">${ic('close')}</button>`:''}</div>`).join('')
     :'<div class="empty">Nothing to suggest yet — press Find work, or build memory first.</div>')
     +(d.scan_at?`<div style="color:var(--dim2);font-size:11px;margin-top:6px">last scan ${esc(d.scan_at)}</div>`:'')
     +sinceHtml(d);
@@ -2845,18 +2887,32 @@ async function savePaths(){
 async function saveDirs(){
   await post('/api/add-dirs',{...C(),dirs:dirVals('xdirs')});
   toast('Add directories saved','ok');}
-async function injectFlow(){
-  const d=await api('/api/inject/sessions?'+qs({path:CUR.path}));
-  if(!(d.sessions||[]).length){toast('No sessions found for this project','err');return;}
-  const v=await ask('Inject context',[
-    {label:'Source session',type:'select',options:d.sessions.map((s,i)=>
-      [String(i),`[${s.account}] ${s.title} (${s.age} ago)`])},
-    {label:'Launch under account',type:'select',options:ST.accounts.map(a=>[a.dir,a.name])}]);
+/* ── Hand off ──
+   Was a card in the Tools tab that asked you to pick a source session out of a
+   dropdown, then an account. It is a session-row action now, beside Fork: the
+   row IS the source, so the first step disappears. Nothing is lost with it —
+   `context_inject.find_sessions_across_accounts(path)` and
+   `gui.list_sessions(enc)` return the same per-project, cross-account set, which
+   is what that dropdown was listing.
+
+   The docs and the site already call this "context hand-off", so the button is
+   named after the thing rather than after a new word. */
+async function handoffS(i){
+  const s=SESS[i];
+  const v=await ask('Hand off — '+(s.title||s.sid.slice(0,8)),
+    [{label:'Start the new chat under account',type:'select',
+      options:ST.accounts.map(a=>[a.dir,a.name])}],
+    "A new chat opens in this project, seeded with this session's transcript as "
+    +'context. The transcript is written to .claudectl/injected-context.md and '
+    +'the new session is told to read it first.');
   if(v===null)return;
-  const s=d.sessions[parseInt(v[0])];
-  const r=await post('/api/inject/launch',{path:CUR.path,folder:s.folder,sid:s.sid,
-    account:s.account,target_cfgdir:v[1]});
-  toast(r.ok?'New session launched with injected context':'Failed: '+(r.error||''),r.ok?'ok':'err');
+  /* cfgdir + enc, not a folder path: the server derives the source folder
+     through the same validated `_folder()` every other endpoint uses. It used to
+     take an absolute `folder` off the wire and join it. */
+  const r=await post('/api/inject/launch',{path:CUR.path,enc:CUR.encoded,
+    cfgdir:s.cfgdir,sid:s.sid,account:s.account,target_cfgdir:v[0]});
+  toast(r.ok?'New chat launched with this session as context':'Failed: '+(r.error||''),
+    r.ok?'ok':'err');
 }
 /* ── Plan → Execute — own project tab ──
    Two-model workflow: a strong model plans once (headless, no tools), you
@@ -3347,7 +3403,7 @@ function autoModeCard(am){
   const accts=am.accounts||[],den=am.denials||[];
   const modeChips=(a,i)=>(am.modes||[]).map(m=>
     `<span class="chip${(a.mode||'')===m?' on':''}" title="${esc((am.profiles||{})[m]||'')}"
-       onclick="amSetMode(${i},'${jsq(m)}')">${esc((am.mode_labels||[])[(am.modes||[]).indexOf(m)]||m||'unset')}</span>`).join('');
+       onclick="amSetMode(${i},${hesc(m)})">${esc((am.mode_labels||[])[(am.modes||[]).indexOf(m)]||m||'unset')}</span>`).join('');
   const rows=accts.map((a,i)=>`<div class="amrow2">
     <div class="amname" title="${esc(a.dir)}">${esc(a.name)}</div>
     <div class="chips">${modeChips(a,i)}</div>
@@ -3448,7 +3504,7 @@ function ccRow(k,s,accts,group){
       <div class="cchelp">${esc(s.help)}</div></div></div>`
     +accts.map((a,i)=>`<div class="fld">${ccInput(k,s,a,i)}</div>`).join('')
     +`<div class="ccall"><button class="btn sm" title="Apply the first account's value to all"
-        onclick="ccAll('${k}')">${ic('group')}</button></div></div>`;
+        onclick="ccAll(${hesc(k)})">${ic('group')}</button></div></div>`;
 }
 /* autoCompactWindow -> "Auto compact window". The raw key still shows, because
    it is what the documentation and settings.json call it. */
@@ -3463,7 +3519,7 @@ function ccName(k){
    fails the account allowlist as "invalid cfgdir". */
 function ccInput(k,s,a,ai){
   const v=a.values[k],id=ccId(k,a.dir);
-  const set=`onchange="ccSet('${k}',this,${ai})"`;
+  const set=`onchange="ccSet(${hesc(k)},this,${ai})"`;
   if(s.kind==='bool')
     return `<select id="${id}" ${set}><option value=""${v===undefined?' selected':''}>—</option>
       <option value="true"${v===true?' selected':''}>on</option>
@@ -3497,7 +3553,7 @@ async function gcRun(apply){
   if(apply){$('#gcOut').textContent=`deleted ${r.files} files (${mb} MB)`;drawPage('client');return;}
   $('#gcOut').innerHTML=r.files
     ?`would delete <b>${r.files}</b> files (${mb} MB), keeping ${r.kept} named or tagged session(s)
-       <button class="btn sm danger" onclick="gcApply(${days},${r.files},'${mb}')">Delete them</button>`
+       <button class="btn sm danger" onclick="gcApply(${days},${r.files},${hesc(mb)})">Delete them</button>`
     :'nothing older than that';
 }
 async function gcApply(days,files,mb){
@@ -3566,7 +3622,7 @@ async function pgSearch(nav){
     const q=($('#gq').value||'').toLowerCase().trim();
     const m=q?SIDX.filter(r=>q.split(/\s+/).every(w=>r.haystack.includes(w))):SIDX;
     $('#gres').innerHTML=m.slice(0,80).map((r,i)=>`
-      <div class="qcard" style="margin-bottom:6px" onclick='gResume(${JSON.stringify(i)})'>
+      <div class="qcard" style="margin-bottom:6px" onclick='gResume(${hesc(i)})'>
         <div class="info"><div class="t">${esc(r.display)}</div>
         <div class="s">${esc(r.project)} · ${esc(r.age)} ago</div></div>
         <button class="btn sm">Resume</button></div>`).join('')
@@ -3586,12 +3642,15 @@ function gResume(i){const r=window._gmatch[i];
    the reader and the writer used to be able to disagree about which. */
 let MCPACCT='';
 async function pgMcp(nav){
-  const d=await api('/api/mcp?'+qs(MCPACCT?{cfgdir:MCPACCT}:{}));
+  /* refresh=1: `get_mcp_status` is cached 30s for the dashboard's 10-second
+     poll, and this page is where you come to find out whether a server is
+     actually up. */
+  const d=await api('/api/mcp?'+qs(Object.assign({refresh:1},MCPACCT?{cfgdir:MCPACCT}:{})));
   const srv=d.servers||[],up=srv.filter(x=>x.status==='ok').length;
   const accts=(ST.accounts||[]);
   const picker=accts.length>1?`<div class="chips" style="margin-bottom:10px">
       ${accts.map(a=>`<span class="chip${(MCPACCT||'')===(a.dir||'')?' on':''}"
-        onclick='mcpAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
+        onclick='mcpAcct(${hesc(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
     </div>`:'';
   if(!paint(nav,`<div class="card"><h3>MCP servers <span class="sp"></span>
     <button class="btn sm" onclick="mcpAdd()">${ic('add')} Add server</button></h3>
@@ -3605,9 +3664,9 @@ async function pgMcp(nav){
     </div>`:''}
     ${srv.map(s=>`<div style="display:flex;align-items:center;gap:10px;padding:5px 0">
       <span style="color:${s.status==='ok'?'var(--ok)':'var(--warn)'}">${ic(s.status==='ok'?'check':'help')}</span><b style="flex:1">${esc(s.name)}</b>
-      <button class="btn sm" onclick='mcpDetail(${JSON.stringify(s.name)})'>${ic('eye')} Detail</button>
-      <button class="btn sm" onclick='mcpDocs(${JSON.stringify(s.name)})'>${ic('search')} Tool docs</button>
-      <button class="btn sm danger" onclick='mcpRemove(${JSON.stringify(s.name)})'>Remove</button>
+      <button class="btn sm" onclick='mcpDetail(${hesc(s.name)})'>${ic('eye')} Detail</button>
+      <button class="btn sm" onclick='mcpDocs(${hesc(s.name)})'>${ic('search')} Tool docs</button>
+      <button class="btn sm danger" onclick='mcpRemove(${hesc(s.name)})'>Remove</button>
     </div>`).join('')||'<div style="color:var(--dim)">No MCP servers configured.</div>'}
     <p style="color:var(--dim);font-size:12.5px;margin:10px 0 0">Analyzing a server writes its tool documentation into a sentinel block of the account's <b>global CLAUDE.md</b>, which now has its own page.</p></div>`))return;
   if(srv.length){
@@ -3633,7 +3692,7 @@ async function pgLogs(nav){
   ev.forEach(e=>{if(n[e.lvl]!==undefined)n[e.lvl]++;});
   const tone={error:'err',warn:'warn',info:'ok'};
   const chips=['error','warn','info'].map(l=>
-    `<span class="chip${LOGLVL===l?' on':''}" onclick="logLvl('${l}')">${l} ${n[l]}</span>`).join('');
+    `<span class="chip${LOGLVL===l?' on':''}" onclick="logLvl(${hesc(l)})">${l} ${n[l]}</span>`).join('');
   const rows=ev.map(e=>{
     const lvl=e.lvl||'error';
     return `<div class="lgrow" data-lvl="${esc(lvl)}" data-f="${esc(lvl+' '+(e.src||'')+' '+(e.msg||'')+' '+(e.detail||'')+' '+(e.proj||''))}">
@@ -3670,12 +3729,12 @@ async function pgGlobalMd(nav){
   const accts=gm.accounts||[];
   const picker=accts.length>1?`<div class="chips" style="margin-bottom:10px">
       ${accts.map(a=>`<span class="chip${(GMDACCT||'')===(a.dir||'')?' on':''}"
-        onclick='gmdAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
+        onclick='gmdAcct(${hesc(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
     </div>`:'';
   const words=(gm.text||'').trim()?(gm.text.trim().split(/\s+/).length):0;
   if(!paint(nav,`
     <div class="card"><h3>${ic('doc')} Global CLAUDE.md <span class="sp"></span>
-      <button class="btn sm" onclick='post("/api/open-editor",{path:${JSON.stringify(gm.path||'')}}).then(r=>toast(r.ok?"Opened in your editor":"Could not open it","ok"))'>${ic('edit')} Open in editor</button>
+      <button class="btn sm" onclick='post("/api/open-editor",{file:${hesc(gm.path||'')}}).then(r=>toast(r.ok?"Opened in your editor":"Could not open it","ok"))'>${ic('edit')} Open in editor</button>
       <button class="btn sm pri" onclick="gmSave()">Save</button></h3>
       ${picker}
       <p style="color:var(--dim);font-size:13px;margin:0 0 8px">Claude reads this file in <b>every</b> session on this account, so every word is paid for on every turn — roughly ${Math.round(words*1.3)} tokens as it stands.
@@ -3703,7 +3762,7 @@ async function drawConv(){
     +near.map(n=>`<div class="lrow">
         <div class="clamp3">${esc(n.text)}
           <div style="color:var(--dim2);font-size:11px">${esc(n.why)}</div></div>
-        <button class="btn sm" onclick="convPin('${jsq(n.text)}')">Pin</button></div>`).join('')
+        <button class="btn sm" onclick="convPin(${hesc(n.text)})">Pin</button></div>`).join('')
     :(rows.length?'':'<div class="empty">No preference or correction lessons recorded in any project yet — they are extracted when you review sessions.</div>');
   b.innerHTML=promoted+cand;
 }
@@ -3757,11 +3816,11 @@ async function pgLoops(nav){
         :`${r.iterations?`<span class="tag ok">${r.iterations} turns</span>`:''}
           ${r.last_activity?`<span class="tag">quiet ${fmtAge(r.last_activity)}</span>`:''}`}
       <span style="color:var(--dim2);font-size:12px">${fmtAge(r.age)} ago</span>
-      ${r.journal&&r.journal.length?`<button class="btn sm" onclick='loopLog(${JSON.stringify(r.id)})'>log</button>`:''}
-      ${r.running&&r.kind==='schedule'?`<button class="btn sm" onclick='loopRenew(${JSON.stringify(r.id)})'>renew</button>`:''}
+      ${r.journal&&r.journal.length?`<button class="btn sm" onclick='loopLog(${hesc(r.id)})'>log</button>`:''}
+      ${r.running&&r.kind==='schedule'?`<button class="btn sm" onclick='loopRenew(${hesc(r.id)})'>renew</button>`:''}
       ${r.running
-        ?`<button class="btn sm danger" onclick='loopStop(${JSON.stringify(r.id)})'>${r.kind==='schedule'?'Unschedule':'End session'}</button>`
-        :`<button class="btn sm" onclick='loopForget(${JSON.stringify(r.id)})'>${ic('del')}</button>`}
+        ?`<button class="btn sm danger" onclick='loopStop(${hesc(r.id)})'>${r.kind==='schedule'?'Unschedule':'End session'}</button>`
+        :`<button class="btn sm" onclick='loopForget(${hesc(r.id)})'>${ic('del')}</button>`}
     </div>`;
   window._loopRows=rows;
   const permNote=(d.perms||[]).find(x=>x.id===LOOPPERM);
@@ -3790,11 +3849,11 @@ async function pgLoops(nav){
       ${LOOPKIND==='schedule'?`
       <div class="fld"><label>What it may do without asking</label>
         <div class="chips">${(d.perms||[]).map(pm=>`<span class="chip${LOOPPERM===pm.id?' on':''}"
-          onclick='loopPerm(${JSON.stringify(pm.id)})' title="${esc(pm.note)}">${esc(pm.id)}</span>`).join('')}</div>
+          onclick='loopPerm(${hesc(pm.id)})' title="${esc(pm.note)}">${esc(pm.id)}</span>`).join('')}</div>
         <div style="color:var(--dim);font-size:12px;margin-top:4px">${esc(permNote?permNote.note:'')}</div></div>
       ${accts.length>1?`<div class="fld"><label>Account it runs under</label>
         <div class="chips">${accts.map(a=>`<span class="chip${(LOOPACCT||(P?P.primary_cfgdir:''))===(a.dir||'')?' on':''}"
-          onclick='loopAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)}</span>`).join('')}</div></div>`:''}`:''}
+          onclick='loopAcct(${hesc(a.dir||'')})'>${esc(a.name)}</span>`).join('')}</div></div>`:''}`:''}
       <div class="mrow"><span id="loopPreview" style="flex:1;color:var(--dim);font-size:12px;font-family:var(--mono)"></span>
         <button class="btn pri" onclick="loopStart()">${ic('play')} ${LOOPKIND==='schedule'?'Schedule it':'Start in a new session'}</button></div>`:''}</div>
 
@@ -3965,14 +4024,14 @@ async function pgAgents(nav){
       <div class="agmain"><b>${esc(a.name)}</b>${provTag('agent',a.name)}
         ${scope?`<span class="tag">${esc(scope)}</span>`:''}
         <div class="agdesc">${esc(a.desc)||'<span style="color:var(--dim2)">No description — Claude can only reach this one if you name it.</span>'}</div></div>
-      <button class="btn sm" onclick='agView(${JSON.stringify(a.path)})'>view</button>${extra||''}</div>`;
+      <button class="btn sm" onclick='agView(${hesc(a.path)})'>view</button>${extra||''}</div>`;
   /* Divided by category, both lists. A flat roll of everything installed is
      the same wall the library would be without its folders, and it gets worse
      with every agent you write. `Uncategorised` is a real heading rather than
      a gap, and it sorts LAST so it never leads the page. */
   const own=agByCat(d.own||[],a=>agRow(a,
-    `<button class="btn sm" onclick='post("/api/open-editor",{file:${JSON.stringify(a.path)}})'>edit</button>
-     <button class="btn sm danger" onclick='agDel(${JSON.stringify(a.path)})'>${ic('del')}</button>`,
+    `<button class="btn sm" onclick='post("/api/open-editor",{file:${hesc(a.path)}})'>edit</button>
+     <button class="btn sm danger" onclick='agDel(${hesc(a.path)})'>${ic('del')}</button>`,
     agScope(a.scope)));
   const nLib=(d.categories||[]).reduce((n,c)=>n+c.agents.length,0);
   const lib=(d.categories||[]).map(c=>`
@@ -4030,9 +4089,24 @@ async function agNew(){
   toast(r.ok?'Agent created':'Failed','ok');drawPage('agents');
 }
 async function agAI(){
-  const v=await ask('AI-generate agent',[{label:'Describe what the agent should do',type:'textarea'}]);
+  /* The same fields agNew() collects, because the agent lands in the same
+     place. The old modal asked for one textarea and the server fed it in as
+     the agent's NAME — it was the only field the TUI flow's first text_input
+     would have read, had that flow been reachable from a job thread at all. */
+  const d=await api('/api/agents/library'+(CUR?'?'+qs({path:CUR.path}):''));
+  const v=await ask('Have Claude write an agent',[
+    {label:'Name',ph:'security-reviewer'},
+    {label:'What should this agent do?',type:'textarea'},
+    {label:'Category — pick one, or type a new name',
+     list:d.category_names||[],ph:NO_CAT},
+    {label:'Scope',type:'select',options:CUR
+      ?[['user','user (all projects)'],['project','this project']]
+      :[['user','user (all projects)']]}],
+    'Claude writes the description, tool list, model and system prompt. It lands in '
+    +'.claude/agents/ — where Claude Code reads them — and you can edit it after.');
   if(v===null||!v[0].trim())return;
-  inlineJob('#jban','agent_ai',{path:CUR?CUR.path:'',description:v[0]},
+  inlineJob('#jban','agent_ai',{path:CUR?CUR.path:'',name:v[0],
+      description:v[1],category:v[2],scope:v[3]},
     {label:'Generating agent',redraw:()=>drawPage('agents')});
 }
 async function agDel(path){
@@ -4068,7 +4142,7 @@ async function pgPlugins(nav){
   };
   const picker=accts.length>1?`<div class="chips" style="margin-bottom:10px">
       ${accts.map(a=>`<span class="chip${(PLACCT||'')===(a.dir||'')?' on':''}"
-        onclick='plAcct(${JSON.stringify(a.dir||'')})'
+        onclick='plAcct(${hesc(a.dir||'')})'
         title="${a.plugins} plugin(s), ${a.marketplaces} marketplace(s)">${esc(a.name)} <b>${a.plugins}</b></span>`).join('')}
     </div>`:'';
   const mkts=(d.marketplaces||[]).map(m=>`
@@ -4077,7 +4151,7 @@ async function pgPlugins(nav){
       <span class="tag">${esc(m.source||'?')}</span>
       ${accts.length>1?spread(m.on_accounts):''}
       <span style="flex:1;color:var(--dim);font-size:12px">${esc(m.repo||m.path)}</span>
-      <button class="btn sm danger" onclick='mktRemove(${JSON.stringify(m.name)})'>${ic('del')}</button>
+      <button class="btn sm danger" onclick='mktRemove(${hesc(m.name)})'>${ic('del')}</button>
     </div>`).join('');
   const vrows={};((V||{}).plugins||[]).forEach(r=>{vrows[r.key]=r;});
   const plugs=(d.plugins||[]).map(p=>{
@@ -4094,9 +4168,9 @@ async function pgPlugins(nav){
       ${accts.length>1?spread(p.on_accounts):''}
       <span style="flex:1">${gives||'<span style="color:var(--dim2);font-size:12px">ships nothing claudectl reads</span>'}</span>
       ${(accts.length>1&&(p.on_accounts||[]).length<accts.length)
-        ?`<button class="btn sm pri" onclick='pluginSpread(${JSON.stringify(p.name)},${JSON.stringify(p.marketplace)})' title="Install it into the accounts that do not have it">Install everywhere</button>`:''}
-      ${vr.outdated?`<button class="btn sm pri" onclick='pluginUpdate(${JSON.stringify(p.key)})'>Update</button>`:''}
-      <button class="btn sm danger" onclick='pluginRemove(${JSON.stringify(p.key)})'>${ic('del')}</button>
+        ?`<button class="btn sm pri" onclick='pluginSpread(${hesc(p.name)},${hesc(p.marketplace)})' title="Install it into the accounts that do not have it">Install everywhere</button>`:''}
+      ${vr.outdated?`<button class="btn sm pri" onclick='pluginUpdate(${hesc(p.key)})'>Update</button>`:''}
+      <button class="btn sm danger" onclick='pluginRemove(${hesc(p.key)})'>${ic('del')}</button>
     </div>`;}).join('');
   paint(nav,`
     ${selfCard(V)}
@@ -4188,7 +4262,7 @@ function verCard(V){
            :'<span class="tag warn">update available</span>');
   const locals=(c.local||[]).filter(v=>v!==c.installed).slice(0,4)
     .map(v=>`<button class="btn sm" title="already downloaded — rolls back without a fetch"
-      onclick='claudeUpdate(${JSON.stringify(v)})'>${esc(v)}</button>`).join(' ');
+      onclick='claudeUpdate(${hesc(v)})'>${esc(v)}</button>`).join(' ');
   return `<div class="card" id="verCard"><h3>${ic('bolt')} Claude Code ${state}
       <span class="sp"></span>
       <button class="btn sm" onclick="verCheck()">${ic('refresh')} Check now</button>
@@ -4295,8 +4369,8 @@ function wtRow(w,repoPath,indent){
       <span style="flex:1;color:var(--dim);font-size:12px">${
         s?`${esc(s.title||s.sid.slice(0,8))} · ${esc(s.account)} · ${s.msgs} msgs · ${live?'live now':fmtAge(s.age)}`
          :'<span style="color:var(--dim2)">no session here</span>'}</span>
-      ${w.dirty?`<button class="btn sm" onclick='wtDiff(${JSON.stringify(w.path)})'>${ic('eye')} Diff</button>`:''}
-      ${w.main?'':`<button class="btn sm" onclick='wtMerge(${JSON.stringify(repoPath)},${JSON.stringify(w.branch)})'>Merge</button>`}
+      ${w.dirty?`<button class="btn sm" onclick='wtDiff(${hesc(w.path)})'>${ic('eye')} Diff</button>`:''}
+      ${w.main?'':`<button class="btn sm" onclick='wtMerge(${hesc(repoPath)},${hesc(w.branch)})'>Merge</button>`}
     </div>`;
 }
 /* One repo and everything under it. <details> does the collapsing natively —
@@ -4386,22 +4460,22 @@ async function pgOStyles(nav){
   const where=d.active_scope==='project'?`this project's <code>.claude/settings.json</code>`
     :d.active_scope==='user'?`your account's <code>settings.json</code>`:'';
   const card=st=>`
-    <div class="preset${st.active?' on':''}" onclick='osPick(${JSON.stringify(st.name)})'>
+    <div class="preset${st.active?' on':''}" onclick='osPick(${hesc(st.name)})'>
       <b>${esc(st.name)}</b>
       <span>${esc(st.description||'No description.')}</span>
       <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
         ${st.active?'<span class="tag ok">in force</span>':''}
         ${st.lines?`<span class="tag">${st.lines} lines</span>`:''}
-        <button class="btn sm" onclick='event.stopPropagation();osView(${JSON.stringify(st.name)})'>view</button>
-        ${st.builtin||st.scope==='starter'?'':`<button class="btn sm danger" onclick='event.stopPropagation();osDel(${JSON.stringify(st.name)})'>${ic('del')}</button>`}
+        <button class="btn sm" onclick='event.stopPropagation();osView(${hesc(st.name)})'>view</button>
+        ${st.builtin||st.scope==='starter'?'':`<button class="btn sm danger" onclick='event.stopPropagation();osDel(${hesc(st.name)})'>${ic('del')}</button>`}
       </div></div>`;
   const starter=st=>`
     <div class="preset">
       <b>${esc(st.name)}</b>
       <span>${esc(st.description)}</span>
       <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
-        <button class="btn sm" onclick='osView(${JSON.stringify(st.name)})'>view</button>
-        <button class="btn sm pri" onclick='osInstall(${JSON.stringify(st.name)})'>copy to ${OSSCOPE}</button>
+        <button class="btn sm" onclick='osView(${hesc(st.name)})'>view</button>
+        <button class="btn sm pri" onclick='osInstall(${hesc(st.name)})'>copy to ${OSSCOPE}</button>
       </div></div>`;
   const of=sc=>(d.styles||[]).filter(x=>x.scope===sc);
   const grid=(rows,empty)=>rows.length
@@ -4506,7 +4580,7 @@ async function ckptS(i){
       const vs=f.versions;
       const chain=vs.map((v,n)=>{
         const prev=n?vs[n-1].v:0;
-        return prev?`<button class="btn sm" onclick='ckptDiff(${JSON.stringify(s.sid)},${JSON.stringify(f.path)},${prev},${v.v},${JSON.stringify(s.cfgdir||"")})'>v${prev}→v${v.v}</button>`
+        return prev?`<button class="btn sm" onclick='ckptDiff(${hesc(s.sid)},${hesc(f.path)},${prev},${v.v},${hesc(s.cfgdir||"")})'>v${prev}→v${v.v}</button>`
                    :`<span class="tag">v${v.v}</span>`;}).join(' ');
       return `<div class="hrow">
         <b style="min-width:220px" title="${esc(f.path)}">${esc(f.name)}</b>
@@ -4567,15 +4641,15 @@ async function pgSkills(nav){
 
   const act=r=>{
     const b=[];
-    if(r.dir)b.push(`<button class="btn sm" onclick='skView(${JSON.stringify(r.dir)})'>view</button>`);
+    if(r.dir)b.push(`<button class="btn sm" onclick='skView(${hesc(r.dir)})'>view</button>`);
     if(r.scope==='personal'||r.scope==='project')
-      b.push(`<button class="btn sm" onclick='post("/api/open-editor",{file:${JSON.stringify(r.dir+"\\\\SKILL.md")}})'>edit</button>`);
+      b.push(`<button class="btn sm" onclick='post("/api/open-editor",{file:${hesc(r.dir+"\\\\SKILL.md")}})'>edit</button>`);
     if(r.scope!=='personal'&&r.dir)
-      b.push(`<button class="btn sm" onclick='skSave(${JSON.stringify(r.dir)})' title="Copy into the personal scope of every account">→ personal</button>`);
+      b.push(`<button class="btn sm" onclick='skSave(${hesc(r.dir)})' title="Copy into the personal scope of every account">→ personal</button>`);
     if(r.scope!=='project'&&r.dir&&path)
-      b.push(`<button class="btn sm" onclick='skInstall(${JSON.stringify(r.dir)},"project")' title="Copy into ${esc(P.name)} only">→ project</button>`);
+      b.push(`<button class="btn sm" onclick='skInstall(${hesc(r.dir)},"project")' title="Copy into ${esc(P.name)} only">→ project</button>`);
     if(r.scope==='personal'||r.scope==='project')
-      b.push(`<button class="btn sm danger" onclick='skRemove(${JSON.stringify(r.dir)},${JSON.stringify(r.scope)})'>${ic('del')}</button>`);
+      b.push(`<button class="btn sm danger" onclick='skRemove(${hesc(r.dir)},${hesc(r.scope)})'>${ic('del')}</button>`);
     return b.join('');
   };
   const row=r=>`<div class="skrow" data-scope="${esc(r.scope)}"
@@ -4587,10 +4661,10 @@ async function pgSkills(nav){
       <span class="skdesc">${esc(r.desc)||'<span style="color:var(--dim2)">No description — Claude can only reach this one if you type it.</span>'}</span></div>`;
 
   const chip=(id,label)=>`<span class="chip skchip${SKSCOPE===id?' on':''}"
-      data-sc="${id}" onclick='skScope(${JSON.stringify(id)})'>${label} ${n(id)}</span>`;
+      data-sc="${id}" onclick='skScope(${hesc(id)})'>${label} ${n(id)}</span>`;
   const acctChips=accts.length>1?`<div class="chips" style="margin:0 0 8px">
       ${accts.map(a=>`<span class="chip${(SKACCT||'')===(a.dir||'')?' on':''}"
-        onclick='skAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
+        onclick='skAcct(${hesc(a.dir||'')})'>${esc(a.name)}</span>`).join('')}
     </div>`:'';
 
   if(!paint(nav,`
@@ -4758,10 +4832,10 @@ async function pgHooks(nav){
     <div class="hrow${h.enabled?'':' off'}" style="display:flex;align-items:center;gap:10px;padding:4px 0${h.enabled?'':';opacity:.55'}">
       <input type="checkbox" ${h.enabled?'checked':''}
         title="${h.enabled?'Disable':'Enable'} this hook"
-        onchange='hookToggle(${JSON.stringify(h.event)},${h.index},this.checked)'>
+        onchange='hookToggle(${hesc(h.event)},${h.index},this.checked)'>
       <span style="flex:1">${esc(h.label)}${h.enabled?'':' <span style="color:var(--dim2);font-size:11px">(disabled)</span>'}</span>
       ${h.matcher?`<code style="color:var(--dim2);font-size:11px" title="Only runs for this: ${esc(h.matcher)}">${esc(h.matcher)}</code>`:''}
-      <button class="btn sm danger" onclick='hookRm(${JSON.stringify(h.event)},${h.index},${h.enabled?'true':'false'})'>${ic('del')}</button></div>`;
+      <button class="btn sm danger" onclick='hookRm(${hesc(h.event)},${h.index},${h.enabled?'true':'false'})'>${ic('del')}</button></div>`;
   const active=hkGroup(d.hooks||[],hookRow);
   /* NOT `.hrow`: that class means "an installed hook", and the smoke tool
      counts one checkbox per `.hrow` to prove every hook can be turned off.
@@ -4772,11 +4846,11 @@ async function pgHooks(nav){
       <span style="flex:1;color:var(--dim);font-size:12px">${esc(t.desc)}</span>
       ${skew(t.missing)}
       ${t.installed&&!(t.missing||[]).length?`<span class="tag ok">${ic('check')} installed</span>`
-        :`<button class="btn sm" onclick='hookAdd(${JSON.stringify(t.key)})'>${ic('add')} Install</button>`}</div>`;
+        :`<button class="btn sm" onclick='hookAdd(${hesc(t.key)})'>${ic('add')} Install</button>`}</div>`;
   const tmpl=hkGroup(d.templates||[],tmplRow);
   const picker=accts.length>1?`<div class="chips" style="margin-bottom:10px">
       ${accts.map(a=>`<span class="chip${(HKACCT||'')===(a.dir||'')?' on':''}"
-        onclick='hookAcct(${JSON.stringify(a.dir||'')})'>${esc(a.name)} <b>${a.count}</b></span>`).join('')}
+        onclick='hookAcct(${hesc(a.dir||'')})'>${esc(a.name)} <b>${a.count}</b></span>`).join('')}
     </div>`:'';
   if(!paint(nav,`
     <div class="card"><h3>${ic('link')} Hooks <span class="sp"></span>
@@ -4800,7 +4874,7 @@ async function pgHooks(nav){
 function hookAcct(dir){HKACCT=dir;drawPage('hooks');}
 async function hookEditFile(){
   const d=await api('/api/hooks?'+qs(HKACCT?{cfgdir:HKACCT}:{}));
-  const r=await post('/api/open-editor',{path:d.settings_path});
+  const r=await post('/api/open-editor',{file:d.settings_path});
   toast(r.ok?'Opened in your editor':'Could not open it','ok');}
 async function hookAdd(key){const r=await post('/api/hooks/template',{key});
   toast(r.already?(r.message||'Already installed')
@@ -4817,7 +4891,10 @@ async function hookPurge(){const r=await post('/api/hooks/purge',{});
 async function hookAI(){
   const v=await ask('AI-generate hook',[{label:'What should the hook do?',type:'textarea'}]);
   if(v===null||!v[0].trim())return;
-  inlineJob('#jban','hook_ai',{description:v[0]},
+  /* HKACCT, like every other hook action on this page: without it an
+     AI-generated hook always landed on the active account, whichever one the
+     account chips above were showing. */
+  inlineJob('#jban','hook_ai',{description:v[0],cfgdir:HKACCT||undefined},
     {label:'Generating hook',redraw:()=>drawPage('hooks')});
 }
 
@@ -4845,11 +4922,11 @@ async function pgAccounts(nav){
         <span class="apath">${esc(a.resolved)}</span>
         ${q==null?'<span class="aq dim2">no usage data</span>'
           :INST.html('ring','acct:'+a.name,{fmt:'pct'})}
-        <button class="btn sm" onclick='acctAct("switch",${JSON.stringify(a.name)})'>Switch</button>
-        <button class="btn sm" onclick='acctTerm(${JSON.stringify(a.name)},${JSON.stringify(a.dir)})'>Open terminal</button>
+        <button class="btn sm" onclick='acctAct("switch",${hesc(a.name)})'>Switch</button>
+        <button class="btn sm" onclick='acctTerm(${hesc(a.name)},${hesc(a.dir)})'>Open terminal</button>
         ${a.name!=='default'?`
-          <button class="btn sm" onclick='acctRename(${JSON.stringify(a.name)})'>Rename</button>
-          <button class="btn sm danger" onclick='acctAct("remove",${JSON.stringify(a.name)})'>${ic('del')}</button>`:''}
+          <button class="btn sm" onclick='acctRename(${hesc(a.name)})'>Rename</button>
+          <button class="btn sm danger" onclick='acctAct("remove",${hesc(a.name)})'>${ic('del')}</button>`:''}
       </div>`;}).join('')}</div>
     <div class="card"><h3>${ic('refresh')} Sync accounts</h3>
       <p style="color:var(--dim);font-size:13px;margin:0 0 8px">What you provision — hooks, plugins, marketplaces, user agents, the global CLAUDE.md — is a property of <b>you</b>, not of whichever account happened to be active. This levels every account up to the union of them all. It only ever <b>adds</b>: an account keeps anything the others do not have, because there is no way to tell a deliberate choice from a gap.</p>
@@ -5611,7 +5688,7 @@ async function drawAutoMemList(){
     `<option value="${v}"${v===d.interval?' selected':''}>${l}</option>`).join('');
   const rows=(d.projects||[]).sort((a,b)=>(b.auto-a.auto)).map(p=>`
     <label class="amrow">
-      <input type="checkbox" ${p.auto?'checked':''} onchange="amToggle('${esc(p.enc)}',this.checked)">
+      <input type="checkbox" ${p.auto?'checked':''} onchange="amToggle(${hesc(p.enc)},this.checked)">
       <span class="nm">${esc(p.name)}${p.running?' <span class="tag ok">updating…</span>':''}</span>
       <span class="pt">${esc(p.path)}</span></label>`).join('');
   // re-resolve AND guard: this lands after an await, so navigating away between

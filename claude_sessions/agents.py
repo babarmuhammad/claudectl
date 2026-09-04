@@ -10,7 +10,7 @@ import re
 
 from .config import W, get_claude_exe, open_in_editor
 from .ui import (menu, text_input, flash, pause, confirm, multiselect,
-                 run_with_progress, pager, _cls)
+                 pager, _cls)
 from . import config as _c
 from . import render
 
@@ -214,21 +214,31 @@ def _new_agent_manual(project_path):
         flash("Write failed", ok=False, secs=1.4)
 
 
-def _new_agent_ai(project_path):
-    scope_dir = _pick_category()
-    if not scope_dir:
-        return
-    claude = get_claude_exe()
-    if not claude:
-        _cls(); print("\n  claude.exe not found.\n"); pause("  Press Enter..."); return
-    name = text_input("Agent name (e.g. security-reviewer):")
-    if not name:
-        return
-    role = text_input("What should this agent do? (one line):") or name
+# ── AI-generated agents ──────────────────────────────────────
+#
+# Split into three non-interactive pieces plus a thin TUI wrapper, which is the
+# shape `skills.build_ai_prompt` / `skills.write_skill_raw` already uses and the
+# reason the skill generator works from both surfaces.
+#
+# `_new_agent_ai` used to BE the GUI's handler, and it is an interactive TUI
+# flow: `_pick_category()` opens a `menu()`, which is not one of the five
+# primitives `gui_api._install_bridge` patches. A job thread reaching it blocks
+# in `wait_event()` forever — the job stayed 'running' until the six-hour
+# reaper, which is exactly what "AI generate agents doesn't work" was. Four more
+# defects sat behind that one: `text_input` imported by value so the bridge's
+# input queue was never read even past the hang; two prompts asked for against
+# one field collected; the prompt passed on ARGV (the 32767-char CreateProcess
+# limit `memory._claude_stdin` exists to avoid) with no cwd, no HEADLESS_MARK
+# and no budget cap; and the file written into claudectl's own read-only
+# library, where Claude Code does not look for installed agents.
 
-    from .claude_md import _build_ai_context, _pager_confirm
+
+def build_ai_prompt(name, role, project_path=None):
+    """The authoring prompt. Pure — shared by the TUI flow and the GUI job so
+    both produce identical output."""
+    from .claude_md import _build_ai_context
     ctx = _build_ai_context(project_path, None) if project_path else ''
-    prompt = (
+    return (
         f"Author a Claude Code subagent definition named '{name}'.\n"
         f"Purpose: {role}\n\n"
         + (f"PROJECT CONTEXT:\n{ctx}\n\n" if ctx else "")
@@ -244,29 +254,112 @@ def _new_agent_ai(project_path):
         "Do NOT create or write any files and do not use any tools — return the "
         "markdown text directly. No preamble, no code fences."
     )
-    from .memory import extract_model
-    _mf = ['--model', extract_model()] if extract_model() else []
-    out, cancelled = run_with_progress(
-        [claude, *_mf, '--print', prompt, '--disallowedTools', 'Write,Edit,NotebookEdit,Bash'],
-        ('CLAUDECTL', 'AGENTS', name), f'Authoring agent {name} with Claude...  (15-60s)',
-        timeout=120)
-    if cancelled:
-        flash("Cancelled", ok=False); return
-    content = (out or '').strip()
+
+
+def write_agent_raw(md, name, scope='user', project_path=None, category=''):
+    """Write generated agent markdown where Claude Code actually reads it.
+
+    `~/.claude/agents/` or `<project>/.claude/agents/`, FLAT — the same
+    destination `gui_api.api_agent_create` uses for a hand-written agent, and
+    the one `category_of` documents: Claude Code reads that one directory, so a
+    subfolder per category would hide every agent inside it. The category rides
+    in the frontmatter instead.
+
+    Returns {'ok', 'path', 'name', 'error'}.
+    """
+    md = (md or '').strip()
+    if not md:
+        return {'ok': False, 'error': 'nothing to write', 'path': '', 'name': name}
+    d = (project_agents_dir(project_path) if scope == 'project' and project_path
+         else user_agents_dir())
+    path = os.path.join(d, f'{_slug(name)}.md')
+    if category.strip():
+        meta, body = _parse_md(md)
+        meta.setdefault('category', category.strip())
+        if write_agent(path, meta, body):
+            return {'ok': True, 'path': path, 'name': name, 'error': ''}
+        return {'ok': False, 'error': 'write failed', 'path': path, 'name': name}
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(md if md.endswith('\n') else md + '\n')
+        return {'ok': True, 'path': path, 'name': name, 'error': ''}
+    except Exception as e:
+        return {'ok': False, 'error': str(e), 'path': path, 'name': name}
+
+
+def _parse_md(text):
+    """Frontmatter of a markdown STRING (parse_agent takes a path)."""
+    meta, body = {}, text
+    if text.startswith('---'):
+        end = text.find('\n---', 3)
+        if end != -1:
+            body = text[end + 4:].lstrip('\n')
+            for line in text[3:end].strip('\n').splitlines():
+                if ':' in line:
+                    k, v = line.split(':', 1)
+                    meta[k.strip()] = v.strip()
+    return meta, body
+
+
+def generate_agent_ai(name, role='', scope='user', project_path=None, category=''):
+    """Author an agent with Claude and write it. NON-INTERACTIVE — this is what
+    the GUI job calls, so it must not touch a keyboard primitive.
+
+    Goes through `memory._claude_stdin`, which is the one seam that supplies the
+    stdin prompt, the cwd, the HEADLESS_MARK, `--max-turns` and the
+    `--max-budget-usd` cap. Returns the same dict as `write_agent_raw`, so the
+    job has something to report; the old flow returned None and the UI could not
+    tell written from rejected from failed.
+    """
+    from . import memory
+    name = (name or '').strip()
+    if not name:
+        return {'ok': False, 'error': 'no agent name given', 'path': '', 'name': ''}
+    out = memory._claude_stdin(
+        build_ai_prompt(name, role or name, project_path),
+        project_path or None, timeout=180,
+        crumbs=('CLAUDECTL', 'AGENTS', name),
+        label=f'Authoring agent {name} with Claude...  (15-60s)')
+    if not (out or '').strip():
+        return {'ok': False, 'error': memory.why_failed('No output from Claude'),
+                'path': '', 'name': name}
+    return write_agent_raw(out, name, scope, project_path, category)
+
+
+def _new_agent_ai(project_path):
+    """TUI wrapper: collect the fields, generate, show the diff, write."""
+    from .claude_md import _pager_confirm
+    if not get_claude_exe():
+        _cls(); print("\n  claude.exe not found.\n"); pause("  Press Enter..."); return
+    name = text_input("Agent name (e.g. security-reviewer):")
+    if not name:
+        return
+    role = text_input("What should this agent do? (one line):") or name
+    scope = 'user'
+    if project_path:
+        scope = menu([('user  (every project)', 'user'),
+                      ('this project only', 'project')], "SCOPE")
+        if not scope:
+            return
+    category = text_input("Category (optional — claudectl's own filing):") or ''
+
+    from . import memory
+    md = memory._claude_stdin(
+        build_ai_prompt(name, role, project_path), project_path or None,
+        timeout=180, crumbs=('CLAUDECTL', 'AGENTS', name),
+        label=f'Authoring agent {name} with Claude...  (15-60s)')
+    content = (md or '').strip()
     if not content:
-        from .memory import why_failed
-        flash(why_failed(), ok=False, secs=2.4); return
+        flash(memory.why_failed(), ok=False, secs=2.4); return
     if not _pager_confirm(f"AGENT  /  {name}  — approve to write", content):
         _cls(); print("\n  Rejected — not written.\n"); pause("  Press Enter..."); return
-    path = os.path.join(scope_dir, f"{_slug(name)}.md")
-    try:
-        os.makedirs(scope_dir, exist_ok=True)
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write(content if content.endswith('\n') else content + '\n')
-        flash(f"Created {os.path.basename(path)}")
-        open_in_editor(path)
-    except Exception as e:
-        flash(f"Write failed: {e}", ok=False, secs=1.6)
+    r = write_agent_raw(content, name, scope, project_path, category)
+    if r['ok']:
+        flash(f"Created {os.path.basename(r['path'])}")
+        open_in_editor(r['path'])
+    else:
+        flash(f"Write failed: {r['error']}", ok=False, secs=1.6)
 
 
 def view_agent_file(path):

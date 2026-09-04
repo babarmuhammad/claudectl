@@ -520,6 +520,12 @@ const MO = {
    Keyframes only; the skin data in themes.py names which one it wears. All
    transform/opacity/clip-path — nothing that invalidates paint. */
 const SKIN_ENTER = {
+  // plain: a short rise and fade, the least a card can do and still arrive.
+  // Deliberately not a wipe, a pop or a slam — the whole point of Standard is
+  // that nothing about it is a signature.
+  standard: { ms: 200, ease: 'cubic-bezier(.22,1,.36,1)', frames: [
+            { opacity: 0, transform: 'translateY(6px)' },
+            { opacity: 1, transform: 'none' }] },
   // instrument panel powering up: a wipe across, no vertical travel
   hud:    { ms: 300, ease: 'cubic-bezier(.2,.9,.3,1)', frames: [
             { opacity: 0, clipPath: 'inset(0 100% 0 0)' },
@@ -553,8 +559,11 @@ const SKIN_ENTER = {
             { opacity: 1, transform: 'translate(2px,2px)', offset: .6 },
             { opacity: 1, transform: 'none' }] },
 };
-const SKIN_BURST = { hud: 'brackets', deck: 'brackets', anime: 'sparkle',
-  cyber: 'scan', graph: 'link', crt: 'caret', brutal: 'snap' };
+// `standard` reuses HUD's brackets rather than getting its own: a burst marks
+// an action (a session launching), and a look with no signature has no reason
+// to author a new 400ms flourish for it.
+const SKIN_BURST = { standard: 'brackets', hud: 'brackets', deck: 'brackets',
+  anime: 'sparkle', cyber: 'scan', graph: 'link', crt: 'caret', brutal: 'snap' };
 
 /* ── per-skin page-arrival sequences (anime.js) ────────────────────────────
    `step` is the stagger in ms, `from` the grid origin it radiates out of, `p`

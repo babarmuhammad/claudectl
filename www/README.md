@@ -1,36 +1,58 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# claudectl.space
 
-## Getting Started
+The marketing site for [claudectl](https://github.com/babarmuhammad/claudectl), the
+workspace layer for Claude Code. Next.js App Router, deployed to Vercel from `main`.
 
-First, run the development server:
+The documentation is a separate site: MkDocs Material in `../docs`, served at
+[docs.claudectl.space](https://docs.claudectl.space/). Each root directory owns its own
+`vercel.json`, because a project whose root has none falls back to the repository's and
+gets handed the wrong build command.
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm ci
+npm run dev     # http://localhost:3000
+npm run build   # what CI and Vercel run
+npm run lint
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Node 20 or newer. The `www` job in `.github/workflows/ci.yml` runs lint and build on every
+push, so a break shows up on the pull request rather than only in the deploy.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Where the content lives
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Nothing on this site is written twice.
 
-## Learn More
+`lib/site.ts` holds the site identity: URLs, tagline, author, and `PROFILES`, the
+schema.org `sameAs` list. That list has to stay in step with `extra.profiles` in
+`../mkdocs.yml` — both hosts assert the same author entity, and
+`tests/test_docs_site.py::test_both_hosts_assert_the_same_author_entity` fails when they
+drift apart.
 
-To learn more about Next.js, take a look at the following resources:
+`lib/content.ts` holds the page copy as structured `Doc` objects, so a page and the
+sitemap and `llms.txt` all read the same source. `lib/faq.ts` is one array that renders as
+the FAQ page and as its `FAQPage` JSON-LD. `content/blog/*.md` is markdown with front
+matter, parsed by `lib/blog.ts`. The changelog and the About page's numbers are read out
+of the repository at build time by `lib/build-data.ts`, which fails open when a file is
+missing so a checkout of `www` alone still builds.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+`lib/meta.ts` is the only place that knows the canonical, OpenGraph and Twitter shape a
+route needs. Call `meta()` from a page rather than writing a `metadata` export by hand.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Generated routes
 
-## Deploy on Vercel
+`app/sitemap.ts`, `app/robots.ts`, `app/llms.txt`, `app/llms-full.txt` and
+`app/blog/rss.xml` all derive their contents from the tables above. None of them holds a
+list of pages, because a second hand-maintained list is a list that falls behind.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Keep them deterministic: no wall clock, no `Date.now()`. Two builds of one commit should
+produce identical bytes, which is why the apex sitemap carries no `lastmod` and the feed
+has no `lastBuildDate`.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## The background
+
+`components/journey` is a scroll-driven three.js scene. Every word of copy is
+server-rendered DOM positioned over it, so the page reads the same with WebGL disabled,
+in a crawler, and in `curl`. If you add a section, add the copy to `lib/content.ts` first
+and let the scene follow.

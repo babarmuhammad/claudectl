@@ -155,12 +155,12 @@ def _no_writes_outside_the_sandbox(monkeypatch, tmp_path_factory):
     allowed = os.path.normcase(os.path.realpath(tempfile.gettempdir()))
     basetemp = os.path.normcase(os.path.realpath(str(tmp_path_factory.getbasetemp())))
 
-    def guarded(path, text):
+    def guarded(path, text, **kw):
         p = os.path.normcase(os.path.realpath(os.path.abspath(path)))
         if not (p.startswith(allowed) or p.startswith(basetemp)):
             raise AssertionError(
                 'test tried to write a real file outside the pytest temp area: %s' % path)
-        return real_write(path, text)
+        return real_write(path, text, **kw)
 
     monkeypatch.setattr(config, 'write_atomic', guarded)
 
@@ -176,6 +176,25 @@ def _no_writes_outside_the_sandbox(monkeypatch, tmp_path_factory):
         elif after.get(p) is not None:
             os.unlink(p)
     assert not damaged, 'test modified real user files (restored): %s' % damaged
+
+
+@pytest.fixture(autouse=True)
+def _no_process_global_cache_leaks_between_tests():
+    """Two caches live for the life of the process on purpose, and both would
+    otherwise make a test's result depend on which test ran before it.
+
+    `mcp._status_cache` holds `claude mcp list` for 30s (that subprocess is 1.7s
+    and /api/dashboard polls every 10s). `paths._path_cache` holds resolved —
+    and, since it also caches misses, UNRESOLVED — project folders. Autouse
+    rather than in `Sandbox`, because the tests that hit these are exactly the
+    ones that never build one.
+    """
+    from claude_sessions import mcp, paths
+    mcp._status_cache.clear()
+    paths._path_cache.clear()
+    yield
+    mcp._status_cache.clear()
+    paths._path_cache.clear()
 
 
 @pytest.fixture(autouse=True)

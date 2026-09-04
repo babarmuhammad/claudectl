@@ -11,7 +11,7 @@
       "name": "claudectl",
       "source": "./plugin",
       "description": "Recall this project's memory, check its health, and review the current diff — from inside a session.",
-      "version": "1.8.2",
+      "version": "1.9.0",
       "category": "productivity",
       "tags": ["memory", "workspace", "sessions", "review"]
     }

@@ -20,7 +20,19 @@
   &nbsp;·&nbsp;
   📖 Full documentation → <a href="https://docs.claudectl.space/">docs.claudectl.space</a></b><br>
   <sub>Everything below is the short version. Every feature, key binding and file is
-  documented in detail on the docs site.</sub>
+  documented in detail on the docs site.</sub><br>
+  <sub>
+    <a href="https://pypi.org/project/claudectl/">PyPI</a> ·
+    <a href="https://claudectl.space/blog">Blog</a> ·
+    <a href="https://claudectl.space/faq">FAQ</a> ·
+    <a href="https://www.linkedin.com/in/muhammad-anas-babar-819647240">LinkedIn</a> ·
+    <a href="https://dev.to/muhammad_anasbabar_31256">dev.to</a>
+  </sub>
+</p>
+
+<p align="center">
+  <sub><i>Not the Rust <code>claudectl</code>. Two independent projects share this name;
+  this one is the Python workspace layer for Claude Code.</i></sub>
 </p>
 
 <p align="center">

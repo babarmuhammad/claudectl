@@ -101,7 +101,7 @@ With that on-disk picture, the useful operations are the ones Claude Code does n
 | `i` | Session info — tokens, estimated cost, models, git branch, duration |
 | `F` | Changed files, derived from the session's tool calls |
 | `u` | Project usage stats |
-| `⇧K` | New session seeded with another session's context |
+| `⇧K` | Hand off: new session seeded with another session's context |
 
 Two of those are worth calling out. **Changed files** (`F`) is derived from tool calls in the transcript, so it answers "what did that session actually touch" without a git diff — useful when the session ran across a branch switch. And the transcript viewer's position counter reads `msg N/M`, counting conversation messages rather than raw lines, because most lines in a `.jsonl` are tool traffic.
 
@@ -131,7 +131,7 @@ Then right-click the desktop shortcut → **Pin to taskbar**.
 
 **Elevation without a UAC prompt every time.** If `claude.exe` or your project paths need admin rights, ticking "Run as administrator" on a shortcut gives you a UAC prompt on every launch. Register a scheduled task that already runs at highest privilege and point the shortcut at `schtasks /run /tn "ClaudeCtl"` instead; leave the shortcut's own elevation checkbox *unticked*, because `schtasks.exe` does not need elevating, only the task it triggers. Launch the task through `wt.exe` rather than `cmd.exe` directly — elevated console apps otherwise fall back to legacy conhost, which renders a TUI with broken colours and box-drawing.
 
-**No console window.** `pythonw.exe` runs the GUI without one; the full shortcut recipe including the GUI icon is in [the install guide](https://docs.claudectl.space/install/).
+**No console window.** `pythonw.exe` runs the GUI without one; the full shortcut recipe including the GUI icon is in [the install guide](https://docs.claudectl.space/installation/).
 
 **Killing a session tree.** If you script session launches, note that `taskkill /T` can report failure, and a fallback to `Popen.kill` is not optional. The POSIX equivalent has a sharper edge: `os.killpg` may only be used when the child actually leads its own process group — otherwise its group is *yours*, and the tree kill takes your own tool down with it.
 

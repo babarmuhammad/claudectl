@@ -35,6 +35,7 @@ strictly better than claudectl crashing on an unfamiliar key.
 
 import json
 import os
+import re
 
 from . import config as _c
 
@@ -204,10 +205,21 @@ def _claude_cli(args, timeout=120, cfgdir=None):
 
 
 def add_marketplace(source, cfgdir=None):
-    """`claude plugin marketplace add <repo|url|path>`."""
+    """`claude plugin marketplace add <repo|url|path>`.
+
+    The three shapes the CLI documents are the three shapes accepted, because
+    this value is fetched by git underneath: a bare `ext::sh -c …` is a real git
+    transport that executes on clone, and a value starting `-` lands in an
+    option position. Neither needs a shell to be a problem.
+    """
+    from . import proc
     source = (source or '').strip()
     if not source:
         return False, 'No source given'
+    if not (re.match(r'^[\w.-]+/[\w.-]+$', source)         # owner/repo
+            or proc.remote_url_ok(source)                  # a git remote URL
+            or os.path.isdir(source)):                     # a local marketplace
+        return False, 'not an owner/repo, a git URL, or a directory that exists'
     return _claude_cli(['plugin', 'marketplace', 'add', source], cfgdir=cfgdir)
 
 

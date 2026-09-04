@@ -150,7 +150,7 @@ export const HOME: Doc = {
           },
           {
             t: 'Context hand-off',
-            d: 'Start a new session seeded with a previous one’s transcript, under any account — for when the context window fills up, or an account hits its limit mid-task.',
+            d: 'Hand off any session to a new one, under any account, from the button on its row — for when the context window fills up, or an account hits its limit mid-task. The new chat starts with the old transcript on disk and is told to read it first.',
           },
         ]),
       ],
@@ -275,7 +275,7 @@ export const FEATURES: Doc = {
         dl([
           {
             t: 'Multiple accounts',
-            d: 'Two or more accounts side by side, one row per project, cross-account context injection and account-accurate memory.',
+            d: 'Two or more accounts side by side, one row per project, cross-account hand-off and account-accurate memory. Session lists — live and archived — span every account, and an action puts a session back in the one it came from.',
           },
           {
             t: 'MCP servers',

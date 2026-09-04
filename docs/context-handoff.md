@@ -7,8 +7,8 @@ description: >-
 
 # Context hand-off between sessions
 
-`⇧K` in the sessions menu ("Inject context from another chat"), or the **Tools** tab of a
-project in the [desktop GUI](desktop.md).
+**Hand off** on any session row in the [desktop GUI](desktop.md), or `⇧K` in the sessions
+menu of the terminal UI.
 
 Start a **new** session that already knows what the previous one was doing — and launch it
 under **any account you like**, not necessarily the one that produced the transcript.
@@ -25,7 +25,7 @@ The same flow also covers "that exploration went well, start a real session from
 
 ## How it works
 
-1. **Pick the source session.** claudectl lists every session for this project **across every configured account**, newest first, each labelled with the account it belongs to (`[work] Refactor the parser (2h ago)`). Sessions from accounts other than the current one are included on purpose — that is the whole point.
+1. **Pick the source session.** In the GUI the row *is* the source, so there is nothing to pick: press **Hand off** on the session you want to carry forward. The sessions list already spans **every configured account**, each row labelled with the one it belongs to — sessions from accounts other than the current one are there on purpose, and that is the whole point. In the terminal UI, `⇧K` opens a picker over the same set, newest first (`[work] Refactor the parser (2h ago)`).
 2. **Pick the target account.** Which account the *new* session launches under. Defaults to the project's current account, and only asks at all when more than one account is configured.
 3. **claudectl writes the transcript to disk** — `<project>/.claudectl/injected-context.md`, headed with the source session's title and the account it came from, followed by the whole conversation as `### User` / `### Assistant` sections.
 4. **The new session launches with a pointer, not a paste.** It gets a short system-prompt line saying where the file is and to read it first for background. The full text is never put on the command line — a long transcript would blow past the Windows argv limit — so the model reads the file with its own tools, exactly the way [Plan → Execute](plan-execute.md) hands over a plan.

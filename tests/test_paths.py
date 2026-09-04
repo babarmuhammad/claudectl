@@ -134,6 +134,53 @@ def test_path_from_transcripts_ignores_junk_and_dead_paths(tmp_path):
     assert path_from_transcripts(str(folder)) is None
 
 
+def test_a_folder_that_cannot_be_resolved_is_only_walked_once(tmp_path, monkeypatch):
+    """The miss is the expensive answer, so it is the one that has to be cached.
+
+    Storing only successes meant a dead project folder paid the recursive
+    `_walk_for` guess on EVERY call, forever — measured at ~38 ms each, and 42
+    of this machine's 72 folders were dead pytest temp directories. That was
+    98% of `gui.list_projects()`, which the GUI's 5-second /api/memory/active
+    poll calls in full.
+    """
+    import claude_sessions.paths as paths_mod
+    paths_mod._path_cache.clear()
+    folder = tmp_path / 'Z--long-gone-project'
+    folder.mkdir()
+    (folder / 's.jsonl').write_text(
+        json.dumps({'cwd': str(tmp_path / 'deleted')}) + '\n', encoding='utf-8')
+
+    walks = []
+    real_walk = paths_mod._walk_for
+    monkeypatch.setattr(paths_mod, '_walk_for',
+                        lambda enc, d=8: walks.append(enc) or real_walk(enc, d))
+
+    for _ in range(5):
+        assert find_actual_path('Z--long-gone-project', folder=str(folder)) is None
+    assert len(walks) == 1, f'walked {len(walks)} times — the miss is not cached'
+
+
+def test_a_cached_miss_expires_so_a_recreated_project_reappears(tmp_path, monkeypatch):
+    """The mtime key cannot see the TARGET directory coming back: re-clone a repo
+    to the same path and nothing under the project folder changes. So a miss
+    also expires on time, which is the only reason it is safe to cache at all."""
+    import time
+    import claude_sessions.paths as paths_mod
+    paths_mod._path_cache.clear()
+    folder = tmp_path / 'Z--comes-back'
+    folder.mkdir()
+    real = tmp_path / 'comes-back'
+    (folder / 's.jsonl').write_text(
+        json.dumps({'cwd': str(real)}) + '\n', encoding='utf-8')
+
+    assert find_actual_path('Z--comes-back', folder=str(folder)) is None
+    real.mkdir()                                   # the project reappears
+    assert find_actual_path('Z--comes-back', folder=str(folder)) is None  # still cached
+    monkeypatch.setattr(time, 'time',
+                        lambda _t=time.time(): _t + paths_mod._MISS_TTL + 1)
+    assert find_actual_path('Z--comes-back', folder=str(folder)) == str(real)
+
+
 def test_resolve_dir_rejects_non_directories(tmp_path):
     from claude_sessions.paths import resolve_dir
     f = tmp_path / 'file.txt'

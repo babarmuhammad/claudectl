@@ -43,12 +43,11 @@ a handler sees them; a missing or malformed one is a 400.
 | `/api/history` | `api_history` | Every replaced version claudectl still holds, newest first. |
 | `/api/history/diff` | `api_history_diff` | — |
 | `/api/hooks` | `api_hooks_get` | Every hook in ONE account, enabled and disabled alike. |
-| `/api/inject/sessions` | `api_inject_sessions` | — |
 | `/api/lessons` | `api_lessons_get` | — |
 | `/api/logs` | `api_logs` | claudectl's own event log — what it did and what failed, newest first. |
 | `/api/loop-md` | `api_loop_md_get` | — |
 | `/api/loops` | `api_loops` | Loops claudectl started, with live state read off the process and the |
-| `/api/mcp` | `api_mcp_get` | — |
+| `/api/mcp` | `api_mcp_get` | The MCP page itself, so `?refresh=1` gets a live probe — the 30s cache |
 | `/api/mcp/detail` | `api_mcp_detail` | `claude mcp get <name>` — the detail the TUI shows and the GUI did not. |
 | `/api/memory-map` | `api_memory_map` | — |
 | `/api/memory/active` | `api_memory_active` | Project paths whose memory is being refreshed right now (scan-lock held) |
@@ -67,7 +66,7 @@ a handler sees them; a missing or malformed one is a 400.
 | `/api/prompt-history` | `api_prompt_history` | — |
 | `/api/recall-preview` | `api_recall_preview` | — |
 | `/api/search-index` | `api_search_index` | — |
-| `/api/session/archived` | `api_archived` | — |
+| `/api/session/archived` | `api_archived` | Archived sessions of a project across EVERY account, newest-first. |
 | `/api/session/changed-files` | `api_changed_files` | — |
 | `/api/session/meta` | `api_session_meta` | — |
 | `/api/session/tags` | `api_tags_get` | — |

@@ -4,26 +4,40 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "claudectl"
-version = "1.8.2"
+version = "1.9.0"
 description = "The workspace layer for Claude Code - persistent project memory, an interactive architecture graph, MCP awareness, and per-project launch control in a fast terminal UI"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [{ name = "Babar Muhammad Anas" }]
-keywords = ["claude", "claude-code", "tui", "session-manager", "windows"]
+keywords = [
+    "claude", "claude-code", "tui", "session-manager", "windows",
+    "ai-agents", "context-management", "developer-tools", "mcp",
+    "terminal-ui", "workspace", "session-history",
+]
 classifiers = [
+    "Development Status :: 4 - Beta",
     "Environment :: Console",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Topic :: Software Development",
+    "Topic :: Utilities",
 ]
 
+# PyPI renders these as the sidebar links, and they are also the strongest
+# machine-readable statement that this package, the site, the docs and the
+# repository are one thing — which matters because an unrelated Rust project
+# publishes under the same name. `Repository` is the key PyPI gives its own
+# icon to; `Source` is kept because it is what the existing listing shows.
 [project.urls]
 Homepage = "https://claudectl.space"
 Documentation = "https://docs.claudectl.space/"
+Repository = "https://github.com/babarmuhammad/claudectl"
 Source = "https://github.com/babarmuhammad/claudectl"
 Issues = "https://github.com/babarmuhammad/claudectl/issues"
 Changelog = "https://claudectl.space/changelog"

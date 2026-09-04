@@ -22,6 +22,13 @@ const APEX = [
 /** Pages that change on a release, versus pages that change when I rewrite them. */
 const OFTEN = new Set(['/', '/changelog', '/blog', '/download']);
 
+/* No lastModified on the apex entries, deliberately. There is no honest value
+   for one: these pages are rendered from lib/content.ts, so git gives one date
+   for a dozen URLs, and the deploy commit's date would claim every page changed
+   on every push. Google discounts a lastmod it finds unreliable and says to omit
+   it rather than guess, so the blog — which has a real per-post date — is the
+   only place it appears. */
+
 const priority = (path: string) =>
   path === '/' ? 1 : path === '/features' || path === '/download' ? 0.9 : path === '/blog' ? 0.8 : 0.6;
 

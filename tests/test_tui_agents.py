@@ -411,19 +411,53 @@ def test_new_manual_new_category(monkeypatch, tmp_path):
 
 
 def test_new_ai_agent(monkeypatch, tmp_path):
+    """It lands in `~/.claude/agents/`, FLAT — where Claude Code reads agents.
+
+    It used to be written into claudectl's own category-organised library, which
+    Claude Code never looks at, so an AI-generated agent was never picked. The
+    category is frontmatter now, exactly as `agents.category_of` documents and as
+    the manual GUI path (`api_agent_create`) already did.
+    """
+    from claude_sessions import memory
     sb = Sandbox(monkeypatch, tmp_path)
     _seed(sb, '01-core', 'x')
     monkeypatch.setattr(agents, 'get_claude_exe', lambda: r'C:\fake.exe')
     body = "---\nname: sec\ndescription: security\n---\n\nYou review security."
-    monkeypatch.setattr(agents, 'run_with_progress', lambda *a, **k: (body, False))
+    monkeypatch.setattr(memory, '_claude_stdin', lambda *a, **k: body)
     keys = flat(DOWN, DOWN, ENTER,           # New AI (3rd selectable)
-                ENTER,                       # category 01-core
                 typed('sec'), ENTER,         # name
                 typed('review security'), ENTER,  # role
+                ENTER,                       # category (blank)
                 ENTER,                       # approve pager
                 ESC)
     run_flow(monkeypatch, keys, agents.agents_menu, None)
-    assert (sb.agents_lib / '01-core' / 'sec.md').exists()
+    assert (sb.cfg / 'agents' / 'sec.md').exists()
+    assert not (sb.agents_lib / '01-core' / 'sec.md').exists()
+
+
+def test_the_ai_agent_prompt_goes_over_stdin_with_the_shared_guards(monkeypatch, tmp_path):
+    """It used to spawn `claude --print <prompt>` directly: the prompt on ARGV
+    (the 32767-char CreateProcess limit `_claude_stdin` exists to dodge, and
+    `_build_ai_context` can push it past that), no cwd, no HEADLESS_MARK so the
+    call was listed back as one of your own session topics, no `--max-turns` and
+    no `--max-budget-usd`. Every one of those comes free from the shared seam."""
+    from claude_sessions import memory
+    Sandbox(monkeypatch, tmp_path)
+    seen = {}
+
+    def fake(prompt, cwd, **kw):
+        seen['prompt'], seen['cwd'], seen['kw'] = prompt, cwd, kw
+        return "---\nname: sec\n---\n\nbody"
+
+    monkeypatch.setattr(memory, '_claude_stdin', fake)
+    r = agents.generate_agent_ai('sec', 'review security', 'user', None)
+    assert r['ok'] and r['path'].endswith(os.path.join('agents', 'sec.md'))
+    assert 'review security' in seen['prompt']
+    assert 'timeout' in seen['kw'] and seen['kw']['timeout'] > 0
+    # and the module no longer has its own spawn site at all
+    src = open(agents.__file__, encoding='utf-8').read()
+    assert '--print' not in src, 'agents.py spawns claude directly again'
+    assert 'run_with_progress' not in src, 'agents.py has its own spawn site again'
 
 
 def test_delete_agent(monkeypatch, tmp_path):

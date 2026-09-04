@@ -48,28 +48,16 @@ def save_disk_cache():
 
 
 def get_session_stats_cached(jsonl_path):
-    """Stats dict via in-memory cache → disk cache → full parse."""
-    global _cache_dirty
-    try:
-        st = os.stat(jsonl_path)
-    except OSError:
-        return get_session_stats(jsonl_path)   # returns empty stats
-    key = [st.st_mtime_ns, st.st_size]
+    """Stats dict via in-memory cache → disk cache → full parse.
 
-    mem = _sessions._info_cache.get(jsonl_path)
-    if mem and list(mem[0]) == key:
-        return mem[1]
-
-    disk = _load_disk_cache().get(jsonl_path)
-    if disk and disk.get('key') == key and isinstance(disk.get('stats'), dict):
-        stats = disk['stats']
-        _sessions._info_cache[jsonl_path] = (tuple(key), stats)   # warm memory
-        return stats
-
-    stats = get_session_stats(jsonl_path)
-    _load_disk_cache()[jsonl_path] = {'key': key, 'stats': stats}
-    _cache_dirty = True
-    return stats
+    The ladder itself now lives in `sessions._parse_session`, which is the ONLY
+    thing that parses a transcript — so every caller gets it, including
+    `scan_sessions`, which runs before this function on the cold path and used to
+    make the disk half unreachable. Kept as a name because ~20 call sites and
+    several tests use it, and because it still says something true: this is the
+    accessor you want.
+    """
+    return get_session_stats(jsonl_path)
 
 
 # ── cost estimation ──────────────────────────────────────────

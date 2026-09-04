@@ -357,7 +357,11 @@ class _Handler(BaseHTTPRequestHandler):
             got = (self.headers.get('x-api-key')
                    or (self.headers.get('Authorization') or '').removeprefix('Bearer ')
                    or '').strip()
-            if not hmac.compare_digest(got, key):
+            # latin-1 bytes, not str: that is how the header was decoded, and a
+            # non-ASCII byte makes compare_digest raise TypeError — which lands
+            # in socketserver.handle_error as a traceback, unauthenticated.
+            if not hmac.compare_digest(got.encode('latin-1', 'replace'),
+                                       key.encode('latin-1', 'replace')):
                 return self._deny('bad credentials')
         return True
 

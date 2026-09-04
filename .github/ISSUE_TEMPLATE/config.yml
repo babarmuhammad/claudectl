@@ -1,0 +1,14 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://docs.claudectl.space/
+    about: Installation, the terminal UI, the desktop app, configuration, memory and cost.
+  - name: Troubleshooting
+    url: https://docs.claudectl.space/troubleshooting/
+    about: Symptom-to-fix table. Most reports are already answered here.
+  - name: Questions and ideas
+    url: https://github.com/babarmuhammad/claudectl/discussions
+    about: Ask how to do something, or float an idea before opening an issue.
+  - name: Report a security vulnerability
+    url: https://github.com/babarmuhammad/claudectl/security/advisories/new
+    about: Private disclosure. Please do not open a public issue.

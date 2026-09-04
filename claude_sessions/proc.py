@@ -8,6 +8,7 @@ exist before the POSIX port rather than after it.
 """
 
 import os
+import re as _re
 import subprocess
 import sys
 import time
@@ -65,6 +66,28 @@ def git(args, cwd, timeout=15):
     if r is None or r.returncode:
         return None
     return r.stdout
+
+
+#: schemes a remote may use. Deliberately an allowlist, not a denylist of the
+#: dangerous ones — git keeps adding transports.
+_REMOTE_RE = _re.compile(r'^(?:https?://|ssh://|git://|git@[\w.-]+:)[\w.@:/~%-]')
+
+
+def remote_url_ok(url):
+    """Is this safe to hand to `git clone` / `claude plugin marketplace add`?
+
+    Two separate hazards, and argv-list form only closes one of them:
+
+      * `ext::sh -c <payload>` is a real git transport, and `protocol.ext.allow`
+        defaults to `user` — which a direct CLI invocation is. Cloning that URL
+        executes the payload. No shell is involved; git IS the shell.
+      * a URL beginning `-` lands in an OPTION position (`--upload-pack=…`,
+        `--config=…`), so callers must also pass `--` before it.
+
+    An allowlist of schemes is the whole fix. Callers still add `--`.
+    """
+    u = str(url or '').strip()
+    return bool(u) and len(u) < 2048 and bool(_REMOTE_RE.match(u))
 
 
 def pid_alive(pid):

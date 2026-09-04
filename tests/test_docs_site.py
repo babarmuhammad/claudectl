@@ -295,3 +295,37 @@ def test_the_pages_deploy_keeps_the_custom_domain():
 
     assert SITE_URL in _mkdocs(), \
         'mkdocs.yml must publish the host the CNAME claims'
+
+
+def test_both_hosts_assert_the_same_author_entity():
+    """The apex and the docs subdomain both publish a schema.org Person with the
+    same @id and the same sameAs list. That is not decoration: an unrelated Rust
+    project publishes under the name claudectl, so the only thing telling a search
+    engine which one this is, is one author entity corroborated by a set of
+    profiles that link back.
+
+    Two hosts asserting DIFFERENT sameAs lists is worse than one asserting none —
+    it describes two people who happen to share a name. The lists live in two
+    files because the two sites have no shared build, so this is the only thing
+    stopping them drifting apart."""
+    apex = _read(os.path.join(ROOT, 'www', 'lib', 'site.ts'))
+    block = re.search(r'export const PROFILES = \[(.*?)\]', apex, re.S)
+    assert block, 'www/lib/site.ts no longer exports PROFILES'
+    www = set(re.findall(r"'(https?://[^']+)'", block.group(1)))
+
+    mk = _mkdocs()
+    block = re.search(r'\n  profiles:\n((?:    - \S+\n)+)', mk)
+    assert block, 'mkdocs.yml no longer carries extra.profiles'
+    docs = set(re.findall(r'- (\S+)', block.group(1)))
+
+    assert www == docs, \
+        'the two hosts claim different profiles: %s' % sorted(www ^ docs)
+    assert www, 'the sameAs list is empty, so neither host corroborates anything'
+
+    # The docs template must actually emit it, and point the @id at the apex —
+    # one entity named from one place, not one per hostname.
+    tpl = _read(os.path.join(ROOT, 'overrides', 'main.html'))
+    assert 'config.extra.profiles' in tpl, \
+        'overrides/main.html does not emit extra.profiles, so the docs host asserts nothing'
+    assert '/#author' in tpl and 'config.extra.apex' in tpl, \
+        'the docs Person @id must be the apex URL, or the two hosts are two entities'

@@ -421,7 +421,14 @@ def install_from_git(repo_url, project_path, exec_model='', cfgdir=None):
     tmp = tempfile.mkdtemp(prefix='claudectl-skill-')
     try:
         from . import proc
-        r = proc.run(['git', 'clone', '--depth', '1', repo_url, tmp], timeout=60)
+        # BEFORE the clone, not with the review gate below it: the gate protects
+        # what gets copied out of the checkout, and `git clone ext::sh -c …`
+        # never reaches it — the payload has already run.
+        if not proc.remote_url_ok(repo_url):
+            return False, ('not a git remote URL — use https://, ssh:// or '
+                           'git@host:owner/repo')
+        r = proc.run(['git', 'clone', '--depth', '1', '--', repo_url, tmp],
+                     timeout=60)
         if r is None:
             return False, 'git not available'
         if r.returncode != 0:
